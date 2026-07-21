@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>ope-term</title>
+  </head>
+  <body>
+    <div id="app">
+      <aside class="rail">
+        <header class="brand">
+          <span class="brand-mark" aria-hidden="true">O</span>
+          <span><strong>ope</strong><small>term</small></span>
+        </header>
+
+        <label class="host-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="host-search" type="search" placeholder="HOST を検索" autocomplete="off" />
+          <kbd>⌘K</kbd>
+        </label>
+
+        <div class="rail-heading">
+          <span>SSH CONFIG</span>
+          <span id="host-count">0 hosts</span>
+        </div>
+        <div id="host-list" class="host-list" role="list"></div>
+
+        <footer class="rail-footer">
+          <span class="secure-dot"></span>
+          <span>known_hosts strict</span>
+        </footer>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div id="session-tabs" class="session-tabs" role="tablist"></div>
+          <button id="new-route" class="icon-button" type="button" title="新しいルート">＋</button>
+          <div class="topbar-spacer"></div>
+          <span id="connection-state" class="connection-state">ROUTE READY</span>
+        </header>
+
+        <section id="builder" class="builder">
+          <div class="eyebrow">ROUTE WORKBENCH</div>
+          <div class="builder-heading">
+            <div>
+              <h1>SSH 経路を組み立てる</h1>
+              <p>左の Host を順番に置く。1 台だけなら ProxyJump を自動で展開します。</p>
+            </div>
+            <button id="connect" class="connect-button" type="button" disabled>
+              <span>CONNECT</span><kbd>Ctrl ↵</kbd>
+            </button>
+          </div>
+
+          <div id="route-track" class="route-track" aria-label="SSH route drop zone">
+            <div id="route-empty" class="route-empty">
+              <span class="route-empty-icon">＋</span>
+              <strong>Host をここへドロップ</strong>
+              <small>クリックでも追加できます</small>
+            </div>
+          </div>
+          <p id="route-hint" class="route-hint"></p>
+
+          <div class="feature-grid">
+            <article>
+              <span class="feature-no">01</span>
+              <strong>OpenSSH native</strong>
+              <p>接続情報を複製せず、いつもの ~/.ssh/config を使う。</p>
+            </article>
+            <article>
+              <span class="feature-no">02</span>
+              <strong>Visible hops</strong>
+              <p>踏み台を隠さず、接続状態を hop ごとに追える。</p>
+            </article>
+            <article>
+              <span class="feature-no">03</span>
+              <strong>Strict by default</strong>
+              <p>known_hosts と一致しない接続は、便利さのために通さない。</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="terminal-stage" class="terminal-stage hidden" aria-live="polite"></section>
+
+        <footer class="statusbar">
+          <span><b id="status-mode">ROUTE</b></span>
+          <span id="status-route">NO ROUTE</span>
+          <span class="status-spacer"></span>
+          <span>Ctrl+Shift+P commands</span>
+          <span>Ctrl+K hosts</span>
+        </footer>
+      </main>
+    </div>
+    <div id="command-palette" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Command Palette">
+      <div class="palette-box">
+        <label class="palette-input-wrap">
+          <span>&gt;</span>
+          <input id="command-query" type="text" placeholder="コマンドを検索" autocomplete="off" spellcheck="false" />
+          <kbd>Esc</kbd>
+        </label>
+        <div id="command-results" class="command-results" role="listbox"></div>
+      </div>
+    </div>
+    <div id="shortcut-editor" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="shortcut-title">
+      <section class="shortcut-box">
+        <header>
+          <div>
+            <div class="eyebrow">PREFERENCES</div>
+            <h2 id="shortcut-title">Keyboard Shortcuts</h2>
+          </div>
+          <button id="close-shortcuts" class="icon-button" type="button" aria-label="閉じる">×</button>
+        </header>
+        <label class="shortcut-search">
+          <span>⌕</span>
+          <input id="shortcut-query" type="search" placeholder="コマンドまたはキーを検索" autocomplete="off" />
+        </label>
+        <div class="shortcut-table-head"><span>COMMAND</span><span>KEYBINDING</span><span></span></div>
+        <div id="shortcut-list" class="shortcut-list"></div>
+        <footer><span>キー欄をクリックして新しい組み合わせを入力</span><button id="reset-shortcuts" type="button">すべて初期化</button></footer>
+      </section>
+    </div>
+    <div id="toast-stack" class="toast-stack" aria-live="assertive"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

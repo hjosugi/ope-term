@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ope-term",
+  "version": "0.1.0",
+  "identifier": "jp.hjosugi.ope-term",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:"
+    },
+    "windows": [
+      {
+        "title": "ope-term",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 860,
+        "minHeight": 560,
+        "backgroundColor": "#090c10",
+        "transparent": false,
+        "decorations": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Route-first SSH terminal",
+    "longDescription": "An operations terminal that makes SSH jump routes visible and composable."
+  }
+}

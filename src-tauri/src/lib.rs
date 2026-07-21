@@ -1,0 +1,116 @@
+mod ssh;
+mod ssh_config;
+
+use std::sync::Arc;
+
+use tauri::State;
+use tauri::ipc::{Channel, Response};
+use tokio::sync::mpsc;
+
+use ssh::{ConnectRequest, SessionCommand, SessionEvent, SessionMap};
+use ssh_config::HostProfile;
+
+#[derive(Default)]
+struct AppState {
+    sessions: SessionMap,
+}
+
+#[tauri::command]
+fn list_hosts() -> Result<Vec<HostProfile>, String> {
+    ssh_config::load_default()
+        .map(|blocks| ssh_config::profiles(&blocks))
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn ssh_config_path() -> Result<String, String> {
+    ssh_config::default_config_path()
+        .map(|path| path.display().to_string())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn connect_session(
+    request: ConnectRequest,
+    on_event: Channel<SessionEvent>,
+    on_data: Channel<Response>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let session_id = request.session_id.clone();
+    let (sender, receiver) = mpsc::channel(256);
+    {
+        let mut sessions = state.sessions.lock().await;
+        if sessions.contains_key(&session_id) {
+            return Err("同じ session id が既に存在します".into());
+        }
+        sessions.insert(session_id.clone(), sender);
+    }
+
+    let registry = Arc::clone(&state.sessions);
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = ssh::run(request, on_event.clone(), on_data, receiver).await {
+            ssh::event_error(&on_event, &error);
+        }
+        ssh::event_closed(&on_event);
+        registry.lock().await.remove(&session_id);
+    });
+    Ok(())
+}
+
+async fn send_command(
+    state: State<'_, AppState>,
+    session_id: &str,
+    command: SessionCommand,
+) -> Result<(), String> {
+    let sender = state
+        .sessions
+        .lock()
+        .await
+        .get(session_id)
+        .cloned()
+        .ok_or_else(|| "セッションが見つかりません".to_owned())?;
+    sender
+        .send(command)
+        .await
+        .map_err(|_| "セッションは終了しています".to_owned())
+}
+
+#[tauri::command]
+async fn session_input(
+    session_id: String,
+    data: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_command(state, &session_id, SessionCommand::Input(data)).await
+}
+
+#[tauri::command]
+async fn session_resize(
+    session_id: String,
+    cols: u32,
+    rows: u32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_command(state, &session_id, SessionCommand::Resize { cols, rows }).await
+}
+
+#[tauri::command]
+async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    send_command(state, &session_id, SessionCommand::Close).await
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            list_hosts,
+            ssh_config_path,
+            connect_session,
+            session_input,
+            session_resize,
+            close_session,
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run ope-term");
+}
