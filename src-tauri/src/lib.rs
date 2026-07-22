@@ -1,3 +1,4 @@
+mod host_keys;
 mod ssh;
 mod ssh_config;
 
@@ -7,7 +8,10 @@ use tauri::State;
 use tauri::ipc::{Channel, Response};
 use tokio::sync::mpsc;
 
-use ssh::{ConnectRequest, SessionCommand, SessionEvent, SessionMap};
+use ssh::{
+    ConnectRequest, HostKeyAnswer, HostKeyDecision, SessionCommand, SessionControl, SessionEvent,
+    SessionMap,
+};
 use ssh_config::HostProfile;
 
 #[derive(Default)]
@@ -37,18 +41,33 @@ async fn connect_session(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let session_id = request.session_id.clone();
-    let (sender, receiver) = mpsc::channel(256);
+    let (command_sender, command_receiver) = mpsc::channel(256);
+    let (host_key_sender, host_key_receiver) = mpsc::channel(8);
     {
         let mut sessions = state.sessions.lock().await;
         if sessions.contains_key(&session_id) {
             return Err("同じ session id が既に存在します".into());
         }
-        sessions.insert(session_id.clone(), sender);
+        sessions.insert(
+            session_id.clone(),
+            SessionControl {
+                commands: command_sender,
+                host_keys: host_key_sender,
+            },
+        );
     }
 
     let registry = Arc::clone(&state.sessions);
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = ssh::run(request, on_event.clone(), on_data, receiver).await {
+        if let Err(error) = ssh::run(
+            request,
+            on_event.clone(),
+            on_data,
+            command_receiver,
+            host_key_receiver,
+        )
+        .await
+        {
             ssh::event_error(&on_event, &error);
         }
         ssh::event_closed(&on_event);
@@ -67,7 +86,7 @@ async fn send_command(
         .lock()
         .await
         .get(session_id)
-        .cloned()
+        .map(|session| session.commands.clone())
         .ok_or_else(|| "セッションが見つかりません".to_owned())?;
     sender
         .send(command)
@@ -96,7 +115,49 @@ async fn session_resize(
 
 #[tauri::command]
 async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_command(state, &session_id, SessionCommand::Close).await
+    let control = state
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| "セッションが見つかりません".to_owned())?;
+    let _ = control
+        .host_keys
+        .send(HostKeyAnswer {
+            request_id: None,
+            decision: HostKeyDecision::Reject,
+        })
+        .await;
+    control
+        .commands
+        .send(SessionCommand::Close)
+        .await
+        .map_err(|_| "セッションは終了しています".to_owned())
+}
+
+#[tauri::command]
+async fn answer_host_key(
+    session_id: String,
+    request_id: String,
+    decision: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let decision = HostKeyDecision::parse(&decision)?;
+    let sender = state
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .map(|session| session.host_keys.clone())
+        .ok_or_else(|| "セッションが見つかりません".to_owned())?;
+    sender
+        .send(HostKeyAnswer {
+            request_id: Some(request_id),
+            decision,
+        })
+        .await
+        .map_err(|_| "ホスト鍵の確認は終了しています".to_owned())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -110,6 +171,7 @@ pub fn run() {
             session_input,
             session_resize,
             close_session,
+            answer_host_key,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ope-term");

@@ -4,6 +4,14 @@ ope-term は alpha です。まず issue で利用場面、対象 OS、期待す
 
 ## Development
 
+推奨の開発shell:
+
+```bash
+nix develop
+```
+
+Nixを使わない場合は[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)を先に導入してください。どちらの場合も検証コマンドは同じです。
+
 ```bash
 npm ci
 npm test

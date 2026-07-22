@@ -1,0 +1,157 @@
+use std::fs::OpenOptions;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use russh::keys::{Error as KeyError, ssh_key};
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum KnownHostStatus {
+    Trusted,
+    Unknown,
+    Changed { line: usize },
+}
+
+pub fn default_path() -> Result<PathBuf> {
+    dirs::home_dir()
+        .map(|home| home.join(".ssh").join("known_hosts"))
+        .ok_or_else(|| anyhow::anyhow!("ホームディレクトリが見つかりません"))
+}
+
+pub fn check(
+    path: &Path,
+    hostname: &str,
+    port: u16,
+    key: &ssh_key::PublicKey,
+) -> Result<KnownHostStatus> {
+    match russh::keys::known_hosts::check_known_hosts_path(hostname, port, key, path) {
+        Ok(true) => Ok(KnownHostStatus::Trusted),
+        Ok(false) => Ok(KnownHostStatus::Unknown),
+        Err(KeyError::KeyChanged { line }) => Ok(KnownHostStatus::Changed { line }),
+        Err(error) => Err(error).context("known_hosts を検証できません"),
+    }
+}
+
+pub fn save(path: &Path, hostname: &str, port: u16, key: &ssh_key::PublicKey) -> Result<()> {
+    match check(path, hostname, port, key)? {
+        KnownHostStatus::Trusted => return Ok(()),
+        KnownHostStatus::Changed { line } => {
+            bail!("known_hosts {line} 行目に異なるホスト鍵があります")
+        }
+        KnownHostStatus::Unknown => {}
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("{} を作成できません", parent.display()))?;
+    }
+
+    let mut options = OpenOptions::new();
+    options.read(true).append(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("{} を開けません", path.display()))?;
+
+    let mut prefix = "";
+    if file.seek(SeekFrom::End(-1)).is_ok() {
+        let mut last = [0_u8; 1];
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            prefix = "\n";
+        }
+    }
+
+    let host = if port == 22 {
+        hostname.to_owned()
+    } else {
+        format!("[{hostname}]:{port}")
+    };
+    let line = format!("{prefix}{host} {}\n", key.to_openssh()?);
+    file.write_all(line.as_bytes())?;
+    file.sync_data()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use russh::keys::parse_public_key_base64;
+
+    const KEY_ONE: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ";
+    const KEY_TWO: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIA6rWI3G1sz07DnfFlrouTcysQlj2P+jpNSOEWD9OJ3X";
+    const HASHED_KEY: &str = "AAAAC3NzaC1lZDI1NTE5AAAAILIG2T/B0l0gaqj3puu510tu9N1OkQ4znY3LYuEm5zCF";
+
+    #[test]
+    fn recognizes_hashed_host() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        std::fs::write(
+            &path,
+            format!(
+                "|1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak= ssh-ed25519 {HASHED_KEY}\n"
+            ),
+        )
+        .unwrap();
+        let key = parse_public_key_base64(HASHED_KEY).unwrap();
+
+        assert_eq!(
+            check(&path, "example.com", 22, &key).unwrap(),
+            KnownHostStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn saves_and_recognizes_nonstandard_port_without_breaking_newline() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        std::fs::write(&path, "# existing entry without newline").unwrap();
+        let key = parse_public_key_base64(KEY_ONE).unwrap();
+
+        save(&path, "router.internal", 2222, &key).unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.starts_with("# existing entry without newline\n"));
+        assert!(contents.contains("[router.internal]:2222 ssh-ed25519 "));
+        assert!(contents.ends_with('\n'));
+        assert_eq!(
+            check(&path, "router.internal", 2222, &key).unwrap(),
+            KnownHostStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn reports_changed_key_and_refuses_to_overwrite_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        let original = parse_public_key_base64(KEY_ONE).unwrap();
+        let changed = parse_public_key_base64(KEY_TWO).unwrap();
+        save(&path, "server.internal", 22, &original).unwrap();
+
+        assert_eq!(
+            check(&path, "server.internal", 22, &changed).unwrap(),
+            KnownHostStatus::Changed { line: 1 }
+        );
+        assert!(save(&path, "server.internal", 22, &changed).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_known_hosts_with_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(".ssh").join("known_hosts");
+        let key = parse_public_key_base64(KEY_ONE).unwrap();
+
+        save(&path, "server.internal", 22, &key).unwrap();
+
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+}

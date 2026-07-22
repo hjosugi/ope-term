@@ -14,7 +14,7 @@ Labels: priority:P0, area:ssh, security
 
 ## 受け入れ条件
 
-- [ ] fingerprint を別経路で確認できる情報量がある
-- [ ] 保存時は `known_hosts` の権限と改行を壊さない
-- [ ] changed key をワンクリックで上書きできない
-- [ ] hashed known_hosts と非標準 port をテストする
+- [x] fingerprint を別経路で確認できる情報量がある
+- [x] 保存時は `known_hosts` の権限と改行を壊さない
+- [x] changed key をワンクリックで上書きできない
+- [x] hashed known_hosts と非標準 port をテストする

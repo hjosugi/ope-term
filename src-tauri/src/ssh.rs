@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -12,7 +14,11 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tokio::sync::{Mutex, mpsc};
 
+use crate::host_keys::{self, KnownHostStatus};
 use crate::ssh_config::{self, Endpoint};
+
+static HOST_KEY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+const HOST_KEY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,10 +38,25 @@ pub struct HopStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostKeyPrompt {
+    request_id: String,
+    hop: String,
+    hostname: String,
+    port: u16,
+    algorithm: String,
+    fingerprint: String,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    existing_line: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {
     Chain { hops: Vec<HopStatus> },
     Hop { hop: HopStatus },
+    HostKeyPrompt { prompt: HostKeyPrompt },
     Ready,
     Error { message: String },
     Closed,
@@ -48,13 +69,44 @@ pub enum SessionCommand {
     Close,
 }
 
-pub type SessionMap = Arc<Mutex<HashMap<String, mpsc::Sender<SessionCommand>>>>;
+#[derive(Debug, Clone, Copy)]
+pub enum HostKeyDecision {
+    Reject,
+    TrustOnce,
+    TrustAndSave,
+}
+
+impl HostKeyDecision {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "reject" => Ok(Self::Reject),
+            "trust_once" => Ok(Self::TrustOnce),
+            "trust_and_save" => Ok(Self::TrustAndSave),
+            _ => Err("不明なホスト鍵の応答です".to_owned()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HostKeyAnswer {
+    pub request_id: Option<String>,
+    pub decision: HostKeyDecision,
+}
+
+#[derive(Clone)]
+pub struct SessionControl {
+    pub commands: mpsc::Sender<SessionCommand>,
+    pub host_keys: mpsc::Sender<HostKeyAnswer>,
+}
+
+pub type SessionMap = Arc<Mutex<HashMap<String, SessionControl>>>;
 
 pub async fn run(
     request: ConnectRequest,
     events: Channel<SessionEvent>,
     data: Channel<Response>,
     commands: mpsc::Receiver<SessionCommand>,
+    host_key_answers: mpsc::Receiver<HostKeyAnswer>,
 ) -> Result<()> {
     let blocks = ssh_config::load_default()?;
     let chain = ssh_config::chain_for_route(&request.route, &blocks)?;
@@ -75,6 +127,8 @@ pub async fn run(
 
     let mut handles = Vec::with_capacity(chain.len());
     let mut tunnel = None;
+    let known_hosts_path = host_keys::default_path()?;
+    let host_key_answers = Arc::new(Mutex::new(host_key_answers));
 
     for (index, endpoint) in chain.iter().enumerate() {
         send(
@@ -88,8 +142,12 @@ pub async fn run(
             },
         );
         let handler = HostVerifier {
+            hop: endpoint.alias.clone(),
             hostname: endpoint.hostname.clone(),
             port: endpoint.port,
+            known_hosts_path: known_hosts_path.clone(),
+            events: events.clone(),
+            answers: Arc::clone(&host_key_answers),
         };
         let config = Arc::new(client::Config {
             inactivity_timeout: Some(Duration::from_secs(30)),
@@ -201,8 +259,12 @@ fn send(channel: &Channel<SessionEvent>, event: SessionEvent) {
 }
 
 struct HostVerifier {
+    hop: String,
     hostname: String,
     port: u16,
+    known_hosts_path: PathBuf,
+    events: Channel<SessionEvent>,
+    answers: Arc<Mutex<mpsc::Receiver<HostKeyAnswer>>>,
 }
 
 impl client::Handler for HostVerifier {
@@ -212,23 +274,93 @@ impl client::Handler for HostVerifier {
         &mut self,
         server_public_key: &ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        match russh::keys::known_hosts::check_known_hosts(
+        match host_keys::check(
+            &self.known_hosts_path,
             &self.hostname,
             self.port,
             server_public_key,
-        ) {
-            Ok(true) => Ok(true),
-            Ok(false) => bail!(
-                "{}:{} のホスト鍵は known_hosts にありません。ssh コマンドで確認・登録してから再接続してください",
-                self.hostname,
-                self.port
-            ),
-            Err(error) => Err(anyhow!(
-                "{}:{} のホスト鍵検証に失敗しました: {error}",
-                self.hostname,
-                self.port
-            )),
+        )? {
+            KnownHostStatus::Trusted => Ok(true),
+            KnownHostStatus::Changed { line } => {
+                self.prompt(server_public_key, "changed", Some(line));
+                bail!(
+                    "警告: {}:{} のホスト鍵が known_hosts {} 行目から変更されています。接続を拒否しました",
+                    self.hostname,
+                    self.port,
+                    line
+                )
+            }
+            KnownHostStatus::Unknown => {
+                let request_id = self.prompt(server_public_key, "unknown", None);
+                match self.wait_for_answer(&request_id).await? {
+                    HostKeyDecision::Reject => bail!(
+                        "{}:{} の未知のホスト鍵を信頼しなかったため、接続を中止しました",
+                        self.hostname,
+                        self.port
+                    ),
+                    HostKeyDecision::TrustOnce => Ok(true),
+                    HostKeyDecision::TrustAndSave => {
+                        host_keys::save(
+                            &self.known_hosts_path,
+                            &self.hostname,
+                            self.port,
+                            server_public_key,
+                        )?;
+                        Ok(true)
+                    }
+                }
+            }
         }
+    }
+}
+
+impl HostVerifier {
+    fn prompt(
+        &self,
+        server_public_key: &ssh_key::PublicKey,
+        status: &'static str,
+        existing_line: Option<usize>,
+    ) -> String {
+        let request_id = format!(
+            "host-key-{}",
+            HOST_KEY_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        send(
+            &self.events,
+            SessionEvent::HostKeyPrompt {
+                prompt: HostKeyPrompt {
+                    request_id: request_id.clone(),
+                    hop: self.hop.clone(),
+                    hostname: self.hostname.clone(),
+                    port: self.port,
+                    algorithm: server_public_key.algorithm().to_string(),
+                    fingerprint: server_public_key
+                        .fingerprint(ssh_key::HashAlg::Sha256)
+                        .to_string(),
+                    status,
+                    existing_line,
+                },
+            },
+        );
+        request_id
+    }
+
+    async fn wait_for_answer(&self, request_id: &str) -> Result<HostKeyDecision> {
+        let answer = tokio::time::timeout(HOST_KEY_RESPONSE_TIMEOUT, async {
+            let mut answers = self.answers.lock().await;
+            loop {
+                let answer = answers
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow!("ホスト鍵確認の応答チャネルが閉じました"))?;
+                if answer.request_id.as_deref() == Some(request_id) || answer.request_id.is_none() {
+                    return Ok::<_, anyhow::Error>(answer.decision);
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow!("ホスト鍵の確認が5分以内に完了しませんでした"))??;
+        Ok(answer)
     }
 }
 

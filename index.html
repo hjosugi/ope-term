@@ -119,6 +119,31 @@
         <footer><span>キー欄をクリックして新しい組み合わせを入力</span><button id="reset-shortcuts" type="button">すべて初期化</button></footer>
       </section>
     </div>
+    <div id="host-key-dialog" class="overlay host-key-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="host-key-title" aria-describedby="host-key-message">
+      <section class="host-key-box">
+        <header>
+          <div>
+            <div class="eyebrow">SSH HOST KEY</div>
+            <h2 id="host-key-title">未知のホスト鍵</h2>
+          </div>
+          <span id="host-key-status" class="host-key-status">UNKNOWN</span>
+        </header>
+        <p id="host-key-message" class="host-key-message"></p>
+        <dl class="host-key-details">
+          <div><dt>HOP</dt><dd id="host-key-hop"></dd></div>
+          <div><dt>ENDPOINT</dt><dd id="host-key-endpoint"></dd></div>
+          <div><dt>ALGORITHM</dt><dd id="host-key-algorithm"></dd></div>
+          <div class="fingerprint-row"><dt>SHA256 FINGERPRINT</dt><dd><code id="host-key-fingerprint"></code></dd></div>
+        </dl>
+        <p id="host-key-guidance" class="host-key-guidance"></p>
+        <footer>
+          <button id="host-key-reject" class="secondary-button" type="button">接続しない</button>
+          <span class="dialog-spacer"></span>
+          <button id="host-key-once" class="secondary-button" type="button">今回のみ信頼</button>
+          <button id="host-key-save" class="primary-button" type="button">信頼して保存</button>
+        </footer>
+      </section>
+    </div>
     <div id="toast-stack" class="toast-stack" aria-live="assertive"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
