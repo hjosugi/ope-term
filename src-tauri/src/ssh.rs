@@ -9,16 +9,21 @@ use bytes::Bytes;
 use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::keys::ssh_key;
-use russh::{ChannelMsg, Disconnect};
+use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tokio::sync::{Mutex, mpsc};
+use zeroize::Zeroize;
 
 use crate::host_keys::{self, KnownHostStatus};
 use crate::ssh_config::{self, Endpoint};
 
 static HOST_KEY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static AUTH_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const HOST_KEY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_AUTH_PROMPTS: usize = 32;
+const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,11 +57,31 @@ pub struct HostKeyPrompt {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthField {
+    label: String,
+    echo: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthPrompt {
+    request_id: String,
+    hop: String,
+    username: String,
+    kind: &'static str,
+    title: String,
+    instructions: String,
+    fields: Vec<AuthField>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {
     Chain { hops: Vec<HopStatus> },
     Hop { hop: HopStatus },
     HostKeyPrompt { prompt: HostKeyPrompt },
+    AuthPrompt { prompt: AuthPrompt },
     Ready,
     Error { message: String },
     Closed,
@@ -93,10 +118,34 @@ pub struct HostKeyAnswer {
     pub decision: HostKeyDecision,
 }
 
+pub struct AuthAnswer {
+    pub request_id: Option<String>,
+    pub responses: Vec<String>,
+    pub cancelled: bool,
+}
+
+impl std::fmt::Debug for AuthAnswer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthAnswer")
+            .field("request_id", &self.request_id)
+            .field("response_count", &self.responses.len())
+            .field("cancelled", &self.cancelled)
+            .finish()
+    }
+}
+
+impl Drop for AuthAnswer {
+    fn drop(&mut self) {
+        self.responses.zeroize();
+    }
+}
+
 #[derive(Clone)]
 pub struct SessionControl {
     pub commands: mpsc::Sender<SessionCommand>,
     pub host_keys: mpsc::Sender<HostKeyAnswer>,
+    pub authentication: mpsc::Sender<AuthAnswer>,
 }
 
 pub type SessionMap = Arc<Mutex<HashMap<String, SessionControl>>>;
@@ -107,6 +156,7 @@ pub async fn run(
     data: Channel<Response>,
     commands: mpsc::Receiver<SessionCommand>,
     host_key_answers: mpsc::Receiver<HostKeyAnswer>,
+    auth_answers: mpsc::Receiver<AuthAnswer>,
 ) -> Result<()> {
     let blocks = ssh_config::load_default()?;
     let chain = ssh_config::chain_for_route(&request.route, &blocks)?;
@@ -129,6 +179,10 @@ pub async fn run(
     let mut tunnel = None;
     let known_hosts_path = host_keys::default_path()?;
     let host_key_answers = Arc::new(Mutex::new(host_key_answers));
+    let auth_prompter = UiAuthPrompter {
+        events: events.clone(),
+        answers: Arc::new(Mutex::new(auth_answers)),
+    };
 
     for (index, endpoint) in chain.iter().enumerate() {
         send(
@@ -166,7 +220,7 @@ pub async fn run(
                     format!("{}:{} へ接続できません", endpoint.hostname, endpoint.port)
                 })?
         };
-        authenticate(&mut handle, endpoint).await?;
+        authenticate(&mut handle, endpoint, &auth_prompter).await?;
         send(
             &events,
             SessionEvent::Hop {
@@ -364,18 +418,128 @@ impl HostVerifier {
     }
 }
 
-async fn authenticate(
-    handle: &mut client::Handle<HostVerifier>,
+struct UiAuthPrompter {
+    events: Channel<SessionEvent>,
+    answers: Arc<Mutex<mpsc::Receiver<AuthAnswer>>>,
+}
+
+trait AuthPromptProvider {
+    async fn prompt(&self, prompt: AuthPrompt) -> Result<Vec<String>>;
+}
+
+impl AuthPromptProvider for UiAuthPrompter {
+    async fn prompt(&self, prompt: AuthPrompt) -> Result<Vec<String>> {
+        let request_id = prompt.request_id.clone();
+        send(&self.events, SessionEvent::AuthPrompt { prompt });
+        let mut answer = tokio::time::timeout(AUTH_RESPONSE_TIMEOUT, async {
+            let mut answers = self.answers.lock().await;
+            loop {
+                let answer = answers
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow!("認証応答チャネルが閉じました"))?;
+                if answer.request_id.as_deref() == Some(&request_id) || answer.request_id.is_none()
+                {
+                    return Ok::<_, anyhow::Error>(answer);
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow!("認証入力が5分以内に完了しませんでした"))??;
+
+        if answer.cancelled {
+            bail!("認証入力がキャンセルされました")
+        }
+        Ok(std::mem::take(&mut answer.responses))
+    }
+}
+
+enum AuthProgress {
+    Success,
+    Continue(MethodSet),
+}
+
+fn auth_progress(result: client::AuthResult) -> AuthProgress {
+    match result {
+        client::AuthResult::Success => AuthProgress::Success,
+        client::AuthResult::Failure {
+            remaining_methods, ..
+        } => AuthProgress::Continue(remaining_methods),
+    }
+}
+
+fn auth_prompt(
     endpoint: &Endpoint,
+    username: &str,
+    kind: &'static str,
+    title: impl Into<String>,
+    instructions: impl Into<String>,
+    fields: Vec<AuthField>,
+) -> AuthPrompt {
+    AuthPrompt {
+        request_id: format!("auth-{}", AUTH_REQUEST_ID.fetch_add(1, Ordering::Relaxed)),
+        hop: endpoint.alias.clone(),
+        username: username.to_owned(),
+        kind,
+        title: title.into(),
+        instructions: instructions.into(),
+        fields,
+    }
+}
+
+pub fn validate_auth_responses(expected: Option<usize>, responses: &[String]) -> Result<()> {
+    if responses.len() > MAX_AUTH_PROMPTS {
+        bail!("認証応答の項目数が上限を超えています")
+    }
+    if let Some(expected) = expected
+        && responses.len() != expected
+    {
+        bail!(
+            "認証応答の項目数が一致しません（expected {expected}, received {}）",
+            responses.len()
+        )
+    }
+    if responses
+        .iter()
+        .any(|response| response.len() > MAX_AUTH_RESPONSE_BYTES)
+    {
+        bail!("認証応答がサイズ上限を超えています")
+    }
+    Ok(())
+}
+
+async fn ask_for_auth<P: AuthPromptProvider>(
+    prompter: &P,
+    prompt: AuthPrompt,
+) -> Result<Vec<String>> {
+    let expected = prompt.fields.len();
+    let mut responses = prompter.prompt(prompt).await?;
+    if let Err(error) = validate_auth_responses(Some(expected), &responses) {
+        responses.zeroize();
+        return Err(error);
+    }
+    Ok(responses)
+}
+
+async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
+    handle: &mut client::Handle<H>,
+    endpoint: &Endpoint,
+    prompter: &P,
 ) -> Result<()> {
     let username = endpoint.user.clone().unwrap_or_else(default_username);
+    let mut methods = match auth_progress(handle.authenticate_none(username.clone()).await?) {
+        AuthProgress::Success => return Ok(()),
+        AuthProgress::Continue(methods) => methods,
+    };
 
     #[cfg(unix)]
-    if authenticate_with_agent(handle, &username)
-        .await
-        .unwrap_or(false)
+    if methods.contains(&MethodKind::PublicKey)
+        && let Ok(progress) = authenticate_with_agent(handle, &username, methods.clone()).await
     {
-        return Ok(());
+        match progress {
+            AuthProgress::Success => return Ok(()),
+            AuthProgress::Continue(next) => methods = next,
+        }
     }
 
     let mut candidates = endpoint.identity_files.clone();
@@ -388,41 +552,180 @@ async fn authenticate(
         }
     }
 
-    let mut attempted = Vec::new();
+    let mut attempted_keys = Vec::new();
     for path in candidates.into_iter().filter(|path| path.is_file()) {
-        attempted.push(path.display().to_string());
-        let Ok(key) = russh::keys::load_secret_key(&path, None) else {
-            continue;
+        if !methods.contains(&MethodKind::PublicKey) {
+            break;
+        }
+        attempted_keys.push(path.display().to_string());
+        let key = match russh::keys::load_secret_key(&path, None) {
+            Ok(key) => Some(key),
+            Err(russh::keys::Error::KeyIsEncrypted) => {
+                let mut decrypted = None;
+                for attempt in 1..=3 {
+                    let mut responses = ask_for_auth(
+                        prompter,
+                        auth_prompt(
+                            endpoint,
+                            &username,
+                            "key_passphrase",
+                            "秘密鍵のパスフレーズ",
+                            format!(
+                                "{} を復号します（{attempt}/3）。値は保存されません。",
+                                path.display()
+                            ),
+                            vec![AuthField {
+                                label: "Passphrase".to_owned(),
+                                echo: false,
+                            }],
+                        ),
+                    )
+                    .await?;
+                    let mut passphrase = responses.pop().unwrap_or_default();
+                    let loaded = russh::keys::load_secret_key(&path, Some(&passphrase));
+                    passphrase.zeroize();
+                    responses.zeroize();
+                    if let Ok(key) = loaded {
+                        decrypted = Some(key);
+                        break;
+                    }
+                }
+                decrypted
+            }
+            Err(_) => None,
         };
+        let Some(key) = key else { continue };
         let hash = handle.best_supported_rsa_hash().await?.flatten();
-        let result = handle
-            .authenticate_publickey(
-                username.clone(),
-                PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-            )
-            .await?;
-        if result.success() {
-            return Ok(());
+        match auth_progress(
+            handle
+                .authenticate_publickey(
+                    username.clone(),
+                    PrivateKeyWithHashAlg::new(Arc::new(key), hash),
+                )
+                .await?,
+        ) {
+            AuthProgress::Success => return Ok(()),
+            AuthProgress::Continue(next) => methods = next,
         }
     }
 
-    let detail = if attempted.is_empty() {
-        "利用可能な ssh-agent または秘密鍵がありません".to_owned()
+    if methods.contains(&MethodKind::KeyboardInteractive) {
+        match authenticate_keyboard_interactive(handle, endpoint, &username, prompter).await? {
+            AuthProgress::Success => return Ok(()),
+            AuthProgress::Continue(next) => methods = next,
+        }
+    }
+
+    if methods.contains(&MethodKind::Password) {
+        for attempt in 1..=3 {
+            let mut responses = ask_for_auth(
+                prompter,
+                auth_prompt(
+                    endpoint,
+                    &username,
+                    "password",
+                    "SSH パスワード",
+                    format!("{username}@{} のパスワード（{attempt}/3）", endpoint.alias),
+                    vec![AuthField {
+                        label: "Password".to_owned(),
+                        echo: false,
+                    }],
+                ),
+            )
+            .await?;
+            let mut password = responses.pop().unwrap_or_default();
+            let result = handle
+                .authenticate_password(username.clone(), password.clone())
+                .await;
+            password.zeroize();
+            responses.zeroize();
+            match auth_progress(result?) {
+                AuthProgress::Success => return Ok(()),
+                AuthProgress::Continue(next) => {
+                    methods = next;
+                    if !methods.contains(&MethodKind::Password) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let detail = if attempted_keys.is_empty() {
+        "利用可能な認証方法をすべて試行しました".to_owned()
     } else {
-        format!("試行した鍵: {}", attempted.join(", "))
+        format!("試行した鍵: {}", attempted_keys.join(", "))
     };
     bail!(
-        "{}@{} の公開鍵認証に失敗しました。{detail}",
+        "{}@{} のSSH認証に失敗しました。{detail}",
         username,
         endpoint.alias
     )
 }
 
-#[cfg(unix)]
-async fn authenticate_with_agent(
-    handle: &mut client::Handle<HostVerifier>,
+async fn authenticate_keyboard_interactive<H: client::Handler, P: AuthPromptProvider>(
+    handle: &mut client::Handle<H>,
+    endpoint: &Endpoint,
     username: &str,
-) -> Result<bool> {
+    prompter: &P,
+) -> Result<AuthProgress> {
+    let mut response = handle
+        .authenticate_keyboard_interactive_start(username.to_owned(), None)
+        .await?;
+    for _round in 0..16 {
+        match response {
+            client::KeyboardInteractiveAuthResponse::Success => {
+                return Ok(AuthProgress::Success);
+            }
+            client::KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods, ..
+            } => return Ok(AuthProgress::Continue(remaining_methods)),
+            client::KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                if prompts.len() > MAX_AUTH_PROMPTS {
+                    bail!("keyboard-interactive の質問数が上限を超えています")
+                }
+                let fields = prompts
+                    .into_iter()
+                    .map(|prompt| AuthField {
+                        label: bounded_text(&prompt.prompt, 4096),
+                        echo: prompt.echo,
+                    })
+                    .collect();
+                let answers = ask_for_auth(
+                    prompter,
+                    auth_prompt(
+                        endpoint,
+                        username,
+                        "keyboard_interactive",
+                        bounded_text(&name, 4096),
+                        bounded_text(&instructions, 4096),
+                        fields,
+                    ),
+                )
+                .await?;
+                response = handle
+                    .authenticate_keyboard_interactive_respond(answers)
+                    .await?;
+            }
+        }
+    }
+    bail!("keyboard-interactive の認証ラウンド数が上限を超えています")
+}
+
+fn bounded_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+#[cfg(unix)]
+async fn authenticate_with_agent<H: client::Handler>(
+    handle: &mut client::Handle<H>,
+    username: &str,
+    mut methods: MethodSet,
+) -> Result<AuthProgress> {
     use russh::keys::agent::{AgentIdentity, client::AgentClient};
 
     let mut agent = AgentClient::connect_env().await?;
@@ -433,12 +736,18 @@ async fn authenticate_with_agent(
             let result = handle
                 .authenticate_publickey_with(username, key, hash, &mut agent)
                 .await?;
-            if result.success() {
-                return Ok(true);
+            match auth_progress(result) {
+                AuthProgress::Success => return Ok(AuthProgress::Success),
+                AuthProgress::Continue(next) => {
+                    methods = next;
+                    if !methods.contains(&MethodKind::PublicKey) {
+                        break;
+                    }
+                }
             }
         }
     }
-    Ok(false)
+    Ok(AuthProgress::Continue(methods))
 }
 
 fn default_username() -> String {
@@ -458,4 +767,263 @@ pub fn event_error(channel: &Channel<SessionEvent>, error: &anyhow::Error) {
 
 pub fn event_closed(channel: &Channel<SessionEvent>) {
     send(channel, SessionEvent::Closed);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::collections::VecDeque;
+
+    use russh::server;
+
+    use super::*;
+
+    const ENCRYPTED_ED25519_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABD1phlku5
+A2G7Q9iP+DcOc9AAAAEAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIHeLC1lWiCYrXsf/
+85O/pkbUFZ6OGIt49PX3nw8iRoXEAAAAkKRF0st5ZI7xxo9g6A4m4l6NarkQre3mycqNXQ
+dP3jryYgvsCIBAA5jMWSjrmnOTXhidqcOy4xYCrAttzSnZ/cUadfBenL+DQq6neffw7j8r
+0tbCxVGp6yCQlKrgSZf6c0Hy7dNEIU2bJFGxLe6/kWChcUAt/5Ll5rI7DVQPJdLgehLzvv
+sJWR7W+cGvJ/vLsw==
+-----END OPENSSH PRIVATE KEY-----";
+
+    struct ScriptedPrompter {
+        answers: Mutex<VecDeque<Vec<String>>>,
+        prompts: Mutex<Vec<AuthPrompt>>,
+    }
+
+    impl ScriptedPrompter {
+        fn new(answers: Vec<Vec<&str>>) -> Self {
+            Self {
+                answers: Mutex::new(
+                    answers
+                        .into_iter()
+                        .map(|answer| answer.into_iter().map(str::to_owned).collect())
+                        .collect(),
+                ),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AuthPromptProvider for ScriptedPrompter {
+        async fn prompt(&self, prompt: AuthPrompt) -> Result<Vec<String>> {
+            self.prompts.lock().await.push(prompt);
+            self.answers
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| anyhow!("scripted authentication answer is missing"))
+        }
+    }
+
+    struct AcceptServerKey;
+
+    impl client::Handler for AcceptServerKey {
+        type Error = anyhow::Error;
+
+        async fn check_server_key(
+            &mut self,
+            _server_public_key: &ssh_key::PublicKey,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum ServerAuthMode {
+        Password,
+        KeyboardInteractive,
+        PublicKey,
+    }
+
+    struct TestAuthServer {
+        mode: ServerAuthMode,
+    }
+
+    impl server::Handler for TestAuthServer {
+        type Error = anyhow::Error;
+
+        async fn auth_none(&mut self, _user: &str) -> Result<server::Auth, Self::Error> {
+            let method = match self.mode {
+                ServerAuthMode::Password => MethodKind::Password,
+                ServerAuthMode::KeyboardInteractive => MethodKind::KeyboardInteractive,
+                ServerAuthMode::PublicKey => MethodKind::PublicKey,
+            };
+            Ok(server::Auth::Reject {
+                proceed_with_methods: Some(MethodSet::from(&[method][..])),
+                partial_success: false,
+            })
+        }
+
+        async fn auth_password(
+            &mut self,
+            user: &str,
+            password: &str,
+        ) -> Result<server::Auth, Self::Error> {
+            if matches!(self.mode, ServerAuthMode::Password)
+                && user == "operator"
+                && password == "password-value"
+            {
+                Ok(server::Auth::Accept)
+            } else {
+                Ok(server::Auth::reject())
+            }
+        }
+
+        async fn auth_publickey(
+            &mut self,
+            user: &str,
+            public_key: &ssh_key::PublicKey,
+        ) -> Result<server::Auth, Self::Error> {
+            let expected =
+                russh::keys::decode_secret_key(ENCRYPTED_ED25519_KEY, Some("test")).unwrap();
+            if matches!(self.mode, ServerAuthMode::PublicKey)
+                && user == "operator"
+                && public_key == expected.public_key()
+            {
+                Ok(server::Auth::Accept)
+            } else {
+                Ok(server::Auth::reject())
+            }
+        }
+
+        async fn auth_keyboard_interactive<'a>(
+            &'a mut self,
+            user: &str,
+            _submethods: &str,
+            response: Option<server::Response<'a>>,
+        ) -> Result<server::Auth, Self::Error> {
+            if !matches!(self.mode, ServerAuthMode::KeyboardInteractive) || user != "operator" {
+                return Ok(server::Auth::reject());
+            }
+            let Some(response) = response else {
+                return Ok(server::Auth::Partial {
+                    name: Cow::Borrowed("Operations MFA"),
+                    instructions: Cow::Borrowed("Enter both account password and OTP"),
+                    prompts: Cow::Owned(vec![
+                        (Cow::Borrowed("Password"), false),
+                        (Cow::Borrowed("One-time code"), false),
+                    ]),
+                });
+            };
+            let answers = response
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .collect::<Vec<_>>();
+            if answers == ["password-value", "123456"] {
+                Ok(server::Auth::Accept)
+            } else {
+                Ok(server::Auth::reject())
+            }
+        }
+    }
+
+    async fn test_client(
+        mode: ServerAuthMode,
+    ) -> (
+        client::Handle<AcceptServerKey>,
+        tokio::task::JoinHandle<Result<(), anyhow::Error>>,
+    ) {
+        let server_config = server::Config {
+            inactivity_timeout: None,
+            auth_rejection_time: Duration::from_millis(1),
+            auth_rejection_time_initial: Some(Duration::from_millis(1)),
+            keys: vec![
+                russh::keys::decode_secret_key(ENCRYPTED_ED25519_KEY, Some("test")).unwrap(),
+            ],
+            ..Default::default()
+        };
+        let server_config = Arc::new(server_config);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await?;
+            let running =
+                server::run_stream(server_config, socket, TestAuthServer { mode }).await?;
+            running.await
+        });
+        let client = client::connect(
+            Arc::new(client::Config::default()),
+            address,
+            AcceptServerKey,
+        )
+        .await
+        .unwrap();
+        (client, server)
+    }
+
+    fn endpoint(identity_files: Vec<PathBuf>) -> Endpoint {
+        Endpoint {
+            alias: "maintenance-hop".to_owned(),
+            hostname: "127.0.0.1".to_owned(),
+            user: Some("operator".to_owned()),
+            port: 22,
+            identity_files,
+            proxy_jump: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticates_with_password_prompt() {
+        let (mut client, server) = test_client(ServerAuthMode::Password).await;
+        let prompter = ScriptedPrompter::new(vec![vec!["password-value"]]);
+
+        authenticate(&mut client, &endpoint(Vec::new()), &prompter)
+            .await
+            .unwrap();
+
+        let prompts = prompter.prompts.lock().await;
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].kind, "password");
+        assert_eq!(prompts[0].hop, "maintenance-hop");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn authenticates_multiple_keyboard_interactive_prompts() {
+        let (mut client, server) = test_client(ServerAuthMode::KeyboardInteractive).await;
+        let prompter = ScriptedPrompter::new(vec![vec!["password-value", "123456"]]);
+
+        authenticate(&mut client, &endpoint(Vec::new()), &prompter)
+            .await
+            .unwrap();
+
+        let prompts = prompter.prompts.lock().await;
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].kind, "keyboard_interactive");
+        assert_eq!(prompts[0].fields.len(), 2);
+        assert!(prompts[0].fields.iter().all(|field| !field.echo));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn decrypts_openssh_key_with_one_time_passphrase() {
+        let directory = tempfile::tempdir().unwrap();
+        let key_path = directory.path().join("id_ed25519");
+        std::fs::write(&key_path, ENCRYPTED_ED25519_KEY).unwrap();
+        let (mut client, server) = test_client(ServerAuthMode::PublicKey).await;
+        let prompter = ScriptedPrompter::new(vec![vec!["test"]]);
+
+        authenticate(&mut client, &endpoint(vec![key_path]), &prompter)
+            .await
+            .unwrap();
+
+        let prompts = prompter.prompts.lock().await;
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].kind, "key_passphrase");
+        server.abort();
+    }
+
+    #[test]
+    fn authentication_answers_redact_secrets_from_debug_and_errors() {
+        let answer = AuthAnswer {
+            request_id: Some("auth-test".to_owned()),
+            responses: vec!["never-print-this-secret".to_owned()],
+            cancelled: false,
+        };
+
+        assert!(!format!("{answer:?}").contains("never-print-this-secret"));
+        let error = validate_auth_responses(Some(2), &answer.responses).unwrap_err();
+        assert!(!error.to_string().contains("never-print-this-secret"));
+    }
 }

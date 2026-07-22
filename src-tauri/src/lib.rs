@@ -7,10 +7,11 @@ use std::sync::Arc;
 use tauri::State;
 use tauri::ipc::{Channel, Response};
 use tokio::sync::mpsc;
+use zeroize::Zeroize;
 
 use ssh::{
-    ConnectRequest, HostKeyAnswer, HostKeyDecision, SessionCommand, SessionControl, SessionEvent,
-    SessionMap,
+    AuthAnswer, ConnectRequest, HostKeyAnswer, HostKeyDecision, SessionCommand, SessionControl,
+    SessionEvent, SessionMap,
 };
 use ssh_config::HostProfile;
 
@@ -43,6 +44,7 @@ async fn connect_session(
     let session_id = request.session_id.clone();
     let (command_sender, command_receiver) = mpsc::channel(256);
     let (host_key_sender, host_key_receiver) = mpsc::channel(8);
+    let (auth_sender, auth_receiver) = mpsc::channel(8);
     {
         let mut sessions = state.sessions.lock().await;
         if sessions.contains_key(&session_id) {
@@ -53,6 +55,7 @@ async fn connect_session(
             SessionControl {
                 commands: command_sender,
                 host_keys: host_key_sender,
+                authentication: auth_sender,
             },
         );
     }
@@ -65,6 +68,7 @@ async fn connect_session(
             on_data,
             command_receiver,
             host_key_receiver,
+            auth_receiver,
         )
         .await
         {
@@ -129,6 +133,14 @@ async fn close_session(session_id: String, state: State<'_, AppState>) -> Result
             decision: HostKeyDecision::Reject,
         })
         .await;
+    let _ = control
+        .authentication
+        .send(AuthAnswer {
+            request_id: None,
+            responses: Vec::new(),
+            cancelled: true,
+        })
+        .await;
     control
         .commands
         .send(SessionCommand::Close)
@@ -160,6 +172,45 @@ async fn answer_host_key(
         .map_err(|_| "ホスト鍵の確認は終了しています".to_owned())
 }
 
+#[tauri::command]
+async fn answer_auth(
+    session_id: String,
+    request_id: String,
+    mut responses: Vec<String>,
+    cancelled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Err(error) = ssh::validate_auth_responses(None, &responses) {
+        responses.zeroize();
+        return Err(error.to_string());
+    }
+    let sender = state
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .map(|session| session.authentication.clone())
+        .ok_or_else(|| "セッションが見つかりません".to_owned());
+    let sender = match sender {
+        Ok(sender) => sender,
+        Err(error) => {
+            responses.zeroize();
+            return Err(error);
+        }
+    };
+    if cancelled {
+        responses.zeroize();
+    }
+    sender
+        .send(AuthAnswer {
+            request_id: Some(request_id),
+            responses,
+            cancelled,
+        })
+        .await
+        .map_err(|_| "認証入力は終了しています".to_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -172,6 +223,7 @@ pub fn run() {
             session_resize,
             close_session,
             answer_host_key,
+            answer_auth,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ope-term");

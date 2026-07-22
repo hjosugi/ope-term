@@ -14,8 +14,8 @@ v0.1 は Unix ssh-agent とパスフレーズなし秘密鍵だけを扱う。MF
 
 ## 受け入れ条件
 
-- [ ] password 認証で接続できる
-- [ ] 複数問の keyboard-interactive（OTP 含む）に回答できる
-- [ ] 暗号化 OpenSSH 秘密鍵を開ける
-- [ ] 入力値が DevTools、ログ、panic payload に出ないことをテストする
-- [ ] 多段接続のどの hop が要求しているか UI に表示する
+- [x] password 認証で接続できる
+- [x] 複数問の keyboard-interactive（OTP 含む）に回答できる
+- [x] 暗号化 OpenSSH 秘密鍵を開ける
+- [x] 入力値が DevTools、ログ、panic payload に出ないことをテストする
+- [x] 多段接続のどの hop が要求しているか UI に表示する

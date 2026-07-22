@@ -26,7 +26,7 @@ Rust session task (one task per terminal)
 - `ssh.rs`: known_hosts 検証、認証、多段トンネル、PTY、入出力、keepalive
 - `lib.rs`: 最小の Tauri command とセッション registry
 
-各セッションは独立した Tokio task です。入力・リサイズ・終了とホスト鍵への応答は用途別の bounded `mpsc`、出力と hop 状態・ホスト鍵確認は Tauri IPC Channel で運びます。大量データ向けでない Tauri event bus は端末出力に使いません。
+各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。大量データ向けでない Tauri event bus は端末出力に使いません。
 
 ### WebView
 
@@ -34,6 +34,7 @@ Rust session task (one task per terminal)
 - `route.ts`: 明示ルートと ProxyJump preview の純粋関数
 - `keybindings.ts`: ショートカットの正規化と永続化
 - `fuzzy.ts`: Host / command / shortcut の共通 fuzzy ranking
+- `auth-secrets.ts`: 認証入力欄と短命な応答配列の明示消去
 
 WebView はファイルシステム、ソケット、鍵へ直接アクセスできません。
 
@@ -43,10 +44,11 @@ WebView はファイルシステム、ソケット、鍵へ直接アクセスで
 2. Rust が 1 ピースの route を ProxyJump 展開する。2 ピース以上なら明示順を使う。
 3. 先頭 hop に TCP 接続して `known_hosts` を照合する。未知鍵は UI へ SHA256 fingerprint を提示して応答を待ち、変更鍵は既存行番号を示して拒否する。
 4. 「信頼して保存」が選ばれた場合だけ `~/.ssh/known_hosts` へ追記してから認証する。「今回のみ」はファイルを変更しない。
-5. 次 hop があれば `channel_open_direct_tcpip` を開き、その `ChannelStream` を次の `russh::client::connect_stream` へ渡す。
-6. 最終 hop で PTY と shell を要求する。
-7. `tokio::select!` で UI command と SSH channel message を処理する。
-8. 終了時は最終 hop から逆順に disconnect する。
+5. 各hopでサーバーのremaining methodsに従い、agent/公開鍵、keyboard-interactive、passwordを試す。暗号化鍵、password、keyboard-interactiveは要求元hop付きのpromptをUIへ送り、5分以内の使い捨て応答を待つ。
+6. 次 hop があれば `channel_open_direct_tcpip` を開き、その `ChannelStream` を次の `russh::client::connect_stream` へ渡す。
+7. 最終 hop で PTY と shell を要求する。
+8. `tokio::select!` で UI command と SSH channel message を処理する。
+9. 終了時は最終 hop から逆順に disconnect する。
 
 ## 故障分離
 

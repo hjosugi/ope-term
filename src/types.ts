@@ -26,10 +26,26 @@ export interface HostKeyPrompt {
   existingLine?: number;
 }
 
+export interface AuthField {
+  label: string;
+  echo: boolean;
+}
+
+export interface AuthPrompt {
+  requestId: string;
+  hop: string;
+  username: string;
+  kind: 'password' | 'keyboard_interactive' | 'key_passphrase';
+  title: string;
+  instructions: string;
+  fields: AuthField[];
+}
+
 export type SessionEvent =
   | { type: 'chain'; hops: HopStatus[] }
   | { type: 'hop'; hop: HopStatus }
   | { type: 'host_key_prompt'; prompt: HostKeyPrompt }
+  | { type: 'auth_prompt'; prompt: AuthPrompt }
   | { type: 'ready' }
   | { type: 'error'; message: string }
   | { type: 'closed' };
