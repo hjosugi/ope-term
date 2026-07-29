@@ -12,7 +12,7 @@
 - Tauri 2 + Rust (`russh`) + xterm.js 6
 - OpenSSH config の Host / HostName / User / Port / IdentityFile / ProxyJump / wildcard / negation
 - `ssh-agent`（Unix）と秘密鍵による SSH2 認証
-- `known_hosts` の厳格なホスト鍵検証（unknown / changed は拒否）
+- `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート
 - hop ごとの connecting / connected / error 表示
 - 複数セッションのタブ切替、端末リサイズ、切断
@@ -24,6 +24,26 @@
 ## 起動
 
 前提は Node.js 22 以上、Rust 1.85 以上と、Tauri が各 OS で必要とするシステムパッケージです。Linux の WebKitGTK を含む詳細は [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) を参照してください。
+
+### Nix（推奨）
+
+Nix 2.4 以降で flake を有効にしている場合、Node/RustとLinuxのTauri依存をまとめて再現できます。
+
+```bash
+nix develop
+npm ci
+npm run tauri dev
+```
+
+`direnv`を使う場合は、リポジトリに含まれる`.envrc`を一度許可します。
+
+```bash
+direnv allow
+```
+
+flakeはLinux x86_64/aarch64とmacOS Intel/Apple Siliconを評価対象にします。macOSのTauriビルドには、Nix外でXcode Command Line Toolsも必要です。
+
+### システム環境
 
 ```bash
 npm ci
@@ -55,13 +75,9 @@ Host prod-db
   ProxyJump bastion
 ```
 
-初回接続先は、先に OpenSSH CLI でホスト鍵を確認して `known_hosts` へ登録してください。
+初回接続では hostname、port、hop、algorithm、SHA256 fingerprint を確認画面に表示します。管理者や別の安全な経路で fingerprint を照合し、「今回のみ信頼」または「信頼して保存」を選びます。保存先は OpenSSH と共通の `~/.ssh/known_hosts` です。
 
-```bash
-ssh prod-db
-```
-
-ope-term は未知のホスト鍵を自動承認しません。鍵が変わった場合も接続を拒否します。
+ope-term は未知のホスト鍵を自動承認しません。保存済みの鍵が変わった場合は接続を拒否し、既存行を UI から上書きしません。
 
 ## ルートの組み方
 
@@ -93,7 +109,7 @@ Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックし
 - telnet / serial は運用上の需要を確認し、平文警告や権限制御を設計してから別 transport として検討します。
 - WebView は Node.js 権限を持ちません。Tauri capability は `core:default` のみに絞っています。
 - リモート出力は Rust から Channel 経由で xterm に渡し、HTML として挿入しません。
-- ホスト鍵の初回信頼ダイアログが入るまでは、CLI での事前確認を必須とします。
+- 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
 
 脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
 

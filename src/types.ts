@@ -15,9 +15,21 @@ export interface HopStatus {
   state: HopState;
 }
 
+export interface HostKeyPrompt {
+  requestId: string;
+  hop: string;
+  hostname: string;
+  port: number;
+  algorithm: string;
+  fingerprint: string;
+  status: 'unknown' | 'changed';
+  existingLine?: number;
+}
+
 export type SessionEvent =
   | { type: 'chain'; hops: HopStatus[] }
   | { type: 'hop'; hop: HopStatus }
+  | { type: 'host_key_prompt'; prompt: HostKeyPrompt }
   | { type: 'ready' }
   | { type: 'error'; message: string }
   | { type: 'closed' };

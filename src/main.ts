@@ -13,7 +13,7 @@ import {
   type CommandId,
 } from './keybindings';
 import { appendUnique, moveRouteItem, routePreview } from './route';
-import type { ConnectRequest, HopStatus, HostProfile, SessionEvent } from './types';
+import type { ConnectRequest, HopStatus, HostKeyPrompt, HostProfile, SessionEvent } from './types';
 
 interface SessionUi {
   id: string;
@@ -46,6 +46,11 @@ interface PaletteItem {
   run: () => void;
 }
 
+interface HostKeyDialogItem {
+  sessionId: string;
+  prompt: HostKeyPrompt;
+}
+
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`Missing #${id}`);
@@ -74,6 +79,18 @@ const ui = {
   shortcutEditor: element<HTMLElement>('shortcut-editor'),
   shortcutQuery: element<HTMLInputElement>('shortcut-query'),
   shortcutList: element<HTMLElement>('shortcut-list'),
+  hostKeyDialog: element<HTMLElement>('host-key-dialog'),
+  hostKeyTitle: element<HTMLElement>('host-key-title'),
+  hostKeyStatus: element<HTMLElement>('host-key-status'),
+  hostKeyMessage: element<HTMLElement>('host-key-message'),
+  hostKeyHop: element<HTMLElement>('host-key-hop'),
+  hostKeyEndpoint: element<HTMLElement>('host-key-endpoint'),
+  hostKeyAlgorithm: element<HTMLElement>('host-key-algorithm'),
+  hostKeyFingerprint: element<HTMLElement>('host-key-fingerprint'),
+  hostKeyGuidance: element<HTMLElement>('host-key-guidance'),
+  hostKeyReject: element<HTMLButtonElement>('host-key-reject'),
+  hostKeyOnce: element<HTMLButtonElement>('host-key-once'),
+  hostKeySave: element<HTMLButtonElement>('host-key-save'),
 };
 
 let hosts: HostProfile[] = [];
@@ -84,6 +101,8 @@ let selectedCommand = 0;
 let paletteItems: PaletteItem[] = [];
 let recordingCommand: CommandId | null = null;
 let keybindings = loadKeybindings();
+let activeHostKeyPrompt: HostKeyDialogItem | null = null;
+const pendingHostKeyPrompts: HostKeyDialogItem[] = [];
 const sessions = new Map<string, SessionUi>();
 
 const commands: CommandDefinition[] = [
@@ -397,6 +416,9 @@ function handleSessionEvent(session: SessionUi, event: SessionEvent): void {
       renderHopbar(session);
       break;
     }
+    case 'host_key_prompt':
+      enqueueHostKeyPrompt(session.id, event.prompt);
+      break;
     case 'ready':
       session.state = 'connected';
       if (session.id === activeSessionId) updateConnectionState(session);
@@ -413,6 +435,82 @@ function handleSessionEvent(session: SessionUi, event: SessionEvent): void {
       renderTabs();
       break;
   }
+}
+
+function enqueueHostKeyPrompt(sessionId: string, prompt: HostKeyPrompt): void {
+  const item = { sessionId, prompt };
+  if (activeHostKeyPrompt) {
+    pendingHostKeyPrompts.push(item);
+    return;
+  }
+  showHostKeyPrompt(item);
+}
+
+function showHostKeyPrompt(item: HostKeyDialogItem): void {
+  activeHostKeyPrompt = item;
+  const { prompt } = item;
+  const changed = prompt.status === 'changed';
+  const box = ui.hostKeyDialog.querySelector<HTMLElement>('.host-key-box');
+  box?.classList.toggle('changed', changed);
+  ui.hostKeyTitle.textContent = changed ? 'ホスト鍵が変更されています' : '未知のホスト鍵';
+  ui.hostKeyStatus.textContent = changed ? 'CHANGED · BLOCKED' : 'UNKNOWN';
+  ui.hostKeyMessage.textContent = changed
+    ? '以前に保存した鍵と、接続先が提示した鍵が一致しません。中間者攻撃またはサーバー再構築の可能性があるため、接続を拒否しました。'
+    : 'この接続先の鍵は known_hosts にありません。管理者や別の安全な経路で SHA256 fingerprint を照合してから選択してください。';
+  ui.hostKeyHop.textContent = prompt.hop;
+  ui.hostKeyEndpoint.textContent = `${prompt.hostname}:${prompt.port}`;
+  ui.hostKeyAlgorithm.textContent = prompt.algorithm;
+  ui.hostKeyFingerprint.textContent = prompt.fingerprint;
+  ui.hostKeyGuidance.textContent = changed
+    ? `known_hosts ${prompt.existingLine ?? '?'} 行目を自動更新しません。変更が正当だと確認できた場合のみ、OpenSSH の ssh-keygen -R などで既存鍵を手動削除して再接続してください。`
+    : '「今回のみ」はファイルを変更しません。「信頼して保存」は ~/.ssh/known_hosts に追記し、次回から同じ鍵だけを許可します。';
+  ui.hostKeyReject.textContent = changed ? '閉じる' : '接続しない';
+  ui.hostKeyOnce.classList.toggle('hidden', changed);
+  ui.hostKeySave.classList.toggle('hidden', changed);
+  setHostKeyButtonsDisabled(false);
+  ui.hostKeyDialog.classList.remove('hidden');
+  window.requestAnimationFrame(() => ui.hostKeyReject.focus());
+}
+
+function setHostKeyButtonsDisabled(disabled: boolean): void {
+  ui.hostKeyReject.disabled = disabled;
+  ui.hostKeyOnce.disabled = disabled;
+  ui.hostKeySave.disabled = disabled;
+}
+
+function finishHostKeyPrompt(): void {
+  activeHostKeyPrompt = null;
+  ui.hostKeyDialog.classList.add('hidden');
+  const next = pendingHostKeyPrompts.shift();
+  if (next) showHostKeyPrompt(next);
+}
+
+async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save'): Promise<void> {
+  const active = activeHostKeyPrompt;
+  if (!active) return;
+  if (active.prompt.status === 'changed') {
+    finishHostKeyPrompt();
+    return;
+  }
+  setHostKeyButtonsDisabled(true);
+  try {
+    await invoke('answer_host_key', {
+      sessionId: active.sessionId,
+      requestId: active.prompt.requestId,
+      decision,
+    });
+  } catch (error) {
+    toast(`ホスト鍵の応答に失敗しました: ${String(error)}`);
+  } finally {
+    finishHostKeyPrompt();
+  }
+}
+
+function discardHostKeyPrompts(sessionId: string): void {
+  for (let index = pendingHostKeyPrompts.length - 1; index >= 0; index -= 1) {
+    if (pendingHostKeyPrompts[index]?.sessionId === sessionId) pendingHostKeyPrompts.splice(index, 1);
+  }
+  if (activeHostKeyPrompt?.sessionId === sessionId) finishHostKeyPrompt();
 }
 
 function renderHopbar(session: SessionUi): void {
@@ -491,6 +589,7 @@ function closeSession(id: string): void {
   const session = sessions.get(id);
   if (!session) return;
   if (session.state !== 'closed') void invoke('close_session', { sessionId: id }).catch(() => undefined);
+  discardHostKeyPrompts(id);
   if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
   if (session.resizeTimer !== undefined) window.clearTimeout(session.resizeTimer);
   session.terminal.dispose();
@@ -715,6 +814,12 @@ element<HTMLButtonElement>('reset-shortcuts').addEventListener('click', () => {
   saveKeybindings(keybindings);
   renderShortcuts();
 });
+ui.hostKeyReject.addEventListener('click', () => {
+  if (activeHostKeyPrompt?.prompt.status === 'changed') finishHostKeyPrompt();
+  else void answerHostKey('reject');
+});
+ui.hostKeyOnce.addEventListener('click', () => void answerHostKey('trust_once'));
+ui.hostKeySave.addEventListener('click', () => void answerHostKey('trust_and_save'));
 ui.shortcutEditor.addEventListener('mousedown', (event) => {
   if (event.target === ui.shortcutEditor) closeShortcutEditor();
 });
@@ -722,6 +827,15 @@ ui.shortcutEditor.addEventListener('mousedown', (event) => {
 window.addEventListener(
   'keydown',
   (event) => {
+    if (!ui.hostKeyDialog.classList.contains('hidden')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeHostKeyPrompt?.prompt.status === 'changed') finishHostKeyPrompt();
+        else void answerHostKey('reject');
+      }
+      return;
+    }
     if (recordingCommand) {
       event.preventDefault();
       event.stopPropagation();
