@@ -4,6 +4,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import './style.css';
 
+import { clearAuthResponses, takeAndClearAuthResponses } from './auth-secrets';
 import { fuzzyFilter } from './fuzzy';
 import {
   DEFAULT_KEYBINDINGS,
@@ -13,7 +14,7 @@ import {
   type CommandId,
 } from './keybindings';
 import { appendUnique, moveRouteItem, routePreview } from './route';
-import type { ConnectRequest, HopStatus, HostKeyPrompt, HostProfile, SessionEvent } from './types';
+import type { AuthPrompt, ConnectRequest, HopStatus, HostKeyPrompt, HostProfile, SessionEvent } from './types';
 
 interface SessionUi {
   id: string;
@@ -49,6 +50,11 @@ interface PaletteItem {
 interface HostKeyDialogItem {
   sessionId: string;
   prompt: HostKeyPrompt;
+}
+
+interface AuthDialogItem {
+  sessionId: string;
+  prompt: AuthPrompt;
 }
 
 function element<T extends HTMLElement>(id: string): T {
@@ -91,6 +97,15 @@ const ui = {
   hostKeyReject: element<HTMLButtonElement>('host-key-reject'),
   hostKeyOnce: element<HTMLButtonElement>('host-key-once'),
   hostKeySave: element<HTMLButtonElement>('host-key-save'),
+  authDialog: element<HTMLElement>('auth-dialog'),
+  authTitle: element<HTMLElement>('auth-title'),
+  authKind: element<HTMLElement>('auth-kind'),
+  authHop: element<HTMLElement>('auth-hop'),
+  authUsername: element<HTMLElement>('auth-username'),
+  authInstructions: element<HTMLElement>('auth-instructions'),
+  authFields: element<HTMLElement>('auth-fields'),
+  authCancel: element<HTMLButtonElement>('auth-cancel'),
+  authSubmit: element<HTMLButtonElement>('auth-submit'),
 };
 
 let hosts: HostProfile[] = [];
@@ -103,6 +118,8 @@ let recordingCommand: CommandId | null = null;
 let keybindings = loadKeybindings();
 let activeHostKeyPrompt: HostKeyDialogItem | null = null;
 const pendingHostKeyPrompts: HostKeyDialogItem[] = [];
+let activeAuthPrompt: AuthDialogItem | null = null;
+const pendingAuthPrompts: AuthDialogItem[] = [];
 const sessions = new Map<string, SessionUi>();
 
 const commands: CommandDefinition[] = [
@@ -419,6 +436,9 @@ function handleSessionEvent(session: SessionUi, event: SessionEvent): void {
     case 'host_key_prompt':
       enqueueHostKeyPrompt(session.id, event.prompt);
       break;
+    case 'auth_prompt':
+      enqueueAuthPrompt(session.id, event.prompt);
+      break;
     case 'ready':
       session.state = 'connected';
       if (session.id === activeSessionId) updateConnectionState(session);
@@ -438,12 +458,19 @@ function handleSessionEvent(session: SessionUi, event: SessionEvent): void {
 }
 
 function enqueueHostKeyPrompt(sessionId: string, prompt: HostKeyPrompt): void {
-  const item = { sessionId, prompt };
-  if (activeHostKeyPrompt) {
-    pendingHostKeyPrompts.push(item);
+  pendingHostKeyPrompts.push({ sessionId, prompt });
+  showNextSecurePrompt();
+}
+
+function showNextSecurePrompt(): void {
+  if (activeHostKeyPrompt || activeAuthPrompt) return;
+  const hostKey = pendingHostKeyPrompts.shift();
+  if (hostKey) {
+    showHostKeyPrompt(hostKey);
     return;
   }
-  showHostKeyPrompt(item);
+  const auth = pendingAuthPrompts.shift();
+  if (auth) showAuthPrompt(auth);
 }
 
 function showHostKeyPrompt(item: HostKeyDialogItem): void {
@@ -481,8 +508,7 @@ function setHostKeyButtonsDisabled(disabled: boolean): void {
 function finishHostKeyPrompt(): void {
   activeHostKeyPrompt = null;
   ui.hostKeyDialog.classList.add('hidden');
-  const next = pendingHostKeyPrompts.shift();
-  if (next) showHostKeyPrompt(next);
+  showNextSecurePrompt();
 }
 
 async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save'): Promise<void> {
@@ -511,6 +537,102 @@ function discardHostKeyPrompts(sessionId: string): void {
     if (pendingHostKeyPrompts[index]?.sessionId === sessionId) pendingHostKeyPrompts.splice(index, 1);
   }
   if (activeHostKeyPrompt?.sessionId === sessionId) finishHostKeyPrompt();
+}
+
+function enqueueAuthPrompt(sessionId: string, prompt: AuthPrompt): void {
+  pendingAuthPrompts.push({ sessionId, prompt });
+  showNextSecurePrompt();
+}
+
+function showAuthPrompt(item: AuthDialogItem): void {
+  activeAuthPrompt = item;
+  const { prompt } = item;
+  const defaults = {
+    password: { title: 'SSH パスワード', kind: 'PASSWORD' },
+    keyboard_interactive: { title: '追加認証', kind: 'KEYBOARD INTERACTIVE' },
+    key_passphrase: { title: '秘密鍵のパスフレーズ', kind: 'KEY PASSPHRASE' },
+  } as const;
+  const fallback = defaults[prompt.kind];
+  ui.authTitle.textContent = prompt.title.trim() || fallback.title;
+  ui.authKind.textContent = fallback.kind;
+  ui.authHop.textContent = prompt.hop;
+  ui.authUsername.textContent = prompt.username;
+  ui.authInstructions.textContent = prompt.instructions;
+  ui.authFields.replaceChildren();
+  prompt.fields.forEach((field, index) => {
+    const label = document.createElement('label');
+    label.className = 'auth-field';
+    const copy = document.createElement('span');
+    copy.textContent = field.label || `Prompt ${index + 1}`;
+    const input = document.createElement('input');
+    input.type = field.echo ? 'text' : 'password';
+    input.autocomplete = 'off';
+    input.autocapitalize = 'off';
+    input.spellcheck = false;
+    input.dataset.authField = String(index);
+    input.setAttribute('aria-label', copy.textContent);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void submitAuthPrompt(false);
+      }
+    });
+    label.append(copy, input);
+    ui.authFields.append(label);
+  });
+  setAuthButtonsDisabled(false);
+  ui.authDialog.classList.remove('hidden');
+  window.requestAnimationFrame(() => {
+    const first = ui.authFields.querySelector<HTMLInputElement>('input');
+    (first ?? ui.authSubmit).focus();
+  });
+}
+
+function setAuthButtonsDisabled(disabled: boolean): void {
+  ui.authCancel.disabled = disabled;
+  ui.authSubmit.disabled = disabled;
+  for (const input of ui.authFields.querySelectorAll<HTMLInputElement>('input')) input.disabled = disabled;
+}
+
+function finishAuthPrompt(): void {
+  for (const input of ui.authFields.querySelectorAll<HTMLInputElement>('input')) input.value = '';
+  ui.authFields.replaceChildren();
+  activeAuthPrompt = null;
+  ui.authDialog.classList.add('hidden');
+  showNextSecurePrompt();
+}
+
+async function submitAuthPrompt(cancelled: boolean): Promise<void> {
+  const active = activeAuthPrompt;
+  if (!active) return;
+  const inputs = [...ui.authFields.querySelectorAll<HTMLInputElement>('input')];
+  const responses = cancelled ? [] : takeAndClearAuthResponses(inputs);
+  setAuthButtonsDisabled(true);
+  try {
+    await invoke('answer_auth', {
+      sessionId: active.sessionId,
+      requestId: active.prompt.requestId,
+      responses,
+      cancelled,
+    });
+    finishAuthPrompt();
+  } catch (error) {
+    toast(`認証応答の送信に失敗しました: ${String(error)}`);
+    setAuthButtonsDisabled(false);
+    window.requestAnimationFrame(() => {
+      const first = ui.authFields.querySelector<HTMLInputElement>('input');
+      (first ?? ui.authCancel).focus();
+    });
+  } finally {
+    clearAuthResponses(responses);
+  }
+}
+
+function discardAuthPrompts(sessionId: string): void {
+  for (let index = pendingAuthPrompts.length - 1; index >= 0; index -= 1) {
+    if (pendingAuthPrompts[index]?.sessionId === sessionId) pendingAuthPrompts.splice(index, 1);
+  }
+  if (activeAuthPrompt?.sessionId === sessionId) finishAuthPrompt();
 }
 
 function renderHopbar(session: SessionUi): void {
@@ -590,6 +712,7 @@ function closeSession(id: string): void {
   if (!session) return;
   if (session.state !== 'closed') void invoke('close_session', { sessionId: id }).catch(() => undefined);
   discardHostKeyPrompts(id);
+  discardAuthPrompts(id);
   if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
   if (session.resizeTimer !== undefined) window.clearTimeout(session.resizeTimer);
   session.terminal.dispose();
@@ -820,6 +943,8 @@ ui.hostKeyReject.addEventListener('click', () => {
 });
 ui.hostKeyOnce.addEventListener('click', () => void answerHostKey('trust_once'));
 ui.hostKeySave.addEventListener('click', () => void answerHostKey('trust_and_save'));
+ui.authCancel.addEventListener('click', () => void submitAuthPrompt(true));
+ui.authSubmit.addEventListener('click', () => void submitAuthPrompt(false));
 ui.shortcutEditor.addEventListener('mousedown', (event) => {
   if (event.target === ui.shortcutEditor) closeShortcutEditor();
 });
@@ -827,6 +952,14 @@ ui.shortcutEditor.addEventListener('mousedown', (event) => {
 window.addEventListener(
   'keydown',
   (event) => {
+    if (!ui.authDialog.classList.contains('hidden')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        void submitAuthPrompt(true);
+      }
+      return;
+    }
     if (!ui.hostKeyDialog.classList.contains('hidden')) {
       if (event.key === 'Escape') {
         event.preventDefault();

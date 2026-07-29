@@ -23,6 +23,7 @@ russh = "0.62.3"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.11.5", features = [] }
 tokio = { version = "1.48", features = ["sync", "time"] }
+zeroize = "1.8"
 
 [dev-dependencies]
 tempfile = "3.23"

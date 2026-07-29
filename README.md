@@ -5,13 +5,14 @@
 `~/.ssh/config` の Host をピースのように並べ、踏み台から接続先までを組み立てます。Host を 1 台だけ置いた場合は `ProxyJump` を自動展開し、明示的に複数台を置いた場合はその順番で `direct-tcpip` トンネルを作ります。
 
 > [!WARNING]
-> 現在は v0.1.0 alpha です。公開鍵/ssh-agent 認証と strict `known_hosts` 検証に対応していますが、パスワード・keyboard-interactive・暗号化秘密鍵の入力 UI は未実装です。日常運用へ投入する前に制約を確認してください。
+> 現在は v0.1.0 alpha です。主要なSSH認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の完全互換、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
 
 ## いま動くもの
 
 - Tauri 2 + Rust (`russh`) + xterm.js 6
 - OpenSSH config の Host / HostName / User / Port / IdentityFile / ProxyJump / wildcard / negation
-- `ssh-agent`（Unix）と秘密鍵による SSH2 認証
+- `ssh-agent`（Unix）、秘密鍵、password、keyboard-interactive/OTPによる SSH2 認証
+- 暗号化OpenSSH秘密鍵のパスフレーズ入力
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート
 - hop ごとの connecting / connected / error 表示
@@ -79,6 +80,12 @@ Host prod-db
 
 ope-term は未知のホスト鍵を自動承認しません。保存済みの鍵が変わった場合は接続を拒否し、既存行を UI から上書きしません。
 
+## SSH 認証
+
+各hopはサーバーが提示する方式に従い、ssh-agent/公開鍵、keyboard-interactive、passwordの順で認証します。暗号化された`IdentityFile`にはパスフレーズを要求します。keyboard-interactiveは、passwordとOTPのような複数質問および複数ラウンドに対応します。
+
+認証画面には要求元hopとユーザー名を常時表示します。入力値はlocalStorage、console、エラーへ記録せず、DOM入力欄は送信前に消去し、短命なIPC応答バッファも送信後に消去します。各promptは5分でtimeoutし、キャンセルするとそのhopへの接続を中止します。
+
 ## ルートの組み方
 
 1. 左の Host をクリックするか ROUTE WORKBENCH へドラッグします。
@@ -110,6 +117,7 @@ Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックし
 - WebView は Node.js 権限を持ちません。Tauri capability は `core:default` のみに絞っています。
 - リモート出力は Rust から Channel 経由で xterm に渡し、HTML として挿入しません。
 - 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
+- password、OTP、秘密鍵passphraseは永続化・ログ出力せず、認証専用の使い捨てIPCでだけ渡します。
 
 脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
 

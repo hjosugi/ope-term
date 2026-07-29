@@ -144,6 +144,29 @@
         </footer>
       </section>
     </div>
+    <div id="auth-dialog" class="overlay auth-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-describedby="auth-instructions">
+      <section class="auth-box">
+        <header>
+          <div>
+            <div class="eyebrow">SSH AUTHENTICATION</div>
+            <h2 id="auth-title">認証情報を入力</h2>
+          </div>
+          <span id="auth-kind" class="auth-kind">PASSWORD</span>
+        </header>
+        <div class="auth-context">
+          <span>HOP <b id="auth-hop"></b></span>
+          <span>USER <b id="auth-username"></b></span>
+        </div>
+        <p id="auth-instructions" class="auth-instructions"></p>
+        <div id="auth-fields" class="auth-fields"></div>
+        <p class="auth-privacy">入力値は保存・ログ出力されず、この認証要求への1回の応答にだけ使用されます。</p>
+        <footer>
+          <button id="auth-cancel" class="secondary-button" type="button">キャンセル</button>
+          <span class="dialog-spacer"></span>
+          <button id="auth-submit" class="primary-button" type="button">送信</button>
+        </footer>
+      </section>
+    </div>
     <div id="toast-stack" class="toast-stack" aria-live="assertive"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
