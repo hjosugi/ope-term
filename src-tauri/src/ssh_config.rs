@@ -338,17 +338,28 @@ fn normalize_equals(line: &str) -> String {
 }
 
 fn glob_matches(pattern: &str, value: &str) -> bool {
-    fn walk(pattern: &[u8], value: &[u8]) -> bool {
-        match pattern.split_first() {
-            None => value.is_empty(),
-            Some((&b'*', rest)) => {
-                walk(rest, value) || (!value.is_empty() && walk(pattern, &value[1..]))
-            }
-            Some((&b'?', rest)) => !value.is_empty() && walk(rest, &value[1..]),
-            Some((&literal, rest)) => value.first() == Some(&literal) && walk(rest, &value[1..]),
+    let pattern = pattern.as_bytes();
+    let mut previous = vec![false; pattern.len() + 1];
+    previous[0] = true;
+    for index in 1..=pattern.len() {
+        if pattern[index - 1] == b'*' {
+            previous[index] = previous[index - 1];
         }
     }
-    walk(pattern.as_bytes(), value.as_bytes())
+
+    let mut current = vec![false; pattern.len() + 1];
+    for byte in value.bytes() {
+        current.fill(false);
+        for index in 1..=pattern.len() {
+            current[index] = match pattern[index - 1] {
+                b'*' => current[index - 1] || previous[index],
+                b'?' => previous[index - 1],
+                literal => literal == byte && previous[index - 1],
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[pattern.len()]
 }
 
 fn pattern_list_matches(value: &str, patterns: &[String]) -> bool {
@@ -737,6 +748,15 @@ Host * !secret-*
             ["IdentityFile", "~/my keys/id"]
         );
         assert!(resolve("secret-a", &parse(CONFIG)).unwrap().user.is_none());
+    }
+
+    #[test]
+    fn matches_adversarial_wildcards_without_exponential_backtracking() {
+        assert!(!glob_matches(
+            "********&",
+            "******************************************************a"
+        ));
+        assert!(glob_matches("***prod**-??", "prod-db"));
     }
 
     #[test]

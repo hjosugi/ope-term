@@ -66,7 +66,7 @@ containable. Such an attacker can read the same keys and memory as ope-term.
 | Secret theft by remote output | Secrets stay in Rust/short-lived IPC; no logging or persistence; WebView has no shell/clipboard plugin | A compromised WebView during an active prompt could observe typed input |
 | XSS or privileged navigation | Local-only CSP, frozen prototype, Tauri asset CSP rewriting, text-only DOM construction, minimal capability | WebKit/xterm/Tauri vulnerabilities remain dependency risks |
 | Malicious terminal escapes | xterm window controls disabled; OSC 8 activation blocked; no OSC 52 clipboard integration | Visual spoofing and output-flood resource pressure remain possible |
-| Parser/route denial of service | Include-depth and cycle checks, unit/property tests, continuous fuzzing, bounded fuzz inputs | Runtime config file size is not yet globally capped |
+| Parser/route denial of service | Include-depth and cycle checks, non-recursive polynomial-time wildcard matching, unit/property tests, continuous fuzzing, bounded fuzz inputs | Runtime config file size is not yet globally capped |
 | Vulnerable dependencies | `pnpm audit`, RustSec audit, weekly CI, CycloneDX SBOM, private reporting | Linux WebKitGTK/GTK stack inherits platform advisories and patch cadence |
 
 ## Security invariants

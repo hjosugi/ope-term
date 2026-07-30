@@ -48,3 +48,10 @@ jobs:
       - name: Fuzz route expansion
         working-directory: src-tauri
         run: cargo fuzz run route_expansion -- -max_total_time=30 -timeout=10 -verbosity=0
+      - name: Upload failing fuzz artifacts
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ope-term-fuzz-artifacts
+          path: src-tauri/fuzz/artifacts
+          if-no-files-found: ignore
