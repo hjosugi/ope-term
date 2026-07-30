@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cache-env.sh
+source "${script_dir}/cache-env.sh"
+
+bazel_output_root="${OPE_TERM_CACHE_ROOT}/bazel/output-user-root"
+bazel_disk_cache="${OPE_TERM_CACHE_ROOT}/bazel/disk"
+mkdir -p "${bazel_output_root}" "${bazel_disk_cache}"
+
+if [[ $# -eq 0 ]]; then
+  exec bazelisk --output_user_root="${bazel_output_root}"
+fi
+
+bazel_command="$1"
+shift
+
+case "${bazel_command}" in
+  build | test | run | coverage | mobile-install)
+    exec bazelisk \
+      --output_user_root="${bazel_output_root}" \
+      "${bazel_command}" \
+      --disk_cache="${bazel_disk_cache}" \
+      "$@"
+    ;;
+  *)
+    exec bazelisk \
+      --output_user_root="${bazel_output_root}" \
+      "${bazel_command}" \
+      "$@"
+    ;;
+esac

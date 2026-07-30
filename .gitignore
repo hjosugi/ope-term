@@ -1,6 +1,10 @@
 node_modules/
 dist/
 coverage/
+.direnv/
+bazel-*
+result
+result-*
 src-tauri/target/
 src-tauri/gen/
 .env

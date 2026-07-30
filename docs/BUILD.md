@@ -1,0 +1,82 @@
+# ビルド・開発環境
+
+## 推奨フロー
+
+Nix shell が Node.js、pnpm、Rust、Tauri の system library、Bazelisk、just、
+cargo-nextest、sccache、mold（Linux）を揃えます。
+
+```bash
+./scripts/nix-local develop
+just bootstrap
+just check
+just dev
+```
+
+`direnv allow` 済みなら同じ環境が自動化されます。`just --list` で利用可能な recipe を
+確認してください。
+
+## ビルドの役割
+
+| コマンド | 用途 |
+|---|---|
+| `pnpm run build` | 日常の高速なフロントエンド build |
+| `cargo build --manifest-path src-tauri/Cargo.toml` | 日常の Rust build |
+| `./scripts/run-bazel test //:check` | sandbox 内の Vitest と TypeScript 型検査 |
+| `./scripts/run-bazel build //:frontend` | hermetic Node toolchain による Vite build |
+| `./scripts/nix-local build .#frontend` | Nix 固定依存によるフロントエンド成果物 |
+| `./scripts/nix-local build` | 配布可能な Tauri package |
+| `just check` | format、lint、test、通常 build の一括検証 |
+
+Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
+`bazel-bin/dist`、通常の Vite 生成物は `dist` です。
+
+## `/mnt/data` のキャッシュ
+
+ローカル開発の可変データは既定で `/mnt/data/ope-term` に集約します。
+
+| パス | 内容 |
+|---|---|
+| `/mnt/data/ope-term/nix-store` | root を切ったローカル Nix store と Nix DB |
+| `/mnt/data/ope-term/nix-build` | Nix の build directory |
+| `/mnt/data/ope-term/cache` | XDG、Cargo、sccache、Bazel、Bazelisk、pnpm、npm、Vite |
+| `/mnt/data/ope-term/data` | pnpm などのユーザーデータ |
+| `/mnt/data/ope-term/state` | XDG state |
+| `/mnt/data/ope-term/tmp` | 一時ファイル |
+
+`scripts/cache-env.sh` が保存先を一元管理し、`.envrc`、`just`、Nix/Bazel ラッパー、
+Nix dev shell から共用します。個別コマンドは
+`./scripts/run-cached <command> ...` でも同じ配置を強制できます。別ディスクへ移す場合は、シェルへ入る前に
+`OPE_TERM_DATA_ROOT=/path/to/data` を設定してください。`HOME` は変更しません。
+chroot storeの論理パスとhost側PATHを混在させないため、direnvのflake解決は通常storeを
+使い、`scripts/nix-local`を呼んだNix build/developだけ専用storeへ切り替えます。
+
+- pnpm は content-addressed store を利用し、lockfile を `pnpm-lock.yaml` に一本化します。
+- Bazel の action cache は10 GiBまたは30日を上限として自動 GC します。
+- Linux の Rust link は mold を使用します。
+- CI は pnpm store、Bazelisk、Bazel repository/action cache、Cargo target を再利用し、
+  同一 ref の古い実行をキャンセルします。
+
+キャッシュ状況は `just cache-stats` で確認できます。挙動がおかしい場合は先に
+`./scripts/run-bazel clean` や `pnpm install --frozen-lockfile` を試し、共有キャッシュ
+全体を削除する前に原因を切り分けてください。
+
+build の回帰は同じ machine、同じ電源設定、clean/dirty 条件を揃えて測ります。
+
+```bash
+just benchmark-build
+```
+
+この recipe は warmup 後に通常の pnpm build と Bazel incremental build を各5回測定します。
+結果を比較する PR では machine、commit、cold/warm 条件も一緒に記録してください。
+
+## 依存更新
+
+1. `package.json` を更新する。
+2. `pnpm install` で `pnpm-lock.yaml` を更新する。
+3. `just check` と `just bazel` を通す。
+4. Nix の `fetchPnpmDeps.hash` が変わった場合、失敗ログの `got:` の値で更新する。
+5. `just nix` を通す。
+
+Node、pnpm、Bazel はそれぞれ `flake.nix`、`packageManager`、`.bazelversion` で明示的に
+固定しています。更新時は CI とローカルの両方で同じ major が使われることを
+確認してください。

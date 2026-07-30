@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cache-env.sh
+source "${script_dir}/cache-env.sh"
+
+# The Git flake input omits untracked files in a dirty worktree. When no
+# installable is given, use the complete working tree explicitly.
+case "${1:-}" in
+  build | develop)
+    nix_command="$1"
+    shift
+    if [[ $# -eq 0 || "${1:-}" == -* ]]; then
+      set -- "${nix_command}" "path:.#default" "$@"
+    else
+      set -- "${nix_command}" "$@"
+    fi
+    ;;
+esac
+
+exec nix \
+  --store "${OPE_TERM_NIX_STORE_URI}" \
+  --option build-dir "${OPE_TERM_NIX_BUILD_DIR}" \
+  "$@"

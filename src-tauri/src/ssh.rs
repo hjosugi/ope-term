@@ -198,6 +198,10 @@ pub async fn run(
         let handler = HostVerifier {
             hop: endpoint.alias.clone(),
             hostname: endpoint.hostname.clone(),
+            known_hosts_hostname: endpoint
+                .host_key_alias
+                .clone()
+                .unwrap_or_else(|| endpoint.hostname.clone()),
             port: endpoint.port,
             known_hosts_path: known_hosts_path.clone(),
             events: events.clone(),
@@ -315,6 +319,7 @@ fn send(channel: &Channel<SessionEvent>, event: SessionEvent) {
 struct HostVerifier {
     hop: String,
     hostname: String,
+    known_hosts_hostname: String,
     port: u16,
     known_hosts_path: PathBuf,
     events: Channel<SessionEvent>,
@@ -330,7 +335,7 @@ impl client::Handler for HostVerifier {
     ) -> Result<bool, Self::Error> {
         match host_keys::check(
             &self.known_hosts_path,
-            &self.hostname,
+            &self.known_hosts_hostname,
             self.port,
             server_public_key,
         )? {
@@ -356,7 +361,7 @@ impl client::Handler for HostVerifier {
                     HostKeyDecision::TrustAndSave => {
                         host_keys::save(
                             &self.known_hosts_path,
-                            &self.hostname,
+                            &self.known_hosts_hostname,
                             self.port,
                             server_public_key,
                         )?;
@@ -533,7 +538,8 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
     };
 
     #[cfg(unix)]
-    if methods.contains(&MethodKind::PublicKey)
+    if !endpoint.identities_only
+        && methods.contains(&MethodKind::PublicKey)
         && let Ok(progress) = authenticate_with_agent(handle, &username, methods.clone()).await
     {
         match progress {
@@ -542,6 +548,7 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
         }
     }
 
+    let explicit_certificates = !endpoint.certificate_files.is_empty();
     let mut candidates = endpoint.identity_files.clone();
     if let Some(home) = dirs::home_dir() {
         for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
@@ -551,6 +558,22 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
             }
         }
     }
+    let certificate_candidates = if explicit_certificates {
+        endpoint.certificate_files.clone()
+    } else {
+        candidates
+            .iter()
+            .map(|path| {
+                let mut certificate = path.as_os_str().to_os_string();
+                certificate.push("-cert.pub");
+                PathBuf::from(certificate)
+            })
+            .collect()
+    };
+    let certificates: Vec<_> = certificate_candidates
+        .iter()
+        .filter_map(|path| ssh_key::Certificate::read_file(path).ok())
+        .collect();
 
     let mut attempted_keys = Vec::new();
     for path in candidates.into_iter().filter(|path| path.is_file()) {
@@ -595,13 +618,31 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
             Err(_) => None,
         };
         let Some(key) = key else { continue };
+        let key = Arc::new(key);
+        if let Some(certificate) = certificates
+            .iter()
+            .find(|certificate| certificate.public_key() == key.public_key().key_data())
+        {
+            match auth_progress(
+                handle
+                    .authenticate_openssh_cert(
+                        username.clone(),
+                        Arc::clone(&key),
+                        certificate.clone(),
+                    )
+                    .await?,
+            ) {
+                AuthProgress::Success => return Ok(()),
+                AuthProgress::Continue(next) => methods = next,
+            }
+        }
+        if !methods.contains(&MethodKind::PublicKey) {
+            break;
+        }
         let hash = handle.best_supported_rsa_hash().await?.flatten();
         match auth_progress(
             handle
-                .authenticate_publickey(
-                    username.clone(),
-                    PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-                )
+                .authenticate_publickey(username.clone(), PrivateKeyWithHashAlg::new(key, hash))
                 .await?,
         ) {
             AuthProgress::Success => return Ok(()),
@@ -959,6 +1000,9 @@ sJWR7W+cGvJ/vLsw==
             user: Some("operator".to_owned()),
             port: 22,
             identity_files,
+            certificate_files: Vec::new(),
+            host_key_alias: None,
+            identities_only: false,
             proxy_jump: None,
         }
     }

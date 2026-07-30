@@ -5,13 +5,14 @@
 `~/.ssh/config` の Host をピースのように並べ、踏み台から接続先までを組み立てます。Host を 1 台だけ置いた場合は `ProxyJump` を自動展開し、明示的に複数台を置いた場合はその順番で `direct-tcpip` トンネルを作ります。
 
 > [!WARNING]
-> 現在は v0.1.0 alpha です。主要なSSH認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の完全互換、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
+> 現在は v0.1.0 alpha です。主要なSSH認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の全ディレクティブ、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
 
 ## いま動くもの
 
 - Tauri 2 + Rust (`russh`) + xterm.js 6
-- OpenSSH config の Host / HostName / User / Port / IdentityFile / ProxyJump / wildcard / negation
-- `ssh-agent`（Unix）、秘密鍵、password、keyboard-interactive/OTPによる SSH2 認証
+- OpenSSH config の `Host` / `Match` / `Include`、wildcard、negation、主要 token
+- HostName / User / Port / IdentityFile / CertificateFile / IdentitiesOnly / ProxyJump / HostKeyAlias
+- `ssh-agent`（Unix）、秘密鍵、OpenSSH certificate、password、keyboard-interactive/OTPによる SSH2 認証
 - 暗号化OpenSSH秘密鍵のパスフレーズ入力
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート
@@ -31,9 +32,9 @@
 Nix 2.4 以降で flake を有効にしている場合、Node/RustとLinuxのTauri依存をまとめて再現できます。
 
 ```bash
-nix develop
-npm ci
-npm run tauri dev
+./scripts/nix-local develop
+just bootstrap
+just dev
 ```
 
 `direnv`を使う場合は、リポジトリに含まれる`.envrc`を一度許可します。
@@ -47,18 +48,26 @@ flakeはLinux x86_64/aarch64とmacOS Intel/Apple Siliconを評価対象にしま
 ### システム環境
 
 ```bash
-npm ci
-npm run tauri dev
+./scripts/run-cached pnpm install --frozen-lockfile
+./scripts/run-cached pnpm run tauri dev
 ```
 
 フロントエンドと Rust の検証:
 
 ```bash
-npm test
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+just check
 ```
+
+再現可能な Nix package と、sandbox 化したフロントエンドの Bazel build も用意しています。
+
+```bash
+./scripts/nix-local build
+./scripts/run-bazel test //:check
+./scripts/run-bazel build //:frontend
+```
+
+Nix storeを含むローカルキャッシュは既定で`/mnt/data/ope-term`へ集約します。キャッシュ
+構成と各コマンドの使い分けは [ビルド・開発環境](docs/BUILD.md) を参照してください。
 
 ## SSH config
 
@@ -124,6 +133,7 @@ Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックし
 ## 設計とロードマップ
 
 - [アーキテクチャ](docs/ARCHITECTURE.md)
+- [ビルド・開発環境](docs/BUILD.md)
 - [性能・安定性のゲート](docs/PERFORMANCE.md)
 - 未実装項目は [GitHub Issues](https://github.com/hjosugi/ope-term/issues) で管理
 

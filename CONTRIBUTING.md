@@ -7,19 +7,26 @@ ope-term は alpha です。まず issue で利用場面、対象 OS、期待す
 推奨の開発shell:
 
 ```bash
-nix develop
+./scripts/nix-local develop
 ```
 
 Nixを使わない場合は[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)を先に導入してください。どちらの場合も検証コマンドは同じです。
 
 ```bash
-npm ci
-npm test
-npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+just bootstrap
+just check
 ```
+
+個別の再現可能性を確認する場合:
+
+```bash
+./scripts/run-bazel test //:check
+./scripts/run-bazel build //:frontend
+./scripts/nix-local flake check
+./scripts/nix-local build
+```
+
+詳細は [ビルド・開発環境](docs/BUILD.md) を参照してください。
 
 変更は次の境界を守ってください。
 

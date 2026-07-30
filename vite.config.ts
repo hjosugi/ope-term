@@ -4,6 +4,12 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   clearScreen: false,
+  cacheDir: process.env.VITE_CACHE_DIR || 'node_modules/.vite',
+  // Keep Bazel's sandboxed source tree intact instead of resolving symlinks
+  // back into the execroot, which would make HTML asset paths escape the root.
+  resolve: {
+    preserveSymlinks: true,
+  },
   server: {
     port: 1420,
     strictPort: true,

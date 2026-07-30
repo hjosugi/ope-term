@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.34.0",
   "description": "A route-first SSH terminal for operators and developers.",
   "repository": {
     "type": "git",
@@ -13,7 +14,8 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "pnpm run typecheck && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri"
