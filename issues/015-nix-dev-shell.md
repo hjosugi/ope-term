@@ -16,5 +16,5 @@ TauriのLinux開発にはWebKitGTK 4.1、GTK、libsoup、OpenSSL、Rust、Node�
 - [x] Node 24、Rust、Cargo、Clippy、rustfmt、rust-analyzerをflakeでpinする
 - [x] LinuxのWebKitGTK 4.1/GTK/libsoup/appindicatorをdev shellへ含める
 - [x] x86_64/aarch64 LinuxとIntel/Apple Silicon macOSを評価する
-- [x] `nix develop`と`direnv allow`の手順を文書化する
+- [x] `/mnt/data` storeを使う`./scripts/nix-local develop`と`direnv allow`の手順を文書化する
 - [x] CIで`nix flake check --all-systems`を実行する

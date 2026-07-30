@@ -1,0 +1,11 @@
+common --enable_bzlmod
+common --repo_env=ASPECT_TOOLS_TELEMETRY=-all
+
+build --experimental_disk_cache_gc_max_size=10G
+build --experimental_disk_cache_gc_max_age=30d
+test --test_output=errors
+
+build:ci --color=yes
+build:ci --curses=no
+build:ci --show_progress_rate_limit=5
+test:ci --test_output=errors

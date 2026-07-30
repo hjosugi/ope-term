@@ -1,0 +1,83 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//:typescript/package_json.bzl", tsc_bin = "bin")
+load("@npm//:vite/package_json.bzl", vite_bin = "bin")
+load("@npm//:vitest/package_json.bzl", vitest_bin = "bin")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages(name = "node_modules")
+
+filegroup(
+    name = "frontend_sources",
+    srcs = glob(["src/**/*"]),
+)
+
+tsc_bin.tsc_test(
+    name = "typecheck",
+    args = [
+        "--noEmit",
+        "--project",
+        "tsconfig.json",
+    ],
+    chdir = package_name(),
+    data = [
+        "tsconfig.json",
+        ":frontend_sources",
+        ":node_modules/@tauri-apps/api",
+        ":node_modules/@xterm/addon-fit",
+        ":node_modules/@xterm/addon-webgl",
+        ":node_modules/@xterm/xterm",
+        ":node_modules/vite",
+        ":node_modules/vitest",
+    ],
+)
+
+js_library(
+    name = "vite_config",
+    srcs = ["vite.config.ts"],
+    deps = [":node_modules/vite"],
+)
+
+vite_bin.vite(
+    name = "frontend",
+    srcs = [
+        "index.html",
+        ":frontend_sources",
+        ":node_modules/@tauri-apps/api",
+        ":node_modules/@xterm/addon-fit",
+        ":node_modules/@xterm/addon-webgl",
+        ":node_modules/@xterm/xterm",
+    ],
+    chdir = package_name(),
+    data = [":vite_config"],
+    fixed_args = [
+        "build",
+        "--config",
+        "$$RUNFILES_DIR/$(rlocationpath :vite_config)",
+    ],
+    out_dirs = ["dist"],
+)
+
+vitest_bin.vitest_test(
+    name = "frontend_tests",
+    args = [
+        "run",
+        "--config",
+        "vitest.config.ts",
+    ],
+    chdir = package_name(),
+    data = [
+        "package.json",
+        "vitest.config.ts",
+        ":frontend_sources",
+    ],
+)
+
+test_suite(
+    name = "check",
+    tests = [
+        ":frontend_tests",
+        ":typecheck",
+    ],
+)

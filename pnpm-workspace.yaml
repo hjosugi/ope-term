@@ -1,0 +1,7 @@
+packages:
+  - .
+
+hoist: false
+
+onlyBuiltDependencies:
+  - esbuild

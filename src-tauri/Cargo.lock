@@ -2679,6 +2679,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "dirs",
+ "glob",
  "russh",
  "serde",
  "tauri",
