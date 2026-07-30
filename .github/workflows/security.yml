@@ -1,0 +1,50 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop --command just security
+      - run: nix develop --command just sbom
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ope-term-cyclonedx
+          path: artifacts/security/ope-term.cdx.json
+          if-no-files-found: error
+
+  fuzz:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-07-28
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            src-tauri/fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Fuzz OpenSSH config parser
+        working-directory: src-tauri
+        run: cargo fuzz run ssh_config_parser -- -max_total_time=30 -timeout=10 -verbosity=0
+      - name: Fuzz route expansion
+        working-directory: src-tauri
+        run: cargo fuzz run route_expansion -- -max_total_time=30 -timeout=10 -verbosity=0

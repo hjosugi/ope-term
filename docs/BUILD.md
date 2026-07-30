@@ -3,7 +3,7 @@
 ## 推奨フロー
 
 Nix shell が Node.js、pnpm、Rust、Tauri の system library、Bazelisk、just、
-cargo-nextest、sccache、mold（Linux）を揃えます。
+cargo-nextest、cargo-fuzz、cargo-audit、Syft、sccache、mold（Linux）を揃えます。
 
 ```bash
 ./scripts/nix-local develop
@@ -26,6 +26,10 @@ just dev
 | `./scripts/nix-local build .#frontend` | Nix 固定依存によるフロントエンド成果物 |
 | `./scripts/nix-local build` | 配布可能な Tauri package |
 | `just check` | format、lint、test、通常 build の一括検証 |
+| `just security` | Tauri/CSP policy、pnpm、RustSec のセキュリティ監査 |
+| `just fuzz-check` | 2つのfuzz targetをstable Rustでコンパイル |
+| `just fuzz-smoke 30` | nightly + ASanでparserとroute expansionを各30秒fuzz |
+| `just sbom` | CycloneDX JSONの依存SBOMを生成 |
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。
@@ -38,7 +42,7 @@ Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生�
 |---|---|
 | `/mnt/data/ope-term/nix-store` | root を切ったローカル Nix store と Nix DB |
 | `/mnt/data/ope-term/nix-build` | Nix の build directory |
-| `/mnt/data/ope-term/cache` | XDG、Cargo、sccache、Bazel、Bazelisk、pnpm、npm、Vite |
+| `/mnt/data/ope-term/cache` | XDG、Cargo/Rustup、fuzz corpus、sccache、Bazel、Bazelisk、pnpm、npm、Vite |
 | `/mnt/data/ope-term/data` | pnpm などのユーザーデータ |
 | `/mnt/data/ope-term/state` | XDG state |
 | `/mnt/data/ope-term/tmp` | 一時ファイル |
@@ -51,6 +55,7 @@ chroot storeの論理パスとhost側PATHを混在させないため、direnvの
 使い、`scripts/nix-local`を呼んだNix build/developだけ専用storeへ切り替えます。
 
 - pnpm は content-addressed store を利用し、lockfile を `pnpm-lock.yaml` に一本化します。
+- fuzzのnightly toolchain、生成corpus、crash artifactも同じcache rootへ置きます。
 - Bazel の action cache は10 GiBまたは30日を上限として自動 GC します。
 - Linux の Rust link は mold を使用します。
 - CI は pnpm store、Bazelisk、Bazel repository/action cache、Cargo target を再利用し、

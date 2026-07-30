@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cache-env.sh
+source "${script_dir}/cache-env.sh"
+
+fuzz_toolchain="${OPE_TERM_FUZZ_TOOLCHAIN:-nightly-2026-07-28}"
+nightly_cargo="$(rustup which cargo --toolchain "${fuzz_toolchain}")"
+nightly_bin="$(dirname -- "${nightly_cargo}")"
+export PATH="${nightly_bin}:${PATH}"
+
+if [[ "${1:-}" == "run" && -n "${2:-}" ]]; then
+  fuzz_target="$2"
+  shift 2
+  corpus_dir="${OPE_TERM_CACHE_ROOT}/fuzz/corpus/${fuzz_target}"
+  artifact_dir="${OPE_TERM_CACHE_ROOT}/fuzz/artifacts/${fuzz_target}"
+  seed_dir="${script_dir}/../src-tauri/fuzz/corpus/${fuzz_target}"
+  mkdir -p "${corpus_dir}" "${artifact_dir}"
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+    exec "${nightly_cargo}" fuzz run \
+      "${fuzz_target}" "${corpus_dir}" "${seed_dir}" -- \
+      "-artifact_prefix=${artifact_dir}/" "$@"
+  fi
+  exec "${nightly_cargo}" fuzz run "${fuzz_target}" "${corpus_dir}" "${seed_dir}" "$@"
+fi
+
+exec "${nightly_cargo}" fuzz "$@"

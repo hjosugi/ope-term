@@ -1,0 +1,49 @@
+# Dependency advisory review
+
+Last reviewed: 2026-07-30 with `cargo-audit` and the current RustSec database.
+
+`just security` reports no RustSec vulnerabilities and no pnpm vulnerabilities
+at high severity or above. Informational RustSec warnings remain visible in CI;
+they are not silently ignored by configuration.
+
+## Removed vulnerable RSA implementation
+
+`russh`'s optional RSA feature pulled in `rsa 0.10.0-rc.18`, affected by
+[RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071.html).
+No patched release is available through the current `russh` feature. ope-term
+therefore disables that feature and does not ship the vulnerable implementation.
+
+This temporarily removes RSA private-key authentication and RSA-only host-key
+support. Ed25519 and ECDSA authentication/host keys remain available. Re-enable
+RSA only after the dependency path uses a constant-time implementation and both
+the RustSec audit and SSH interoperability tests pass.
+
+## Accepted informational warnings
+
+The Linux Tauri WebView stack currently brings in the gtk-rs 0.18 GTK3 bindings.
+RustSec marks those bindings unmaintained:
+
+- RUSTSEC-2024-0411 through RUSTSEC-2024-0420 (GTK3/ATK/GDK bindings);
+- RUSTSEC-2024-0370 (`proc-macro-error`, through GTK macros);
+- RUSTSEC-2024-0429 (`glib::VariantStrIter` unsoundness).
+
+ope-term does not call GTK, ATK, GDK, `proc-macro-error`, or
+`glib::VariantStrIter` directly; they are platform dependencies of
+Tauri/Wry/WebKitGTK. Removing them requires upstream Tauri's Linux WebView stack
+to migrate. Until then:
+
+- Tauri/Wry and the system WebKitGTK packages are updated regularly;
+- all remote content is blocked by CSP and terminal output cannot invoke WebView
+  APIs;
+- every release re-runs RustSec and stops on vulnerabilities (informational
+  warnings remain review items);
+- a warning becoming a vulnerability, or a reachable exploit in the WebView
+  path, blocks release.
+
+Tauri's URL-pattern parser also brings unmaintained `unic-*` crates:
+RUSTSEC-2025-0075, RUSTSEC-2025-0080, RUSTSEC-2025-0081,
+RUSTSEC-2025-0098, and RUSTSEC-2025-0100. They have no reported vulnerability;
+the same upgrade and release-review policy applies.
+
+This acceptance is scoped to alpha builds and must be revisited when Tauri
+changes its Linux bindings or before declaring a stable release.

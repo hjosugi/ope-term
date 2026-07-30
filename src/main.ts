@@ -177,7 +177,14 @@ function renderHosts(): void {
   if (hosts.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-hosts';
-    empty.innerHTML = 'Host がありません。<br><code>~/.ssh/config</code> に Host を追加すると、ここに表示されます。';
+    const configPath = document.createElement('code');
+    configPath.textContent = '~/.ssh/config';
+    empty.append(
+      document.createTextNode('Host がありません。'),
+      document.createElement('br'),
+      configPath,
+      document.createTextNode(' に Host を追加すると、ここに表示されます。'),
+    );
     ui.hostList.append(empty);
     return;
   }
@@ -347,12 +354,18 @@ function createSession(id: string, title: string, sessionRoute: string[]): Sessi
   ui.terminalStage.append(view);
 
   const terminal = new Terminal({
+    allowProposedApi: false,
     allowTransparency: false,
     cursorBlink: true,
     cursorStyle: 'bar',
     fontFamily: 'JetBrains Mono, HackGen Console NF, Cascadia Code, monospace',
     fontSize: 13,
     lineHeight: 1.16,
+    linkHandler: {
+      // Remote OSC 8 hyperlinks are rendered as text but never activated.
+      activate: () => undefined,
+      allowNonHttpProtocols: false,
+    },
     scrollback: 20_000,
     theme: {
       background: '#070a0e',
@@ -368,6 +381,8 @@ function createSession(id: string, title: string, sessionRoute: string[]): Sessi
       cyan: '#75d8d5',
       white: '#e9edf3',
     },
+    // Escape-sequence window manipulation and reports stay explicitly disabled.
+    windowOptions: {},
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);

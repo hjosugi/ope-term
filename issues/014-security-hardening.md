@@ -7,8 +7,14 @@ Labels: priority:P0, security, reliability
 
 ## 受け入れ条件
 
-- [ ] asset / trust boundary / attacker capability を threat model にする
-- [ ] Tauri capability と CSP を自動監査する
-- [ ] ssh_config parser と route expansion を fuzzing する
-- [ ] terminal escape sequence と clipboard / link handling をレビューする
-- [ ] dependency audit、SBOM、private vulnerability reporting を release process に組み込む
+- [x] asset / trust boundary / attacker capability を threat model にする
+- [x] Tauri capability と CSP を自動監査する
+- [x] ssh_config parser と route expansion を fuzzing する
+- [x] terminal escape sequence と clipboard / link handling をレビューする
+- [x] dependency audit、SBOM、private vulnerability reporting を release process に組み込む
+
+## 完了
+
+脅威モデル、端末レビュー、Tauri policy監査、2つのcargo-fuzz target、
+RustSec/pnpm監査、CycloneDX SBOM、週次security workflowを追加した。
+private vulnerability reportingが有効であることも確認済み。

@@ -1,11 +1,14 @@
 node_modules/
 dist/
 coverage/
+artifacts/
 .direnv/
 bazel-*
 result
 result-*
 src-tauri/target/
+src-tauri/fuzz/artifacts/
+src-tauri/fuzz/target/
 src-tauri/gen/
 .env
 .env.*

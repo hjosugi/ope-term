@@ -141,8 +141,8 @@ pub fn tokenize(line: &str) -> Vec<String> {
     tokens
 }
 
-#[cfg(test)]
-fn parse(text: &str) -> Vec<Block> {
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) fn parse(text: &str) -> Vec<Block> {
     let mut blocks = vec![implicit_block()];
     parse_text(text, None, &mut Vec::new(), &mut blocks).expect("in-memory config has no includes");
     blocks

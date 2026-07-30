@@ -15,6 +15,8 @@ Nixを使わない場合は[Tauri prerequisites](https://v2.tauri.app/start/prer
 ```bash
 just bootstrap
 just check
+just security
+just fuzz-check
 ```
 
 個別の再現可能性を確認する場合:
@@ -27,6 +29,11 @@ just check
 ```
 
 詳細は [ビルド・開発環境](docs/BUILD.md) を参照してください。
+初回は`just fuzz-bootstrap`でnightly Rustも`/mnt/data/ope-term`側へ導入します。
+release候補では`just fuzz-smoke 300`を実行し、
+`just sbom`でCycloneDX SBOMも生成します。セキュリティ境界と残存リスクは
+[脅威モデル](docs/THREAT_MODEL.md) と
+[依存advisoryレビュー](docs/SECURITY_ADVISORIES.md) に記録します。
 
 変更は次の境界を守ってください。
 

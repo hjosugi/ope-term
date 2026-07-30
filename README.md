@@ -6,6 +6,9 @@
 
 > [!WARNING]
 > 現在は v0.1.0 alpha です。主要なSSH認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の全ディレクティブ、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
+>
+> `russh` の未修正 RSA 依存を出荷しないため、現在は RSA 秘密鍵認証と RSA のみの
+> host key を無効化しています。Ed25519 / ECDSA を使用してください。
 
 ## いま動くもの
 
@@ -56,6 +59,7 @@ flakeはLinux x86_64/aarch64とmacOS Intel/Apple Siliconを評価対象にしま
 
 ```bash
 just check
+just security
 ```
 
 再現可能な Nix package と、sandbox 化したフロントエンドの Bazel build も用意しています。
@@ -127,6 +131,7 @@ Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックし
 - リモート出力は Rust から Channel 経由で xterm に渡し、HTML として挿入しません。
 - 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
 - password、OTP、秘密鍵passphraseは永続化・ログ出力せず、認証専用の使い捨てIPCでだけ渡します。
+- リモートのOSC 8リンクは開かず、window操作とclipboard連携を無効化しています。
 
 脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
 
@@ -135,6 +140,8 @@ Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックし
 - [アーキテクチャ](docs/ARCHITECTURE.md)
 - [ビルド・開発環境](docs/BUILD.md)
 - [性能・安定性のゲート](docs/PERFORMANCE.md)
+- [脅威モデル](docs/THREAT_MODEL.md)
+- [端末セキュリティレビュー](docs/TERMINAL_SECURITY.md)
 - 未実装項目は [GitHub Issues](https://github.com/hjosugi/ope-term/issues) で管理
 
 ## ライセンス

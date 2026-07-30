@@ -25,8 +25,11 @@
             ".git"
             "dist"
             "docs"
+            "fuzz"
+            "gen"
             "issues"
             "node_modules"
+            "artifacts"
             "result"
             "scripts"
             "target"
@@ -45,6 +48,7 @@
             "MODULE.bazel.lock"
             "README.md"
             "REPO.bazel"
+            "SECURITY.md"
           ]
           && !nixpkgs.lib.hasPrefix "bazel-" name
           && !nixpkgs.lib.hasPrefix "result-" name;
@@ -176,6 +180,7 @@
                 pkgs.cargo
                 pkgs.cargo-audit
                 pkgs.cargo-deny
+                pkgs.cargo-fuzz
                 pkgs.cargo-nextest
                 pkgs.cargo-watch
                 pkgs.clippy
@@ -183,6 +188,7 @@
                 pkgs.hyperfine
                 pkgs.just
                 pkgs.nodejs_24
+                pkgs.nix
                 pkgs.nixfmt
                 pkgs.openssl
                 pkgs.pkg-config
@@ -192,6 +198,7 @@
                 pkgs.rustfmt
                 pkgs.sccache
                 pkgs.shellcheck
+                pkgs.syft
               ]
               ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
                 pkgs.mold
@@ -221,8 +228,9 @@
                   export OPE_TERM_CACHE_ROOT="''${OPE_TERM_CACHE_ROOT:-$OPE_TERM_DATA_ROOT/cache}"
                   export CARGO_HOME="$OPE_TERM_CACHE_ROOT/cargo/home"
                   export CARGO_TARGET_DIR="$OPE_TERM_CACHE_ROOT/cargo/target"
+                  export RUSTUP_HOME="$OPE_TERM_CACHE_ROOT/rustup"
                   export SCCACHE_DIR="$OPE_TERM_CACHE_ROOT/sccache"
-                  mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
+                  mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$RUSTUP_HOME" "$SCCACHE_DIR"
                 fi
                 echo "ope-term dev shell | node $(node --version) | rustc $(rustc --version | cut -d' ' -f2) | bazel $(bazelisk version --gnu_format 2>/dev/null | head -1)"
               '';

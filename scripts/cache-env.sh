@@ -25,6 +25,7 @@ export TEMP="${TMPDIR}"
 
 export CARGO_HOME="${OPE_TERM_CACHE_ROOT}/cargo/home"
 export CARGO_TARGET_DIR="${OPE_TERM_CACHE_ROOT}/cargo/target"
+export RUSTUP_HOME="${OPE_TERM_CACHE_ROOT}/rustup"
 export SCCACHE_DIR="${OPE_TERM_CACHE_ROOT}/sccache"
 export BAZELISK_HOME="${OPE_TERM_CACHE_ROOT}/bazelisk"
 export NPM_CONFIG_CACHE="${OPE_TERM_CACHE_ROOT}/npm"
@@ -41,6 +42,7 @@ mkdir -p \
   "${TMPDIR}" \
   "${CARGO_HOME}" \
   "${CARGO_TARGET_DIR}" \
+  "${RUSTUP_HOME}" \
   "${SCCACHE_DIR}" \
   "${BAZELISK_HOME}" \
   "${NPM_CONFIG_CACHE}" \
