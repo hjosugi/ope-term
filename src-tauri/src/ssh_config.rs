@@ -15,6 +15,8 @@ const MULTI_VALUE_KEYS: &[&str] = &[
     "sendenv",
 ];
 const MAX_INCLUDE_DEPTH: usize = 32;
+const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
+const MAX_ROUTE_HOPS: usize = 32;
 
 #[derive(Debug, Clone, Default)]
 enum Selector {
@@ -377,6 +379,9 @@ fn pattern_list_matches(value: &str, patterns: &[String]) -> bool {
 }
 
 pub fn resolve(alias: &str, blocks: &[Block]) -> Result<Endpoint> {
+    if alias.len() > MAX_HOST_SPEC_BYTES {
+        bail!("ホスト指定が {MAX_HOST_SPEC_BYTES} bytes を超えています");
+    }
     let parsed = parse_jump_spec(alias);
     let canonical_alias = parsed.alias;
     let mut values: HashMap<String, Vec<String>> = HashMap::new();
@@ -599,13 +604,17 @@ pub fn chain_for_route(route: &[String], blocks: &[Block]) -> Result<Vec<Endpoin
     if route.is_empty() {
         bail!("接続ルートが空です");
     }
+    if route.len() > MAX_ROUTE_HOPS {
+        bail!("接続ルートが {MAX_ROUTE_HOPS} hop を超えています");
+    }
     if route.len() > 1 {
         return route.iter().map(|alias| resolve(alias, blocks)).collect();
     }
 
     let mut chain = Vec::new();
     let mut stack = Vec::new();
-    expand_chain(&route[0], blocks, &mut stack, &mut chain)?;
+    let mut expanded = 0;
+    expand_chain(&route[0], blocks, &mut stack, &mut chain, &mut expanded)?;
     Ok(chain)
 }
 
@@ -614,7 +623,12 @@ fn expand_chain(
     blocks: &[Block],
     stack: &mut Vec<String>,
     output: &mut Vec<Endpoint>,
+    expanded: &mut usize,
 ) -> Result<()> {
+    if *expanded >= MAX_ROUTE_HOPS {
+        bail!("ProxyJump の展開が {MAX_ROUTE_HOPS} hop を超えています");
+    }
+    *expanded += 1;
     let endpoint = resolve(alias, blocks)?;
     if stack.contains(&endpoint.alias) {
         stack.push(endpoint.alias);
@@ -627,7 +641,7 @@ fn expand_chain(
             .map(str::trim)
             .filter(|item| !item.is_empty())
         {
-            expand_chain(jump, blocks, stack, output)?;
+            expand_chain(jump, blocks, stack, output, expanded)?;
         }
     }
     stack.pop();
@@ -739,6 +753,32 @@ Host * !secret-*
                 .to_string()
                 .contains("循環")
         );
+    }
+
+    #[test]
+    fn bounds_proxy_jump_routes_that_change_alias_on_every_hop() {
+        let blocks = parse("ProxyJump next-%n\n");
+        let error = chain_for_route(&["root".into()], &blocks).unwrap_err();
+
+        assert!(error.to_string().contains("32 hop"));
+    }
+
+    #[test]
+    fn bounds_proxy_jump_alias_growth() {
+        let blocks = parse("ProxyJump %n%n\n");
+        let error = chain_for_route(&["root".into()], &blocks).unwrap_err();
+
+        assert!(error.to_string().contains("4096 bytes"));
+    }
+
+    #[test]
+    fn bounds_explicit_routes() {
+        let route = (0..=MAX_ROUTE_HOPS)
+            .map(|index| format!("host-{index}"))
+            .collect::<Vec<_>>();
+        let error = chain_for_route(&route, &parse("")).unwrap_err();
+
+        assert!(error.to_string().contains("32 hop"));
     }
 
     #[test]
