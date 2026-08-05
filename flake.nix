@@ -64,7 +64,7 @@
           ];
           pnpmDeps = pkgs.fetchPnpmDeps {
             pname = "ope-term";
-            version = "0.1.0";
+            version = "0.1.1";
             src = source;
             pnpm = pkgs.pnpm_10;
             fetcherVersion = 4;
@@ -72,7 +72,7 @@
           };
           frontend = pkgs.stdenvNoCC.mkDerivation {
             pname = "ope-term-frontend";
-            version = "0.1.0";
+            version = "0.1.1";
             src = source;
             inherit pnpmDeps;
             nativeBuildInputs = [
@@ -95,7 +95,7 @@
           };
           app = pkgs.rustPlatform.buildRustPackage {
             pname = "ope-term";
-            version = "0.1.0";
+            version = "0.1.1";
             src = source;
 
             cargoRoot = "src-tauri";
