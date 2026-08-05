@@ -68,7 +68,7 @@
             src = source;
             pnpm = pkgs.pnpm_10;
             fetcherVersion = 4;
-            hash = "sha256-1iVb+NEBTVsnG2x3T9ELHHO/Tx8Ev2IWA+fa7sAwhnY=";
+            hash = "sha256-sBCyMV05a/d329jz8rIjHgACXflMcCGSqkxEs8bX3QY=";
           };
           frontend = pkgs.stdenvNoCC.mkDerivation {
             pname = "ope-term-frontend";
