@@ -16,6 +16,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "pnpm run typecheck && vite build",
+    "security:policy": "node scripts/security-policy.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri"

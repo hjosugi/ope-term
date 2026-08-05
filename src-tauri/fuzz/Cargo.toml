@@ -1,0 +1,26 @@
+[package]
+name = "ope-term-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ope-term = { path = "..", default-features = false, features = ["fuzzing"] }
+
+[[bin]]
+name = "ssh_config_parser"
+path = "fuzz_targets/ssh_config_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "route_expansion"
+path = "fuzz_targets/route_expansion.rs"
+test = false
+doc = false
+bench = false

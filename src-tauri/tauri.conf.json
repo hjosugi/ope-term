@@ -11,7 +11,10 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:"
+      "csp": "default-src 'self' customprotocol: asset:; script-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self' customprotocol: asset:; script-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:1420; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'",
+      "freezePrototype": true,
+      "dangerousDisableAssetCspModification": false
     },
     "windows": [
       {

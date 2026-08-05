@@ -15,6 +15,8 @@ const MULTI_VALUE_KEYS: &[&str] = &[
     "sendenv",
 ];
 const MAX_INCLUDE_DEPTH: usize = 32;
+const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
+const MAX_ROUTE_HOPS: usize = 32;
 
 #[derive(Debug, Clone, Default)]
 enum Selector {
@@ -141,8 +143,8 @@ pub fn tokenize(line: &str) -> Vec<String> {
     tokens
 }
 
-#[cfg(test)]
-fn parse(text: &str) -> Vec<Block> {
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) fn parse(text: &str) -> Vec<Block> {
     let mut blocks = vec![implicit_block()];
     parse_text(text, None, &mut Vec::new(), &mut blocks).expect("in-memory config has no includes");
     blocks
@@ -338,17 +340,28 @@ fn normalize_equals(line: &str) -> String {
 }
 
 fn glob_matches(pattern: &str, value: &str) -> bool {
-    fn walk(pattern: &[u8], value: &[u8]) -> bool {
-        match pattern.split_first() {
-            None => value.is_empty(),
-            Some((&b'*', rest)) => {
-                walk(rest, value) || (!value.is_empty() && walk(pattern, &value[1..]))
-            }
-            Some((&b'?', rest)) => !value.is_empty() && walk(rest, &value[1..]),
-            Some((&literal, rest)) => value.first() == Some(&literal) && walk(rest, &value[1..]),
+    let pattern = pattern.as_bytes();
+    let mut previous = vec![false; pattern.len() + 1];
+    previous[0] = true;
+    for index in 1..=pattern.len() {
+        if pattern[index - 1] == b'*' {
+            previous[index] = previous[index - 1];
         }
     }
-    walk(pattern.as_bytes(), value.as_bytes())
+
+    let mut current = vec![false; pattern.len() + 1];
+    for byte in value.bytes() {
+        current.fill(false);
+        for index in 1..=pattern.len() {
+            current[index] = match pattern[index - 1] {
+                b'*' => current[index - 1] || previous[index],
+                b'?' => previous[index - 1],
+                literal => literal == byte && previous[index - 1],
+            };
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[pattern.len()]
 }
 
 fn pattern_list_matches(value: &str, patterns: &[String]) -> bool {
@@ -366,6 +379,9 @@ fn pattern_list_matches(value: &str, patterns: &[String]) -> bool {
 }
 
 pub fn resolve(alias: &str, blocks: &[Block]) -> Result<Endpoint> {
+    if alias.len() > MAX_HOST_SPEC_BYTES {
+        bail!("ホスト指定が {MAX_HOST_SPEC_BYTES} bytes を超えています");
+    }
     let parsed = parse_jump_spec(alias);
     let canonical_alias = parsed.alias;
     let mut values: HashMap<String, Vec<String>> = HashMap::new();
@@ -588,13 +604,17 @@ pub fn chain_for_route(route: &[String], blocks: &[Block]) -> Result<Vec<Endpoin
     if route.is_empty() {
         bail!("接続ルートが空です");
     }
+    if route.len() > MAX_ROUTE_HOPS {
+        bail!("接続ルートが {MAX_ROUTE_HOPS} hop を超えています");
+    }
     if route.len() > 1 {
         return route.iter().map(|alias| resolve(alias, blocks)).collect();
     }
 
     let mut chain = Vec::new();
     let mut stack = Vec::new();
-    expand_chain(&route[0], blocks, &mut stack, &mut chain)?;
+    let mut expanded = 0;
+    expand_chain(&route[0], blocks, &mut stack, &mut chain, &mut expanded)?;
     Ok(chain)
 }
 
@@ -603,7 +623,12 @@ fn expand_chain(
     blocks: &[Block],
     stack: &mut Vec<String>,
     output: &mut Vec<Endpoint>,
+    expanded: &mut usize,
 ) -> Result<()> {
+    if *expanded >= MAX_ROUTE_HOPS {
+        bail!("ProxyJump の展開が {MAX_ROUTE_HOPS} hop を超えています");
+    }
+    *expanded += 1;
     let endpoint = resolve(alias, blocks)?;
     if stack.contains(&endpoint.alias) {
         stack.push(endpoint.alias);
@@ -616,7 +641,7 @@ fn expand_chain(
             .map(str::trim)
             .filter(|item| !item.is_empty())
         {
-            expand_chain(jump, blocks, stack, output)?;
+            expand_chain(jump, blocks, stack, output, expanded)?;
         }
     }
     stack.pop();
@@ -731,12 +756,47 @@ Host * !secret-*
     }
 
     #[test]
+    fn bounds_proxy_jump_routes_that_change_alias_on_every_hop() {
+        let blocks = parse("ProxyJump next-%n\n");
+        let error = chain_for_route(&["root".into()], &blocks).unwrap_err();
+
+        assert!(error.to_string().contains("32 hop"));
+    }
+
+    #[test]
+    fn bounds_proxy_jump_alias_growth() {
+        let blocks = parse("ProxyJump %n%n\n");
+        let error = chain_for_route(&["root".into()], &blocks).unwrap_err();
+
+        assert!(error.to_string().contains("4096 bytes"));
+    }
+
+    #[test]
+    fn bounds_explicit_routes() {
+        let route = (0..=MAX_ROUTE_HOPS)
+            .map(|index| format!("host-{index}"))
+            .collect::<Vec<_>>();
+        let error = chain_for_route(&route, &parse("")).unwrap_err();
+
+        assert!(error.to_string().contains("32 hop"));
+    }
+
+    #[test]
     fn handles_quotes_comments_and_negation() {
         assert_eq!(
             tokenize("IdentityFile \"~/my keys/id\" # note"),
             ["IdentityFile", "~/my keys/id"]
         );
         assert!(resolve("secret-a", &parse(CONFIG)).unwrap().user.is_none());
+    }
+
+    #[test]
+    fn matches_adversarial_wildcards_without_exponential_backtracking() {
+        assert!(!glob_matches(
+            "********&",
+            "******************************************************a"
+        ));
+        assert!(glob_matches("***prod**-??", "prod-db"));
     }
 
     #[test]

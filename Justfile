@@ -1,5 +1,7 @@
 set dotenv-load := false
 
+fuzz-toolchain := "nightly-2026-07-28"
+
 default:
     @just --list
 
@@ -17,7 +19,8 @@ lint:
     ./scripts/run-cached pnpm run typecheck
     ./scripts/run-cached actionlint
     ./scripts/run-cached buildifier -mode=check BUILD.bazel MODULE.bazel REPO.bazel
-    ./scripts/run-cached shellcheck -x -P scripts scripts/cache-env.sh scripts/nix-local scripts/run-bazel scripts/run-cached
+    ./scripts/run-cached shellcheck -x -P scripts scripts/cache-env.sh scripts/nix-local scripts/run-bazel scripts/run-cached scripts/run-fuzz
+    ./scripts/run-cached nixfmt --check flake.nix
     ./scripts/run-cached cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
     ./scripts/run-cached cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
@@ -26,6 +29,34 @@ build:
     ./scripts/run-cached cargo build --manifest-path src-tauri/Cargo.toml
 
 check: lint test build
+
+security:
+    ./scripts/run-cached pnpm run security:policy
+    ./scripts/run-cached pnpm audit --audit-level high
+    ./scripts/run-cached cargo audit --file src-tauri/Cargo.lock
+
+sbom:
+    mkdir -p artifacts/security
+    ./scripts/run-cached syft scan dir:. \
+        --source-name ope-term \
+        --source-version 0.1.0 \
+        --exclude './node_modules/**' \
+        --exclude './dist/**' \
+        --exclude './artifacts/**' \
+        --exclude './src-tauri/target/**' \
+        --exclude './src-tauri/fuzz/target/**' \
+        --exclude './bazel-*' \
+        --output cyclonedx-json=artifacts/security/ope-term.cdx.json
+
+fuzz-check:
+    ./scripts/run-cached cargo check --locked --manifest-path src-tauri/fuzz/Cargo.toml --bins
+
+fuzz-bootstrap:
+    ./scripts/run-cached rustup toolchain install {{fuzz-toolchain}} --profile minimal --no-self-update
+
+fuzz-smoke duration="30":
+    cd src-tauri && OPE_TERM_FUZZ_TOOLCHAIN={{fuzz-toolchain}} ../scripts/run-fuzz run ssh_config_parser -- -max_total_time={{duration}} -timeout=10 -verbosity=0
+    cd src-tauri && OPE_TERM_FUZZ_TOOLCHAIN={{fuzz-toolchain}} ../scripts/run-fuzz run route_expansion -- -max_total_time={{duration}} -timeout=10 -verbosity=0
 
 bazel:
     ./scripts/run-bazel test //:check

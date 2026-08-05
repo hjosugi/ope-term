@@ -1,0 +1,9 @@
+Host bastion
+  HostName bastion.example.com
+  User operator
+  IdentityFile ~/.ssh/id_ed25519
+
+Host prod-db
+  HostName 10.20.0.15
+  User admin
+  ProxyJump bastion
