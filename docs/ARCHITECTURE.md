@@ -32,11 +32,14 @@ Rust session task (one task per terminal)
 
 - `main.ts`: route builder、タブ、xterm lifecycle、コマンドレジストリ
 - `route.ts`: 明示ルートと ProxyJump preview の純粋関数
+- `workspaces.ts`: 保存ルートと復元タブの正規化・境界値・永続化（alias 参照のみ）
 - `keybindings.ts`: ショートカットの正規化と永続化
 - `fuzzy.ts`: Host / command / shortcut の共通 fuzzy ranking
 - `auth-secrets.ts`: 認証入力欄と短命な応答配列の明示消去
 
 WebView はファイルシステム、ソケット、鍵へ直接アクセスできません。
+
+タブは接続から独立したUI識別子を持ち、接続ごとの backend session id とは別に管理します。復元したタブと切断済みタブは `idle` / `closed` 状態のまま同じ端末バッファを保持し、操作者が接続を開始したときだけ新しい backend session id を割り当てます。古い接続から遅れて届いた event は id 不一致で破棄します。
 
 ## 接続シーケンス
 

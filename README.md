@@ -20,6 +20,9 @@
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート
 - hop ごとの connecting / connected / error 表示
+- ルートに名前を付けた保存と、alias だけを参照する再利用
+- 起動時のタブ復元（接続は自動で開始しない）と、切断済みタブの再接続
+- 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
 - 複数セッションのタブ切替、端末リサイズ、切断
 - `Ctrl+Shift+P` の fuzzy コマンドパレット
 - UI で変更できるキーボードショートカット
@@ -108,17 +111,32 @@ ope-term は未知のホスト鍵を自動承認しません。保存済みの�
 
 明示ルートは `jump-a → jump-b → target` の各区間を SSH `direct-tcpip` で接続します。各 hop は個別に認証されます。
 
+## ルートの保存と復元
+
+毎日同じ踏み台と接続先を組み直さないために、ルートに名前を付けて保存できます。
+
+- SAVED ROUTES に名前を入力して `ルートを保存`（`Ctrl+Shift+S`）で保存します。名前を省略すると接続先の alias を使います。
+- 保存するのは `~/.ssh/config` の alias だけです。hostname / user / port / ProxyJump は複製せず、接続時に毎回 config を解決します。
+- 保存済みルートは `読み込む` で ROUTE WORKBENCH へ戻すか、`接続` で直接つなぎます。Command Palette からは `Workspace` として検索できます。
+- 終了時のタブと選択中のタブを記録し、次の起動でタブだけを復元します。**復元しただけでは接続しません。** 各タブの `接続`、`CONNECT`、`Ctrl+Shift+Enter` で開始します。
+- 切断済みのタブは同じタブのまま `再接続`（`Ctrl+Shift+Enter`）できます。scrollback とタブ位置は保持します。
+- `~/.ssh/config` を編集したら `Ctrl+Shift+R`（SSH CONFIG の `↻`）で再読み込みします。開いているセッションはそのままです。
+- config から alias が消えた場合は degraded 表示になります。該当ルートとピースを赤く示し、接続ボタンを無効にして、消えた Host 名を表示します。
+
 ## コマンドとショートカット
 
 | 既定キー | コマンド |
 |---|---|
 | `Ctrl+Shift+P` | Command Palette |
 | `Ctrl+K` | Host 検索 |
-| `Ctrl+Enter` | 現在のルートへ接続 |
+| `Ctrl+Enter` | 現在のルート、または選択中タブへ接続 |
 | `Ctrl+Backspace` | ルートをクリア |
 | `Ctrl+N` | 新しいルート |
+| `Ctrl+Shift+S` | 現在のルートを保存 |
+| `Ctrl+Shift+R` | SSH config を再読み込み |
 | `Ctrl+W` | 現在のセッションを閉じる |
 | `Ctrl+Tab` | 次のセッション |
+| `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
 | `Ctrl+Shift+K` | Keyboard Shortcuts |
 
 Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックして新しい組み合わせを入力できます。変更は Tauri WebView のローカルストレージへ保存されます。
@@ -131,6 +149,8 @@ Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックし
 - リモート出力は Rust から Channel 経由で xterm に渡し、HTML として挿入しません。
 - 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
 - password、OTP、秘密鍵passphraseは永続化・ログ出力せず、認証専用の使い捨てIPCでだけ渡します。
+- 保存するルートとタブは `~/.ssh/config` の alias 参照だけです。接続情報も認証情報も WebView へ複製しません。
+- 復元したタブは接続を自動で開始しません。踏み台へ通信するタイミングは常に操作者が決めます。
 - リモートのOSC 8リンクは開かず、window操作とclipboard連携を無効化しています。
 
 脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
