@@ -22,13 +22,18 @@
 
         <div class="rail-heading">
           <span>SSH CONFIG</span>
-          <span id="host-count">0 hosts</span>
+          <span class="rail-heading-actions">
+            <span id="host-count">0 hosts</span>
+            <button id="reload-hosts" class="rail-reload" type="button" title="SSH config を再読み込み (Ctrl+Shift+R)" aria-label="SSH config を再読み込み">↻</button>
+          </span>
         </div>
         <div id="host-list" class="host-list" role="list"></div>
 
         <footer class="rail-footer">
           <span class="secure-dot"></span>
           <span>known_hosts strict</span>
+          <span class="status-spacer"></span>
+          <span id="config-path" class="config-path"></span>
         </footer>
       </aside>
 
@@ -60,6 +65,29 @@
             </div>
           </div>
           <p id="route-hint" class="route-hint"></p>
+
+          <section class="workspaces">
+            <div class="workspace-head">
+              <span class="eyebrow">SAVED ROUTES</span>
+              <span id="workspace-count" class="workspace-count">0 saved</span>
+            </div>
+            <div class="workspace-save">
+              <input
+                id="route-name"
+                type="text"
+                placeholder="ルート名（例: prod 定期保守）"
+                autocomplete="off"
+                spellcheck="false"
+                maxlength="60"
+                aria-label="保存するルート名"
+              />
+              <button id="save-route" class="secondary-button" type="button" disabled>
+                ルートを保存<kbd>Ctrl ⇧ S</kbd>
+              </button>
+            </div>
+            <div id="workspace-list" class="workspace-list" role="list"></div>
+            <p class="workspace-note">保存するのは ~/.ssh/config の alias だけです。hostname / user / port は複製しません。</p>
+          </section>
 
           <div class="feature-grid">
             <article>
