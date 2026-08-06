@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">ope-term</title>
+  <rect width="1024" height="1024" rx="196" fill="#090c10"/>
+  <path d="M250 512h132M642 512h132" stroke="#ffb454" stroke-width="34" stroke-linecap="round"/>
+  <rect x="321" y="321" width="382" height="382" rx="68" fill="#11161d" stroke="#ffb454" stroke-width="34" transform="rotate(45 512 512)"/>
+  <circle cx="250" cy="512" r="52" fill="#11161d" stroke="#75d8d5" stroke-width="28"/>
+  <circle cx="774" cy="512" r="52" fill="#11161d" stroke="#78d6a3" stroke-width="28"/>
+  <path d="M454 430v164c0 48 24 72 58 72s58-24 58-72V430" fill="none" stroke="#e9edf3" stroke-width="48" stroke-linecap="round"/>
+</svg>

@@ -193,6 +193,10 @@
                 pkgs.openssl
                 pkgs.pkg-config
                 pkgs.pnpm_10
+                (pkgs.python3.withPackages (ps: [
+                  ps.mkdocs
+                  ps.mkdocs-material
+                ]))
                 pkgs.rust-analyzer
                 pkgs.rustc
                 pkgs.rustfmt
