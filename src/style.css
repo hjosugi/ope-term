@@ -157,6 +157,9 @@ h1 { margin: 0; font-size: clamp(27px, 3vw, 43px); letter-spacing: -.045em; }
 .hop-action { margin-left: 10px; border: 1px solid var(--amber); background: transparent; color: var(--amber); padding: 3px 9px; cursor: pointer; font: 10px var(--mono); white-space: nowrap; }
 .hop-action:hover:not(:disabled) { background: var(--amber-soft); }
 .hop-action:disabled { border-color: var(--line); color: #56606c; cursor: not-allowed; }
+.hop-action.ghost { border-color: var(--line); color: var(--muted); margin-left: 6px; }
+.hop-action.ghost:hover { border-color: #596675; color: var(--text); background: transparent; }
+.hop-retry { margin-left: 12px; color: var(--amber); white-space: nowrap; }
 .terminal-container { min-height: 0; padding: 9px 8px 5px 12px; }
 .terminal-container .xterm { height: 100%; }
 .statusbar { display: flex; align-items: center; gap: 16px; padding: 0 11px; border-top: 1px solid var(--line); background: #0c1015; color: var(--muted); font: 9px var(--mono); letter-spacing: .05em; }

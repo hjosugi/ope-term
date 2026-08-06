@@ -13,8 +13,17 @@ import {
   saveKeybindings,
   type CommandId,
 } from './keybindings';
+import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
 import { appendUnique, moveRouteItem, routePreview } from './route';
-import type { AuthPrompt, ConnectRequest, HopStatus, HostKeyPrompt, HostProfile, SessionEvent } from './types';
+import type {
+  AuthPrompt,
+  CloseReason,
+  ConnectRequest,
+  HopStatus,
+  HostKeyPrompt,
+  HostProfile,
+  SessionEvent,
+} from './types';
 import {
   loadWorkspaces,
   missingAliases,
@@ -45,6 +54,12 @@ interface SessionUi {
   inputTimer?: number;
   resizeTimer?: number;
   state: SessionState;
+  closeReason?: CloseReason;
+  /** Consecutive automatic reconnect attempts, reset by a ready session. */
+  retryAttempt: number;
+  retryTimer?: number;
+  retryTick?: number;
+  retryAt?: number;
 }
 
 interface CommandDefinition {
@@ -524,11 +539,14 @@ async function connectRoute(): Promise<void> {
  * Restored tabs and closed sessions both start here, so a reconnect reuses the
  * scrollback and tab position instead of creating a second tab.
  */
-async function startSession(session: SessionUi): Promise<void> {
+async function startSession(session: SessionUi, resetRetries = true): Promise<void> {
   if (session.state === 'connecting' || session.state === 'connected') return;
+  clearRetryTimers(session);
+  if (resetRetries) session.retryAttempt = 0;
   const missing = missingAliases(session.route, hostAliases());
   if (missing.length > 0) {
     toast(`SSH config に無い Host のため接続できません: ${missing.join(', ')}`);
+    renderHopbar(session);
     return;
   }
 
@@ -560,7 +578,7 @@ async function startSession(session: SessionUi): Promise<void> {
     await invoke('connect_session', { request, onEvent, onData });
   } catch (error) {
     handleSessionEvent(session, connectionId, { type: 'error', message: String(error) });
-    handleSessionEvent(session, connectionId, { type: 'closed' });
+    handleSessionEvent(session, connectionId, { type: 'closed', reason: 'failed' });
   }
 }
 
@@ -644,11 +662,60 @@ function createSession(sessionRoute: string[]): SessionUi {
     hopbar,
     inputBuffer: '',
     state: 'idle',
+    retryAttempt: 0,
   };
   terminal.onData((data) => queueInput(session, data));
   terminal.onResize(({ cols, rows }) => queueResize(session, cols, rows));
   renderHopbar(session);
   return session;
+}
+
+/**
+ * Drops input that was typed but not yet flushed.
+ *
+ * A reconnect opens a new shell, so anything buffered for the old one must never
+ * reach it: a half-typed command replayed into a fresh prompt is a live incident.
+ */
+function discardPendingInput(session: SessionUi): void {
+  if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
+  session.inputTimer = undefined;
+  session.inputBuffer = '';
+}
+
+function clearRetryTimers(session: SessionUi): void {
+  if (session.retryTimer !== undefined) window.clearTimeout(session.retryTimer);
+  if (session.retryTick !== undefined) window.clearInterval(session.retryTick);
+  session.retryTimer = undefined;
+  session.retryTick = undefined;
+  session.retryAt = undefined;
+}
+
+/** Schedules the next automatic reconnect and shows the countdown in the hopbar. */
+function scheduleRetry(session: SessionUi): void {
+  clearRetryTimers(session);
+  session.retryAttempt += 1;
+  const delay = retryDelayMs(session.retryAttempt);
+  session.retryAt = Date.now() + delay;
+  session.terminal.writeln(
+    `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${Math.round(delay / 1000)} 秒後に再接続します（${session.retryAttempt}/${MAX_AUTO_RETRIES}）`,
+  );
+  session.retryTimer = window.setTimeout(() => {
+    session.retryTimer = undefined;
+    void startSession(session, false);
+  }, delay);
+  session.retryTick = window.setInterval(() => renderHopbar(session), 1000);
+  renderHopbar(session);
+  renderTabs();
+  if (session.key === activeSessionKey) updateConnectionState(session);
+}
+
+function cancelRetry(session: SessionUi): void {
+  clearRetryTimers(session);
+  session.retryAttempt = 0;
+  session.terminal.writeln('\x1b[38;2;127;137;150m[ope-term] 自動再接続を停止しました\x1b[0m');
+  renderHopbar(session);
+  renderTabs();
+  if (session.key === activeSessionKey) updateConnectionState(session);
 }
 
 function queueInput(session: SessionUi, data: string): void {
@@ -698,6 +765,8 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
       break;
     case 'ready':
       session.state = 'connected';
+      session.closeReason = undefined;
+      session.retryAttempt = 0;
       renderHopbar(session);
       renderTabs();
       if (session.key === activeSessionKey) updateConnectionState(session);
@@ -707,15 +776,24 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
       session.terminal.writeln(`\r\n\x1b[38;2;242;125;136m[ope-term] ${event.message}\x1b[0m`);
       toast(event.message);
       break;
-    case 'closed':
+    case 'closed': {
       session.state = 'closed';
+      session.closeReason = event.reason;
+      session.connectionId = null;
+      discardPendingInput(session);
       session.terminal.writeln(
-        '\r\n\x1b[38;2;127;137;150m[ope-term] session closed · 再接続は Ctrl+Shift+Enter\x1b[0m',
+        `\r\n\x1b[38;2;127;137;150m[ope-term] ${closeMessage(event.reason)} · 再接続は Ctrl+Shift+Enter\x1b[0m`,
       );
-      renderHopbar(session);
-      if (session.key === activeSessionKey) updateConnectionState(session);
-      renderTabs();
+      if (shouldAutoRetry(event.reason, session.retryAttempt + 1)) {
+        scheduleRetry(session);
+      } else {
+        clearRetryTimers(session);
+        renderHopbar(session);
+        renderTabs();
+        if (session.key === activeSessionKey) updateConnectionState(session);
+      }
       break;
+    }
   }
 }
 
@@ -931,6 +1009,26 @@ function renderHopbar(session: SessionUi): void {
     warning.textContent = `SSH config にない Host: ${missing.join(', ')}`;
     session.hopbar.append(warning);
   }
+
+  if (session.retryAt !== undefined) {
+    const seconds = Math.max(0, Math.ceil((session.retryAt - Date.now()) / 1000));
+    const countdown = document.createElement('span');
+    countdown.className = 'hop-retry';
+    countdown.textContent = `再接続まで ${seconds} 秒（${session.retryAttempt}/${MAX_AUTO_RETRIES}）`;
+    const now = document.createElement('button');
+    now.type = 'button';
+    now.className = 'hop-action';
+    now.textContent = '今すぐ';
+    now.addEventListener('click', () => void startSession(session));
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.className = 'hop-action ghost';
+    stop.textContent = '自動再接続を停止';
+    stop.addEventListener('click', () => cancelRetry(session));
+    session.hopbar.append(countdown, now, stop);
+    return;
+  }
+
   const action = document.createElement('button');
   action.type = 'button';
   action.className = 'hop-action';
@@ -974,6 +1072,11 @@ function updateConnectionState(session: SessionUi): void {
     connected: 'var(--green)',
     closed: 'var(--red)',
   } as const;
+  if (session.retryAt !== undefined) {
+    ui.connectionState.textContent = 'RECONNECTING';
+    ui.connectionState.style.color = 'var(--amber)';
+    return;
+  }
   ui.connectionState.textContent = labels[session.state];
   ui.connectionState.style.color = colors[session.state];
 }
@@ -987,7 +1090,7 @@ function renderTabs(): void {
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', String(session.key === activeSessionKey));
     const dot = document.createElement('span');
-    dot.className = `secure-dot ${session.state}`;
+    dot.className = `secure-dot ${session.retryAt !== undefined ? 'connecting' : session.state}`;
     const label = document.createElement('span');
     label.className = 'session-tab-label';
     label.textContent = session.title;
@@ -1013,7 +1116,8 @@ function closeSession(key: string): void {
   }
   discardHostKeyPrompts(key);
   discardAuthPrompts(key);
-  if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
+  clearRetryTimers(session);
+  discardPendingInput(session);
   if (session.resizeTimer !== undefined) window.clearTimeout(session.resizeTimer);
   session.terminal.dispose();
   session.view.remove();

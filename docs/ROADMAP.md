@@ -22,7 +22,7 @@
 | P0 | [#10 Performance](https://github.com/hjosugi/ope-term/issues/10) | cold start、input latency、100 MB output の throughput を計測し、回帰をゲートで検出する |
 | P1 | [#5 Terminal panes](https://github.com/hjosugi/ope-term/issues/5) | zellij 風の分割・移動・リサイズ |
 | P1 | [#6 SFTP](https://github.com/hjosugi/ope-term/issues/6) | 多段 SSH セッションを共有する 2 ペインファイラー |
-| P1 | [#7 Reliability](https://github.com/hjosugi/ope-term/issues/7) | 切断検知の分類、exponential backoff、tmux/screen 再 attach、24 時間 soak test |
+| P1 | [#7 Reliability](https://github.com/hjosugi/ope-term/issues/7) | 切断分類と backoff 再接続は実装済み。残りは tmux/screen 再 attach と 24 時間 soak test |
 | P1 | [#9 Local terminal](https://github.com/hjosugi/ope-term/issues/9) | OS ネイティブ shell と環境プロファイル |
 | P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | Linux / Windows / macOS の署名・配布 CI |
 | P2 | [#8 Session logs](https://github.com/hjosugi/ope-term/issues/8) | 明示変数、ローテーション、fzf 風検索ビューア |

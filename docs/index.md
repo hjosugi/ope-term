@@ -30,6 +30,8 @@
 - ProxyJump 自動展開と、任意に組んだ多段ルート
 - ルートに名前を付けた保存と、alias だけを参照する再利用
 - 起動時のタブ復元（接続は自動で開始しない）と、切断済みタブの再接続
+- 切断理由の分類（local / remote / transport / failed）と、transport 断だけを対象にした
+  exponential backoff 自動再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
 - 複数セッションのタブ切替、端末リサイズ、切断
 - `Ctrl+Shift+P` の fuzzy コマンドパレットと、UI で変更できるキーボードショートカット
