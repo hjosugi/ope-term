@@ -41,6 +41,17 @@ export interface AuthPrompt {
   fields: AuthField[];
 }
 
+/**
+ * Why a session ended.
+ *
+ * - `local`: the operator closed the tab or the app closed the session.
+ * - `remote`: the remote shell exited and the peer closed the channel.
+ * - `transport`: the connection was lost without a channel close, including a
+ *   keepalive timeout, a network change, or an I/O failure mid-session.
+ * - `failed`: the session never reached a shell (config, host key, auth).
+ */
+export type CloseReason = 'local' | 'remote' | 'transport' | 'failed';
+
 export type SessionEvent =
   | { type: 'chain'; hops: HopStatus[] }
   | { type: 'hop'; hop: HopStatus }
@@ -48,7 +59,7 @@ export type SessionEvent =
   | { type: 'auth_prompt'; prompt: AuthPrompt }
   | { type: 'ready' }
   | { type: 'error'; message: string }
-  | { type: 'closed' };
+  | { type: 'closed'; reason: CloseReason };
 
 export interface ConnectRequest {
   sessionId: string;

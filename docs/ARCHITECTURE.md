@@ -41,6 +41,8 @@ WebView はファイルシステム、ソケット、鍵へ直接アクセスで
 
 タブは接続から独立したUI識別子を持ち、接続ごとの backend session id とは別に管理します。復元したタブと切断済みタブは `idle` / `closed` 状態のまま同じ端末バッファを保持し、操作者が接続を開始したときだけ新しい backend session id を割り当てます。古い接続から遅れて届いた event は id 不一致で破棄します。
 
+セッション終了時は理由を `local` / `remote` / `transport` / `failed` に分けて UI へ渡します。channel の close は `remote`、close なしで channel が終わった場合（keepalive timeout、ネットワーク断、shell 実行中の I/O 失敗）は `transport`、shell へ到達する前の失敗は `failed` です。自動再接続は `transport` だけを対象にし、未送信の入力は切断時に破棄して新しい shell へ再送しません。
+
 ## 接続シーケンス
 
 1. UI が route、初期 cols/rows、IPC Channel を `connect_session` に渡す。
