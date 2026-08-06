@@ -58,6 +58,12 @@ fuzz-smoke duration="30":
     cd src-tauri && OPE_TERM_FUZZ_TOOLCHAIN={{fuzz-toolchain}} ../scripts/run-fuzz run ssh_config_parser -- -max_total_time={{duration}} -timeout=10 -verbosity=0
     cd src-tauri && OPE_TERM_FUZZ_TOOLCHAIN={{fuzz-toolchain}} ../scripts/run-fuzz run route_expansion -- -max_total_time={{duration}} -timeout=10 -verbosity=0
 
+docs:
+    ./scripts/run-cached mkdocs build --strict
+
+docs-serve:
+    ./scripts/run-cached mkdocs serve
+
 bazel:
     ./scripts/run-bazel test //:check
     ./scripts/run-bazel build //:frontend

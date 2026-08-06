@@ -4,8 +4,11 @@ export type CommandId =
   | 'route.connect'
   | 'route.clear'
   | 'route.new'
+  | 'route.save'
+  | 'hosts.reload'
   | 'session.close'
   | 'session.next'
+  | 'session.reconnect'
   | 'preferences.openKeyboardShortcuts';
 
 export const DEFAULT_KEYBINDINGS: Record<CommandId, string> = {
@@ -14,8 +17,11 @@ export const DEFAULT_KEYBINDINGS: Record<CommandId, string> = {
   'route.connect': 'Ctrl+Enter',
   'route.clear': 'Ctrl+Backspace',
   'route.new': 'Ctrl+N',
+  'route.save': 'Ctrl+Shift+S',
+  'hosts.reload': 'Ctrl+Shift+R',
   'session.close': 'Ctrl+W',
   'session.next': 'Ctrl+Tab',
+  'session.reconnect': 'Ctrl+Shift+Enter',
   'preferences.openKeyboardShortcuts': 'Ctrl+Shift+K',
 };
 

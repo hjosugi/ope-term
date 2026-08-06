@@ -13,6 +13,7 @@ plugin, transport, authentication method, or persistence mechanism is added.
 | `~/.ssh/config`, included files, route definitions | Local confidentiality and faithful parsing without code execution |
 | Terminal input and output | Session isolation, bounded resource use, and no interpretation as HTML or privileged UI commands |
 | Local filesystem and process authority | Unavailable to the WebView except through the eight allowlisted Tauri commands |
+| Saved route workspaces and restored tabs in WebView storage | Alias references only; never secrets or resolved endpoints, and never an automatic connection |
 | Release artifacts and dependency graph | Reproducibility, vulnerability review, and an attached machine-readable SBOM |
 
 ## Trust boundaries
@@ -68,6 +69,7 @@ containable. Such an attacker can read the same keys and memory as ope-term.
 | Malicious terminal escapes | xterm window controls disabled; OSC 8 activation blocked; no OSC 52 clipboard integration | Visual spoofing and output-flood resource pressure remain possible |
 | Parser/route denial of service | Include-depth and cycle checks, non-recursive polynomial-time wildcard matching, unit/property tests, continuous fuzzing, bounded fuzz inputs | Runtime config file size is not yet globally capped |
 | Vulnerable dependencies | `pnpm audit`, RustSec audit, weekly CI, CycloneDX SBOM, private reporting | Linux WebKitGTK/GTK stack inherits platform advisories and patch cadence |
+| Tampered or corrupt workspace storage | Stored entries are alias references only, re-validated and bounded on load, resolved through `~/.ssh/config` at connect time; a corrupt store degrades to an empty workspace instead of blocking startup | A local attacker who can already write WebView storage can rename a workspace to mislead an operator into connecting to a different, config-defined alias |
 
 ## Security invariants
 
@@ -76,5 +78,7 @@ containable. Such an attacker can read the same keys and memory as ope-term.
    window, or invoke a Tauri command through terminal escape sequences.
 3. The WebView cannot obtain private-key bytes or raw SSH session handles.
 4. Host-key changes fail closed.
-5. Adding a capability or plugin requires updating this model and the automated
+5. Persisted UI state holds no secrets and starts no connection on its own; a
+   restored tab connects only after an explicit operator action.
+6. Adding a capability or plugin requires updating this model and the automated
    policy audit.

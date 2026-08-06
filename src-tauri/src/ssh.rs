@@ -84,7 +84,23 @@ pub enum SessionEvent {
     AuthPrompt { prompt: AuthPrompt },
     Ready,
     Error { message: String },
-    Closed,
+    Closed { reason: CloseReason },
+}
+
+/// Why a session ended, so the UI can retry a lost link without retrying a
+/// rejected credential or an intentional exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseReason {
+    /// The operator closed the tab, or the app dropped the command channel.
+    Local,
+    /// The remote shell exited and the peer closed the channel.
+    Remote,
+    /// The link died without a channel close: keepalive timeout, network
+    /// change, or an I/O failure while the shell was running.
+    Transport,
+    /// The session never reached a shell: config, host key, or authentication.
+    Failed,
 }
 
 #[derive(Debug)]
@@ -157,7 +173,7 @@ pub async fn run(
     commands: mpsc::Receiver<SessionCommand>,
     host_key_answers: mpsc::Receiver<HostKeyAnswer>,
     auth_answers: mpsc::Receiver<AuthAnswer>,
-) -> Result<()> {
+) -> Result<CloseReason> {
     let blocks = ssh_config::load_default()?;
     let chain = ssh_config::chain_for_route(&request.route, &blocks)?;
     send(
@@ -269,20 +285,28 @@ pub async fn run(
     channel.request_shell(true).await?;
     send(&events, SessionEvent::Ready);
 
-    session_loop(&mut channel, commands, &data).await?;
+    let outcome = session_loop(&mut channel, commands, &data).await;
     for handle in handles.iter_mut().rev() {
         let _ = handle
             .disconnect(Disconnect::ByApplication, "ope-term closed", "en")
             .await;
     }
-    Ok(())
+    match outcome {
+        Ok(reason) => Ok(reason),
+        Err(error) => {
+            // The shell was already running, so a failure here is a lost link
+            // rather than a rejected connection. Report it and let the UI retry.
+            event_error(&events, &error);
+            Ok(CloseReason::Transport)
+        }
+    }
 }
 
 async fn session_loop(
     channel: &mut russh::Channel<client::Msg>,
     mut commands: mpsc::Receiver<SessionCommand>,
     data_channel: &Channel<Response>,
-) -> Result<()> {
+) -> Result<CloseReason> {
     loop {
         tokio::select! {
             command = commands.recv() => {
@@ -294,7 +318,7 @@ async fn session_loop(
                     Some(SessionCommand::Close) | None => {
                         let _ = channel.eof().await;
                         let _ = channel.close().await;
-                        break;
+                        return Ok(CloseReason::Local);
                     }
                 }
             }
@@ -303,13 +327,18 @@ async fn session_loop(
                     Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
                         let _ = data_channel.send(Response::new(data.to_vec()));
                     }
-                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                    // The peer closed the shell: an exit, a kill, or a logout.
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
+                        return Ok(CloseReason::Remote);
+                    }
+                    // The channel ended without a close, so the session below it
+                    // is gone: keepalive timeout, network change, or reset.
+                    None => return Ok(CloseReason::Transport),
                     _ => {}
                 }
             }
         }
     }
-    Ok(())
 }
 
 fn send(channel: &Channel<SessionEvent>, event: SessionEvent) {
@@ -806,8 +835,8 @@ pub fn event_error(channel: &Channel<SessionEvent>, error: &anyhow::Error) {
     );
 }
 
-pub fn event_closed(channel: &Channel<SessionEvent>) {
-    send(channel, SessionEvent::Closed);
+pub fn event_closed(channel: &Channel<SessionEvent>, reason: CloseReason) {
+    send(channel, SessionEvent::Closed { reason });
 }
 
 #[cfg(test)]
@@ -1069,5 +1098,19 @@ sJWR7W+cGvJ/vLsw==
         assert!(!format!("{answer:?}").contains("never-print-this-secret"));
         let error = validate_auth_responses(Some(2), &answer.responses).unwrap_err();
         assert!(!error.to_string().contains("never-print-this-secret"));
+    }
+
+    #[test]
+    fn close_reasons_keep_the_wire_names_the_ui_switches_on() {
+        for (reason, expected) in [
+            (CloseReason::Local, "local"),
+            (CloseReason::Remote, "remote"),
+            (CloseReason::Transport, "transport"),
+            (CloseReason::Failed, "failed"),
+        ] {
+            let event = serde_json::to_value(SessionEvent::Closed { reason }).unwrap();
+            assert_eq!(event["type"], "closed");
+            assert_eq!(event["reason"], expected);
+        }
     }
 }

@@ -1,0 +1,4 @@
+# Documentation site toolchain. Pinned so local builds and the Pages deploy
+# produce the same output, and so Dependabot can review upgrades.
+mkdocs==1.6.1
+mkdocs-material==9.7.7

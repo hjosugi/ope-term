@@ -13,11 +13,36 @@ import {
   saveKeybindings,
   type CommandId,
 } from './keybindings';
+import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
 import { appendUnique, moveRouteItem, routePreview } from './route';
-import type { AuthPrompt, ConnectRequest, HopStatus, HostKeyPrompt, HostProfile, SessionEvent } from './types';
+import type {
+  AuthPrompt,
+  CloseReason,
+  ConnectRequest,
+  HopStatus,
+  HostKeyPrompt,
+  HostProfile,
+  SessionEvent,
+} from './types';
+import {
+  loadWorkspaces,
+  missingAliases,
+  removeSavedRoute,
+  sanitizeName,
+  saveWorkspaces,
+  suggestRouteName,
+  upsertSavedRoute,
+  type SavedRoute,
+  type WorkspaceState,
+} from './workspaces';
+
+type SessionState = 'idle' | 'connecting' | 'connected' | 'closed';
 
 interface SessionUi {
-  id: string;
+  /** Stable UI identity that survives reconnects. */
+  key: string;
+  /** Backend session id of the current connection, or null while idle. */
+  connectionId: string | null;
   title: string;
   route: string[];
   hops: HopStatus[];
@@ -28,7 +53,13 @@ interface SessionUi {
   inputBuffer: string;
   inputTimer?: number;
   resizeTimer?: number;
-  state: 'connecting' | 'connected' | 'closed';
+  state: SessionState;
+  closeReason?: CloseReason;
+  /** Consecutive automatic reconnect attempts, reset by a ready session. */
+  retryAttempt: number;
+  retryTimer?: number;
+  retryTick?: number;
+  retryAt?: number;
 }
 
 interface CommandDefinition {
@@ -48,12 +79,14 @@ interface PaletteItem {
 }
 
 interface HostKeyDialogItem {
-  sessionId: string;
+  sessionKey: string;
+  connectionId: string;
   prompt: HostKeyPrompt;
 }
 
 interface AuthDialogItem {
-  sessionId: string;
+  sessionKey: string;
+  connectionId: string;
   prompt: AuthPrompt;
 }
 
@@ -69,6 +102,12 @@ const ui = {
   hostList: element<HTMLElement>('host-list'),
   hostCount: element<HTMLElement>('host-count'),
   hostSearch: element<HTMLInputElement>('host-search'),
+  reloadHosts: element<HTMLButtonElement>('reload-hosts'),
+  configPath: element<HTMLElement>('config-path'),
+  workspaceList: element<HTMLElement>('workspace-list'),
+  workspaceCount: element<HTMLElement>('workspace-count'),
+  routeName: element<HTMLInputElement>('route-name'),
+  saveRoute: element<HTMLButtonElement>('save-route'),
   routeTrack: element<HTMLElement>('route-track'),
   routeEmpty: element<HTMLElement>('route-empty'),
   routeHint: element<HTMLElement>('route-hint'),
@@ -111,7 +150,8 @@ const ui = {
 let hosts: HostProfile[] = [];
 let route: string[] = [];
 let routeDragIndex: number | null = null;
-let activeSessionId: string | null = null;
+let activeSessionKey: string | null = null;
+let workspaces: WorkspaceState = loadWorkspaces();
 let selectedCommand = 0;
 let paletteItems: PaletteItem[] = [];
 let recordingCommand: CommandId | null = null;
@@ -135,11 +175,19 @@ const commands: CommandDefinition[] = [
     label: 'Host を検索',
     run: focusHostSearch,
   },
-  { id: 'route.connect', category: 'Route', label: '現在のルートへ接続', run: () => void connectRoute() },
+  { id: 'route.connect', category: 'Route', label: '現在のルートへ接続', run: () => void connectCurrent() },
   { id: 'route.clear', category: 'Route', label: 'ルートをクリア', run: clearRoute },
   { id: 'route.new', category: 'Route', label: '新しいルート', run: showBuilder },
+  { id: 'route.save', category: 'Route', label: '現在のルートを保存', run: saveCurrentRoute },
+  { id: 'hosts.reload', category: 'SSH', label: 'SSH config を再読み込み', run: () => void reloadHosts() },
   { id: 'session.close', category: 'Session', label: '現在のセッションを閉じる', run: closeActiveSession },
   { id: 'session.next', category: 'Session', label: '次のセッションへ移動', run: activateNextSession },
+  {
+    id: 'session.reconnect',
+    category: 'Session',
+    label: '現在のセッションへ接続 / 再接続',
+    run: () => void startActiveSession(),
+  },
   {
     id: 'preferences.openKeyboardShortcuts',
     category: 'Preferences',
@@ -159,11 +207,56 @@ function toast(message: string): void {
 async function loadHosts(): Promise<void> {
   try {
     hosts = await invoke<HostProfile[]>('list_hosts');
-    renderHosts();
-    renderRoute();
   } catch (error) {
     toast(`SSH config の読み込みに失敗しました: ${String(error)}`);
-    renderHosts();
+  }
+  renderHosts();
+  renderRoute();
+  renderWorkspaces();
+  for (const session of sessions.values()) renderHopbar(session);
+}
+
+async function loadConfigPath(): Promise<void> {
+  try {
+    const path = await invoke<string>('ssh_config_path');
+    // The rail is narrow, so show the trailing segments and keep the full path
+    // in the tooltip instead of truncating the informative end away.
+    const segments = path.split(/[\\/]/u).filter(Boolean);
+    ui.configPath.textContent = segments.slice(-2).join('/') || path;
+    ui.configPath.title = path;
+  } catch {
+    // The path is a convenience label; the host list already reports read failures.
+  }
+}
+
+/**
+ * Reloads `~/.ssh/config` in place so an edited Host shows up without a restart.
+ * Open sessions keep their connection; only the host list and route state refresh.
+ */
+async function reloadHosts(): Promise<void> {
+  ui.reloadHosts.disabled = true;
+  try {
+    await loadHosts();
+    toast(`SSH config を再読み込みしました（${hosts.length} hosts）`);
+  } finally {
+    ui.reloadHosts.disabled = false;
+  }
+}
+
+function hostAliases(): string[] {
+  return hosts.map((host) => host.alias);
+}
+
+function persistWorkspaces(): void {
+  workspaces = {
+    saved: workspaces.saved,
+    tabs: [...sessions.values()].map((session) => [...session.route]),
+    activeTab: activeSessionKey ? [...sessions.keys()].indexOf(activeSessionKey) : -1,
+  };
+  try {
+    saveWorkspaces(workspaces);
+  } catch {
+    // A full or disabled WebView storage must not interrupt an open session.
   }
 }
 
@@ -234,7 +327,9 @@ function clearRoute(): void {
 
 function renderRoute(): void {
   ui.routeTrack.replaceChildren();
-  ui.connect.disabled = route.length === 0;
+  const missing = missingAliases(route, hostAliases());
+  ui.connect.disabled = route.length === 0 || missing.length > 0;
+  ui.saveRoute.disabled = route.length === 0;
 
   if (route.length === 0) {
     ui.routeTrack.append(ui.routeEmpty);
@@ -245,7 +340,7 @@ function renderRoute(): void {
 
   route.forEach((alias, index) => {
     const piece = document.createElement('div');
-    piece.className = 'route-piece';
+    piece.className = missing.includes(alias) ? 'route-piece missing' : 'route-piece';
     piece.draggable = true;
     piece.dataset.index = String(index);
     const copy = document.createElement('span');
@@ -294,7 +389,15 @@ function renderRoute(): void {
 
   const preview = routePreview(route, hosts);
   ui.statusRoute.textContent = preview.join(' → ');
-  if (route.length === 1 && preview.length > 1) {
+  if (missing.length > 0) {
+    ui.routeHint.replaceChildren();
+    const lead = document.createTextNode('SSH config にない Host: ');
+    const names = document.createElement('b');
+    names.className = 'missing-alias';
+    names.textContent = missing.join(', ');
+    const tail = document.createTextNode('。config を更新して再読み込みするか、ピースを外してください。');
+    ui.routeHint.append(lead, names, tail);
+  } else if (route.length === 1 && preview.length > 1) {
     ui.routeHint.replaceChildren();
     const lead = document.createTextNode('OpenSSH ProxyJump: ');
     const path = document.createElement('b');
@@ -305,47 +408,198 @@ function renderRoute(): void {
   }
 }
 
+function renderWorkspaces(): void {
+  const aliases = hostAliases();
+  ui.workspaceCount.textContent = `${workspaces.saved.length} saved`;
+  ui.workspaceList.replaceChildren();
+
+  if (workspaces.saved.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = 'よく使うルートに名前を付けて保存すると、次回から 1 クリックで組み立てられます。';
+    ui.workspaceList.append(empty);
+    return;
+  }
+
+  for (const entry of workspaces.saved) {
+    const missing = missingAliases(entry.route, aliases);
+    const card = document.createElement('article');
+    card.className = missing.length > 0 ? 'workspace-card degraded' : 'workspace-card';
+    card.setAttribute('role', 'listitem');
+
+    const head = document.createElement('div');
+    head.className = 'workspace-card-head';
+    const name = document.createElement('strong');
+    name.textContent = entry.name;
+    const hops = document.createElement('span');
+    hops.className = 'workspace-hops';
+    hops.textContent = entry.route.length > 1 ? `${entry.route.length} HOP` : 'DIRECT';
+    head.append(name, hops);
+
+    const path = document.createElement('span');
+    path.className = 'workspace-path';
+    path.textContent = routePreview(entry.route, hosts).join(' → ');
+    card.append(head, path);
+
+    if (missing.length > 0) {
+      const warning = document.createElement('p');
+      warning.className = 'workspace-missing';
+      warning.textContent = `SSH config にない Host: ${missing.join(', ')}`;
+      card.append(warning);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'workspace-actions';
+    const load = document.createElement('button');
+    load.type = 'button';
+    load.className = 'workspace-action';
+    load.textContent = '読み込む';
+    load.addEventListener('click', () => loadSavedRoute(entry));
+    const connect = document.createElement('button');
+    connect.type = 'button';
+    connect.className = 'workspace-action primary';
+    connect.textContent = '接続';
+    connect.disabled = missing.length > 0;
+    connect.title = missing.length > 0 ? 'SSH config に無い Host を含むため接続できません' : `${entry.name} へ接続`;
+    connect.addEventListener('click', () => void connectSavedRoute(entry));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'workspace-action remove';
+    remove.textContent = '削除';
+    remove.title = `${entry.name} を削除`;
+    remove.addEventListener('click', () => deleteSavedRoute(entry));
+    actions.append(load, connect, remove);
+    card.append(actions);
+    ui.workspaceList.append(card);
+  }
+}
+
+function saveCurrentRoute(): void {
+  showBuilder();
+  if (route.length === 0) {
+    toast('保存するルートがありません。Host をルートへ追加してください。');
+    ui.hostSearch.focus();
+    return;
+  }
+  const name = sanitizeName(ui.routeName.value) || suggestRouteName(route);
+  if (!name) {
+    toast('ルート名を入力してください。');
+    ui.routeName.focus();
+    return;
+  }
+  workspaces.saved = upsertSavedRoute(workspaces.saved, name, route);
+  persistWorkspaces();
+  renderWorkspaces();
+  ui.routeName.value = '';
+  toast(`ルートを保存しました: ${name}`);
+}
+
+function loadSavedRoute(entry: SavedRoute): void {
+  showBuilder();
+  route = [...entry.route];
+  ui.routeName.value = entry.name;
+  renderRoute();
+}
+
+async function connectSavedRoute(entry: SavedRoute): Promise<void> {
+  route = [...entry.route];
+  renderRoute();
+  await connectRoute();
+}
+
+function deleteSavedRoute(entry: SavedRoute): void {
+  workspaces.saved = removeSavedRoute(workspaces.saved, entry.id);
+  persistWorkspaces();
+  renderWorkspaces();
+  toast(`保存したルートを削除しました: ${entry.name}`);
+}
+
 function showBuilder(): void {
-  activeSessionId = null;
+  activeSessionKey = null;
   ui.builder.classList.remove('hidden');
   ui.terminalStage.classList.add('hidden');
   ui.statusMode.textContent = 'ROUTE';
   ui.connectionState.textContent = 'ROUTE READY';
   ui.connectionState.style.color = 'var(--green)';
   renderTabs();
+  persistWorkspaces();
 }
 
 async function connectRoute(): Promise<void> {
   if (route.length === 0) return;
-  const id = crypto.randomUUID();
-  const title = route.at(-1) ?? 'ssh';
-  const session = createSession(id, title, [...route]);
-  sessions.set(id, session);
-  activateSession(id);
+  const session = createSession([...route]);
+  sessions.set(session.key, session);
+  activateSession(session.key);
+  await startSession(session);
+}
+
+/**
+ * Opens the connection for a session that already owns a tab.
+ *
+ * Restored tabs and closed sessions both start here, so a reconnect reuses the
+ * scrollback and tab position instead of creating a second tab.
+ */
+async function startSession(session: SessionUi, resetRetries = true): Promise<void> {
+  if (session.state === 'connecting' || session.state === 'connected') return;
+  clearRetryTimers(session);
+  if (resetRetries) session.retryAttempt = 0;
+  const missing = missingAliases(session.route, hostAliases());
+  if (missing.length > 0) {
+    toast(`SSH config に無い Host のため接続できません: ${missing.join(', ')}`);
+    renderHopbar(session);
+    return;
+  }
+
+  const connectionId = crypto.randomUUID();
+  session.connectionId = connectionId;
+  session.state = 'connecting';
+  session.hops = [];
+  renderHopbar(session);
   renderTabs();
+  if (session.key === activeSessionKey) {
+    session.fit.fit();
+    updateConnectionState(session);
+  }
 
   const onEvent = new Channel<SessionEvent>();
-  onEvent.onmessage = (event) => handleSessionEvent(session, event);
+  onEvent.onmessage = (event) => handleSessionEvent(session, connectionId, event);
   const onData = new Channel<ArrayBuffer>();
   onData.onmessage = (data) => session.terminal.write(new Uint8Array(data));
   const request: ConnectRequest = {
-    sessionId: id,
-    route: [...route],
+    sessionId: connectionId,
+    route: [...session.route],
     cols: session.terminal.cols,
     rows: session.terminal.rows,
   };
-  session.terminal.writeln(`\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${routePreview(route, hosts).join(' → ')} へ接続中…`);
+  session.terminal.writeln(
+    `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${routePreview(session.route, hosts).join(' → ')} へ接続中…`,
+  );
   try {
     await invoke('connect_session', { request, onEvent, onData });
   } catch (error) {
-    handleSessionEvent(session, { type: 'error', message: String(error) });
+    handleSessionEvent(session, connectionId, { type: 'error', message: String(error) });
+    handleSessionEvent(session, connectionId, { type: 'closed', reason: 'failed' });
   }
 }
 
-function createSession(id: string, title: string, sessionRoute: string[]): SessionUi {
+function startActiveSession(): Promise<void> {
+  const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
+  return session ? startSession(session) : Promise.resolve();
+}
+
+/** Connects the active idle or closed tab, otherwise the route on the workbench. */
+function connectCurrent(): Promise<void> {
+  const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
+  if (session && (session.state === 'idle' || session.state === 'closed')) return startSession(session);
+  if (session) return Promise.resolve();
+  return connectRoute();
+}
+
+function createSession(sessionRoute: string[]): SessionUi {
+  const key = crypto.randomUUID();
   const view = document.createElement('section');
   view.className = 'terminal-view inactive';
-  view.dataset.sessionId = id;
+  view.dataset.sessionKey = key;
   const hopbar = document.createElement('header');
   hopbar.className = 'hopbar';
   const terminalContainer = document.createElement('div');
@@ -397,8 +651,9 @@ function createSession(id: string, title: string, sessionRoute: string[]): Sessi
   fit.fit();
 
   const session: SessionUi = {
-    id,
-    title,
+    key,
+    connectionId: null,
+    title: sessionRoute.at(-1) ?? 'ssh',
     route: sessionRoute,
     hops: [],
     terminal,
@@ -406,22 +661,73 @@ function createSession(id: string, title: string, sessionRoute: string[]): Sessi
     view,
     hopbar,
     inputBuffer: '',
-    state: 'connecting',
+    state: 'idle',
+    retryAttempt: 0,
   };
   terminal.onData((data) => queueInput(session, data));
   terminal.onResize(({ cols, rows }) => queueResize(session, cols, rows));
+  renderHopbar(session);
   return session;
 }
 
+/**
+ * Drops input that was typed but not yet flushed.
+ *
+ * A reconnect opens a new shell, so anything buffered for the old one must never
+ * reach it: a half-typed command replayed into a fresh prompt is a live incident.
+ */
+function discardPendingInput(session: SessionUi): void {
+  if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
+  session.inputTimer = undefined;
+  session.inputBuffer = '';
+}
+
+function clearRetryTimers(session: SessionUi): void {
+  if (session.retryTimer !== undefined) window.clearTimeout(session.retryTimer);
+  if (session.retryTick !== undefined) window.clearInterval(session.retryTick);
+  session.retryTimer = undefined;
+  session.retryTick = undefined;
+  session.retryAt = undefined;
+}
+
+/** Schedules the next automatic reconnect and shows the countdown in the hopbar. */
+function scheduleRetry(session: SessionUi): void {
+  clearRetryTimers(session);
+  session.retryAttempt += 1;
+  const delay = retryDelayMs(session.retryAttempt);
+  session.retryAt = Date.now() + delay;
+  session.terminal.writeln(
+    `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${Math.round(delay / 1000)} 秒後に再接続します（${session.retryAttempt}/${MAX_AUTO_RETRIES}）`,
+  );
+  session.retryTimer = window.setTimeout(() => {
+    session.retryTimer = undefined;
+    void startSession(session, false);
+  }, delay);
+  session.retryTick = window.setInterval(() => renderHopbar(session), 1000);
+  renderHopbar(session);
+  renderTabs();
+  if (session.key === activeSessionKey) updateConnectionState(session);
+}
+
+function cancelRetry(session: SessionUi): void {
+  clearRetryTimers(session);
+  session.retryAttempt = 0;
+  session.terminal.writeln('\x1b[38;2;127;137;150m[ope-term] 自動再接続を停止しました\x1b[0m');
+  renderHopbar(session);
+  renderTabs();
+  if (session.key === activeSessionKey) updateConnectionState(session);
+}
+
 function queueInput(session: SessionUi, data: string): void {
-  if (session.state === 'closed') return;
+  const connectionId = session.connectionId;
+  if (!connectionId || session.state === 'closed' || session.state === 'idle') return;
   session.inputBuffer += data;
   if (session.inputTimer !== undefined) return;
   session.inputTimer = window.setTimeout(() => {
     const input = session.inputBuffer;
     session.inputBuffer = '';
     session.inputTimer = undefined;
-    if (input) void invoke('session_input', { sessionId: session.id, data: input }).catch(() => undefined);
+    if (input) void invoke('session_input', { sessionId: connectionId, data: input }).catch(() => undefined);
   }, 4);
 }
 
@@ -429,13 +735,16 @@ function queueResize(session: SessionUi, cols: number, rows: number): void {
   if (session.resizeTimer !== undefined) window.clearTimeout(session.resizeTimer);
   session.resizeTimer = window.setTimeout(() => {
     session.resizeTimer = undefined;
-    if (session.state !== 'closed') {
-      void invoke('session_resize', { sessionId: session.id, cols, rows }).catch(() => undefined);
+    const connectionId = session.connectionId;
+    if (connectionId && (session.state === 'connecting' || session.state === 'connected')) {
+      void invoke('session_resize', { sessionId: connectionId, cols, rows }).catch(() => undefined);
     }
   }, 80);
 }
 
-function handleSessionEvent(session: SessionUi, event: SessionEvent): void {
+function handleSessionEvent(session: SessionUi, connectionId: string, event: SessionEvent): void {
+  // Events from a connection the tab already replaced by reconnecting are stale.
+  if (session.connectionId !== connectionId) return;
   switch (event.type) {
     case 'chain':
       session.hops = event.hops;
@@ -449,31 +758,47 @@ function handleSessionEvent(session: SessionUi, event: SessionEvent): void {
       break;
     }
     case 'host_key_prompt':
-      enqueueHostKeyPrompt(session.id, event.prompt);
+      enqueueHostKeyPrompt(session.key, connectionId, event.prompt);
       break;
     case 'auth_prompt':
-      enqueueAuthPrompt(session.id, event.prompt);
+      enqueueAuthPrompt(session.key, connectionId, event.prompt);
       break;
     case 'ready':
       session.state = 'connected';
-      if (session.id === activeSessionId) updateConnectionState(session);
+      session.closeReason = undefined;
+      session.retryAttempt = 0;
+      renderHopbar(session);
+      renderTabs();
+      if (session.key === activeSessionKey) updateConnectionState(session);
       session.terminal.focus();
       break;
     case 'error':
       session.terminal.writeln(`\r\n\x1b[38;2;242;125;136m[ope-term] ${event.message}\x1b[0m`);
       toast(event.message);
       break;
-    case 'closed':
+    case 'closed': {
       session.state = 'closed';
-      session.terminal.writeln('\r\n\x1b[38;2;127;137;150m[ope-term] session closed\x1b[0m');
-      if (session.id === activeSessionId) updateConnectionState(session);
-      renderTabs();
+      session.closeReason = event.reason;
+      session.connectionId = null;
+      discardPendingInput(session);
+      session.terminal.writeln(
+        `\r\n\x1b[38;2;127;137;150m[ope-term] ${closeMessage(event.reason)} · 再接続は Ctrl+Shift+Enter\x1b[0m`,
+      );
+      if (shouldAutoRetry(event.reason, session.retryAttempt + 1)) {
+        scheduleRetry(session);
+      } else {
+        clearRetryTimers(session);
+        renderHopbar(session);
+        renderTabs();
+        if (session.key === activeSessionKey) updateConnectionState(session);
+      }
       break;
+    }
   }
 }
 
-function enqueueHostKeyPrompt(sessionId: string, prompt: HostKeyPrompt): void {
-  pendingHostKeyPrompts.push({ sessionId, prompt });
+function enqueueHostKeyPrompt(sessionKey: string, connectionId: string, prompt: HostKeyPrompt): void {
+  pendingHostKeyPrompts.push({ sessionKey, connectionId, prompt });
   showNextSecurePrompt();
 }
 
@@ -536,7 +861,7 @@ async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save
   setHostKeyButtonsDisabled(true);
   try {
     await invoke('answer_host_key', {
-      sessionId: active.sessionId,
+      sessionId: active.connectionId,
       requestId: active.prompt.requestId,
       decision,
     });
@@ -547,15 +872,15 @@ async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save
   }
 }
 
-function discardHostKeyPrompts(sessionId: string): void {
+function discardHostKeyPrompts(sessionKey: string): void {
   for (let index = pendingHostKeyPrompts.length - 1; index >= 0; index -= 1) {
-    if (pendingHostKeyPrompts[index]?.sessionId === sessionId) pendingHostKeyPrompts.splice(index, 1);
+    if (pendingHostKeyPrompts[index]?.sessionKey === sessionKey) pendingHostKeyPrompts.splice(index, 1);
   }
-  if (activeHostKeyPrompt?.sessionId === sessionId) finishHostKeyPrompt();
+  if (activeHostKeyPrompt?.sessionKey === sessionKey) finishHostKeyPrompt();
 }
 
-function enqueueAuthPrompt(sessionId: string, prompt: AuthPrompt): void {
-  pendingAuthPrompts.push({ sessionId, prompt });
+function enqueueAuthPrompt(sessionKey: string, connectionId: string, prompt: AuthPrompt): void {
+  pendingAuthPrompts.push({ sessionKey, connectionId, prompt });
   showNextSecurePrompt();
 }
 
@@ -625,7 +950,7 @@ async function submitAuthPrompt(cancelled: boolean): Promise<void> {
   setAuthButtonsDisabled(true);
   try {
     await invoke('answer_auth', {
-      sessionId: active.sessionId,
+      sessionId: active.connectionId,
       requestId: active.prompt.requestId,
       responses,
       cancelled,
@@ -643,21 +968,28 @@ async function submitAuthPrompt(cancelled: boolean): Promise<void> {
   }
 }
 
-function discardAuthPrompts(sessionId: string): void {
+function discardAuthPrompts(sessionKey: string): void {
   for (let index = pendingAuthPrompts.length - 1; index >= 0; index -= 1) {
-    if (pendingAuthPrompts[index]?.sessionId === sessionId) pendingAuthPrompts.splice(index, 1);
+    if (pendingAuthPrompts[index]?.sessionKey === sessionKey) pendingAuthPrompts.splice(index, 1);
   }
-  if (activeAuthPrompt?.sessionId === sessionId) finishAuthPrompt();
+  if (activeAuthPrompt?.sessionKey === sessionKey) finishAuthPrompt();
 }
 
 function renderHopbar(session: SessionUi): void {
   session.hopbar.replaceChildren();
-  session.hops.forEach((hop, index) => {
+  const live = session.state === 'connecting' || session.state === 'connected';
+  // Before the backend reports a chain, show the planned hops so an idle or
+  // restored tab still explains where it would connect.
+  const hops: HopStatus[] =
+    session.hops.length > 0
+      ? session.hops
+      : routePreview(session.route, hosts).map((alias, index) => ({ index, alias, state: 'pending' as const }));
+  hops.forEach((hop, index) => {
     const node = document.createElement('span');
     node.className = `hop ${hop.state}`;
     node.textContent = hop.alias;
     session.hopbar.append(node);
-    if (index < session.hops.length - 1) {
+    if (index < hops.length - 1) {
       const separator = document.createElement('span');
       separator.className = 'hop-separator';
       separator.textContent = '→';
@@ -668,21 +1000,59 @@ function renderHopbar(session: SessionUi): void {
   target.className = 'terminal-host';
   target.textContent = session.title;
   session.hopbar.append(target);
+
+  if (live) return;
+  const missing = missingAliases(session.route, hostAliases());
+  if (missing.length > 0) {
+    const warning = document.createElement('span');
+    warning.className = 'hop-missing';
+    warning.textContent = `SSH config にない Host: ${missing.join(', ')}`;
+    session.hopbar.append(warning);
+  }
+
+  if (session.retryAt !== undefined) {
+    const seconds = Math.max(0, Math.ceil((session.retryAt - Date.now()) / 1000));
+    const countdown = document.createElement('span');
+    countdown.className = 'hop-retry';
+    countdown.textContent = `再接続まで ${seconds} 秒（${session.retryAttempt}/${MAX_AUTO_RETRIES}）`;
+    const now = document.createElement('button');
+    now.type = 'button';
+    now.className = 'hop-action';
+    now.textContent = '今すぐ';
+    now.addEventListener('click', () => void startSession(session));
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.className = 'hop-action ghost';
+    stop.textContent = '自動再接続を停止';
+    stop.addEventListener('click', () => cancelRetry(session));
+    session.hopbar.append(countdown, now, stop);
+    return;
+  }
+
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'hop-action';
+  action.textContent = session.state === 'closed' ? '再接続' : '接続';
+  action.disabled = missing.length > 0;
+  action.title = missing.length > 0 ? 'SSH config に無い Host を含むため接続できません' : 'Ctrl+Shift+Enter';
+  action.addEventListener('click', () => void startSession(session));
+  session.hopbar.append(action);
 }
 
-function activateSession(id: string): void {
-  const session = sessions.get(id);
+function activateSession(key: string): void {
+  const session = sessions.get(key);
   if (!session) return;
-  activeSessionId = id;
+  activeSessionKey = key;
   ui.builder.classList.add('hidden');
   ui.terminalStage.classList.remove('hidden');
   ui.statusMode.textContent = 'TERMINAL';
   ui.statusRoute.textContent = session.route.join(' → ');
   for (const candidate of sessions.values()) {
-    candidate.view.classList.toggle('inactive', candidate.id !== id);
+    candidate.view.classList.toggle('inactive', candidate.key !== key);
   }
   renderTabs();
   updateConnectionState(session);
+  persistWorkspaces();
   window.requestAnimationFrame(() => {
     session.fit.fit();
     session.terminal.focus();
@@ -690,8 +1060,23 @@ function activateSession(id: string): void {
 }
 
 function updateConnectionState(session: SessionUi): void {
-  const labels = { connecting: 'CONNECTING', connected: 'SSH CONNECTED', closed: 'DISCONNECTED' } as const;
-  const colors = { connecting: 'var(--amber)', connected: 'var(--green)', closed: 'var(--red)' } as const;
+  const labels = {
+    idle: 'NOT CONNECTED',
+    connecting: 'CONNECTING',
+    connected: 'SSH CONNECTED',
+    closed: 'DISCONNECTED',
+  } as const;
+  const colors = {
+    idle: 'var(--muted)',
+    connecting: 'var(--amber)',
+    connected: 'var(--green)',
+    closed: 'var(--red)',
+  } as const;
+  if (session.retryAt !== undefined) {
+    ui.connectionState.textContent = 'RECONNECTING';
+    ui.connectionState.style.color = 'var(--amber)';
+    return;
+  }
   ui.connectionState.textContent = labels[session.state];
   ui.connectionState.style.color = colors[session.state];
 }
@@ -701,11 +1086,11 @@ function renderTabs(): void {
   for (const session of sessions.values()) {
     const tab = document.createElement('button');
     tab.type = 'button';
-    tab.className = `session-tab${session.id === activeSessionId ? ' active' : ''}`;
+    tab.className = `session-tab${session.key === activeSessionKey ? ' active' : ''}`;
     tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-selected', String(session.id === activeSessionId));
+    tab.setAttribute('aria-selected', String(session.key === activeSessionKey));
     const dot = document.createElement('span');
-    dot.className = `secure-dot ${session.state}`;
+    dot.className = `secure-dot ${session.retryAt !== undefined ? 'connecting' : session.state}`;
     const label = document.createElement('span');
     label.className = 'session-tab-label';
     label.textContent = session.title;
@@ -714,42 +1099,71 @@ function renderTabs(): void {
     close.textContent = '×';
     close.addEventListener('click', (event) => {
       event.stopPropagation();
-      closeSession(session.id);
+      closeSession(session.key);
     });
     tab.append(dot, label, close);
-    tab.addEventListener('click', () => activateSession(session.id));
+    tab.addEventListener('click', () => activateSession(session.key));
     ui.tabs.append(tab);
   }
 }
 
-function closeSession(id: string): void {
-  const session = sessions.get(id);
+function closeSession(key: string): void {
+  const session = sessions.get(key);
   if (!session) return;
-  if (session.state !== 'closed') void invoke('close_session', { sessionId: id }).catch(() => undefined);
-  discardHostKeyPrompts(id);
-  discardAuthPrompts(id);
-  if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
+  const connectionId = session.connectionId;
+  if (connectionId && (session.state === 'connecting' || session.state === 'connected')) {
+    void invoke('close_session', { sessionId: connectionId }).catch(() => undefined);
+  }
+  discardHostKeyPrompts(key);
+  discardAuthPrompts(key);
+  clearRetryTimers(session);
+  discardPendingInput(session);
   if (session.resizeTimer !== undefined) window.clearTimeout(session.resizeTimer);
   session.terminal.dispose();
   session.view.remove();
-  sessions.delete(id);
-  if (activeSessionId === id) {
+  sessions.delete(key);
+  if (activeSessionKey === key) {
     const next = [...sessions.keys()].at(-1);
     if (next) activateSession(next);
     else showBuilder();
   }
   renderTabs();
+  persistWorkspaces();
 }
 
 function closeActiveSession(): void {
-  if (activeSessionId) closeSession(activeSessionId);
+  if (activeSessionKey) closeSession(activeSessionKey);
 }
 
 function activateNextSession(): void {
-  const ids = [...sessions.keys()];
-  if (ids.length === 0) return;
-  const index = activeSessionId ? ids.indexOf(activeSessionId) : -1;
-  activateSession(ids[(index + 1) % ids.length] ?? ids[0]!);
+  const keys = [...sessions.keys()];
+  if (keys.length === 0) return;
+  const index = activeSessionKey ? keys.indexOf(activeSessionKey) : -1;
+  activateSession(keys[(index + 1) % keys.length] ?? keys[0]!);
+}
+
+/**
+ * Recreates last session's tabs as idle terminals. Restoring a tab never opens a
+ * connection: the operator decides when a bastion sees traffic again.
+ */
+function restoreTabs(): void {
+  const { tabs, activeTab } = workspaces;
+  if (tabs.length === 0) return;
+  const keys: string[] = [];
+  for (const savedRoute of tabs) {
+    const session = createSession([...savedRoute]);
+    sessions.set(session.key, session);
+    keys.push(session.key);
+    const preview = routePreview(session.route, hosts).join(' → ');
+    session.terminal.writeln(`\x1b[38;2;127;137;150m[ope-term] 前回のタブを復元しました: ${preview}\x1b[0m`);
+    session.terminal.writeln(
+      '\x1b[38;2;127;137;150m[ope-term] 接続はまだ開始していません。接続するには CONNECT または Ctrl+Shift+Enter。\x1b[0m',
+    );
+  }
+  renderTabs();
+  const restoredKey = activeTab >= 0 ? keys[activeTab] : undefined;
+  if (restoredKey) activateSession(restoredKey);
+  toast(`前回のタブを ${keys.length} 件復元しました。接続は自動では開始しません。`);
 }
 
 function focusHostSearch(): void {
@@ -767,6 +1181,13 @@ function commandItems(): PaletteItem[] {
     keybinding: keybindings[command.id],
     run: command.run,
   }));
+  const workspaceItems = workspaces.saved.map((entry) => ({
+    id: `workspace.${entry.id}`,
+    category: 'Workspace',
+    label: entry.name,
+    detail: routePreview(entry.route, hosts).join(' → '),
+    run: () => void connectSavedRoute(entry),
+  }));
   const hostItems = hosts.map((host) => ({
     id: `host.${host.alias}`,
     category: 'Host',
@@ -778,7 +1199,7 @@ function commandItems(): PaletteItem[] {
       renderRoute();
     },
   }));
-  return [...base, ...hostItems];
+  return [...base, ...workspaceItems, ...hostItems];
 }
 
 function openCommandPalette(): void {
@@ -908,6 +1329,13 @@ function runKeybinding(chord: string): boolean {
 ui.hostSearch.addEventListener('input', renderHosts);
 ui.connect.addEventListener('click', () => void connectRoute());
 ui.newRoute.addEventListener('click', showBuilder);
+ui.reloadHosts.addEventListener('click', () => void reloadHosts());
+ui.saveRoute.addEventListener('click', saveCurrentRoute);
+ui.routeName.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  saveCurrentRoute();
+});
 ui.routeTrack.addEventListener('dragover', (event) => {
   event.preventDefault();
   ui.routeTrack.classList.add('drag-over');
@@ -1016,9 +1444,15 @@ window.addEventListener(
 );
 
 window.addEventListener('resize', () => {
-  if (!activeSessionId) return;
-  const session = sessions.get(activeSessionId);
+  if (!activeSessionKey) return;
+  const session = sessions.get(activeSessionKey);
   if (session) window.requestAnimationFrame(() => session.fit.fit());
 });
 
-void loadHosts();
+async function boot(): Promise<void> {
+  await loadHosts();
+  void loadConfigPath();
+  restoreTabs();
+}
+
+void boot();

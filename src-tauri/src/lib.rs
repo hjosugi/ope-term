@@ -38,8 +38,8 @@ mod application {
     use zeroize::Zeroize;
 
     use crate::ssh::{
-        self, AuthAnswer, ConnectRequest, HostKeyAnswer, HostKeyDecision, SessionCommand,
-        SessionControl, SessionEvent, SessionMap,
+        self, AuthAnswer, CloseReason, ConnectRequest, HostKeyAnswer, HostKeyDecision,
+        SessionCommand, SessionControl, SessionEvent, SessionMap,
     };
     use crate::ssh_config::{self, HostProfile};
 
@@ -90,7 +90,7 @@ mod application {
 
         let registry = Arc::clone(&state.sessions);
         tauri::async_runtime::spawn(async move {
-            if let Err(error) = ssh::run(
+            let reason = match ssh::run(
                 request,
                 on_event.clone(),
                 on_data,
@@ -100,9 +100,15 @@ mod application {
             )
             .await
             {
-                ssh::event_error(&on_event, &error);
-            }
-            ssh::event_closed(&on_event);
+                Ok(reason) => reason,
+                Err(error) => {
+                    // Nothing reached a shell, so retrying would only repeat a
+                    // config, host key, or authentication failure.
+                    ssh::event_error(&on_event, &error);
+                    CloseReason::Failed
+                }
+            };
+            ssh::event_closed(&on_event, reason);
             registry.lock().await.remove(&session_id);
         });
         Ok(())

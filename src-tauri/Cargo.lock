@@ -2672,6 +2672,7 @@ dependencies = [
  "glob",
  "russh",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tempfile",
