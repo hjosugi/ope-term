@@ -1,7 +1,9 @@
 node_modules/
 dist/
+site/
 coverage/
 artifacts/
+.venv/
 .direnv/
 bazel-*
 result

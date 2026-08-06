@@ -4,6 +4,8 @@
 
 `~/.ssh/config` の Host をピースのように並べ、踏み台から接続先までを組み立てます。Host を 1 台だけ置いた場合は `ProxyJump` を自動展開し、明示的に複数台を置いた場合はその順番で `direct-tcpip` トンネルを作ります。
 
+**ドキュメント: <https://hjosugi.github.io/ope-term/>**
+
 > [!WARNING]
 > 現在は v0.1.0 alpha です。主要なSSH認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の全ディレクティブ、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
 >
@@ -12,69 +14,34 @@
 
 ## いま動くもの
 
-- Tauri 2 + Rust (`russh`) + xterm.js 6
+- Tauri 2 + Rust (`russh`) + xterm.js 6 の多段 SSH ターミナル
 - OpenSSH config の `Host` / `Match` / `Include`、wildcard、negation、主要 token
-- HostName / User / Port / IdentityFile / CertificateFile / IdentitiesOnly / ProxyJump / HostKeyAlias
-- `ssh-agent`（Unix）、秘密鍵、OpenSSH certificate、password、keyboard-interactive/OTPによる SSH2 認証
-- 暗号化OpenSSH秘密鍵のパスフレーズ入力
+- ssh-agent、秘密鍵、certificate、password、keyboard-interactive/OTP による SSH2 認証
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
-- ProxyJump 自動展開と、任意に組んだ多段ルート
-- hop ごとの connecting / connected / error 表示
-- ルートに名前を付けた保存と、alias だけを参照する再利用
-- 起動時のタブ復元（接続は自動で開始しない）と、切断済みタブの再接続
+- ProxyJump 自動展開と、任意に組んだ多段ルート、hop ごとの状態表示
+- ルートの保存と起動時のタブ復元（接続は自動で開始しない）、切断済みタブの再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
-- 複数セッションのタブ切替、端末リサイズ、切断
-- `Ctrl+Shift+P` の fuzzy コマンドパレット
-- UI で変更できるキーボードショートカット
-- WebGL レンダラと安全なフォールバック
-- Tauri IPC Channel を使った端末出力ストリーミング
+- `Ctrl+Shift+P` の fuzzy コマンドパレットと、UI で変更できるキーボードショートカット
 
 ## 起動
 
-前提は Node.js 22 以上、Rust 1.85 以上と、Tauri が各 OS で必要とするシステムパッケージです。Linux の WebKitGTK を含む詳細は [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) を参照してください。
-
-### Nix（推奨）
-
-Nix 2.4 以降で flake を有効にしている場合、Node/RustとLinuxのTauri依存をまとめて再現できます。
+Node.js 22 以上、Rust 1.85 以上と、Tauri が各 OS で必要とするシステムパッケージが前提です。
 
 ```bash
-./scripts/nix-local develop
+./scripts/nix-local develop   # Nix を使う場合（推奨）
 just bootstrap
 just dev
 ```
 
-`direnv`を使う場合は、リポジトリに含まれる`.envrc`を一度許可します。
-
-```bash
-direnv allow
-```
-
-flakeはLinux x86_64/aarch64とmacOS Intel/Apple Siliconを評価対象にします。macOSのTauriビルドには、Nix外でXcode Command Line Toolsも必要です。
-
-### システム環境
+Nix を使わない場合は、[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) を導入してから次を実行します。
 
 ```bash
 ./scripts/run-cached pnpm install --frozen-lockfile
 ./scripts/run-cached pnpm run tauri dev
 ```
 
-フロントエンドと Rust の検証:
-
-```bash
-just check
-just security
-```
-
-再現可能な Nix package と、sandbox 化したフロントエンドの Bazel build も用意しています。
-
-```bash
-./scripts/nix-local build
-./scripts/run-bazel test //:check
-./scripts/run-bazel build //:frontend
-```
-
-Nix storeを含むローカルキャッシュは既定で`/mnt/data/ope-term`へ集約します。キャッシュ
-構成と各コマンドの使い分けは [ビルド・開発環境](docs/BUILD.md) を参照してください。
+検証は `just check` と `just security` です。詳細は
+[起動](https://hjosugi.github.io/ope-term/GETTING_STARTED/) を参照してください。
 
 ## SSH config
 
@@ -92,77 +59,34 @@ Host prod-db
   ProxyJump bastion
 ```
 
-初回接続では hostname、port、hop、algorithm、SHA256 fingerprint を確認画面に表示します。管理者や別の安全な経路で fingerprint を照合し、「今回のみ信頼」または「信頼して保存」を選びます。保存先は OpenSSH と共通の `~/.ssh/known_hosts` です。
+ルートの組み立て、保存と復元、認証とホスト鍵確認、ショートカット一覧は
+[使い方](https://hjosugi.github.io/ope-term/USAGE/) にまとめています。
 
-ope-term は未知のホスト鍵を自動承認しません。保存済みの鍵が変わった場合は接続を拒否し、既存行を UI から上書きしません。
+## ドキュメント
 
-## SSH 認証
-
-各hopはサーバーが提示する方式に従い、ssh-agent/公開鍵、keyboard-interactive、passwordの順で認証します。暗号化された`IdentityFile`にはパスフレーズを要求します。keyboard-interactiveは、passwordとOTPのような複数質問および複数ラウンドに対応します。
-
-認証画面には要求元hopとユーザー名を常時表示します。入力値はlocalStorage、console、エラーへ記録せず、DOM入力欄は送信前に消去し、短命なIPC応答バッファも送信後に消去します。各promptは5分でtimeoutし、キャンセルするとそのhopへの接続を中止します。
-
-## ルートの組み方
-
-1. 左の Host をクリックするか ROUTE WORKBENCH へドラッグします。
-2. 1 ピースなら、その Host の `ProxyJump` を自動展開します。
-3. 2 ピース以上なら、ピースを並べた順で明示ルートとして接続します。
-4. `CONNECT` または `Ctrl+Enter` で接続します。
-
-明示ルートは `jump-a → jump-b → target` の各区間を SSH `direct-tcpip` で接続します。各 hop は個別に認証されます。
-
-## ルートの保存と復元
-
-毎日同じ踏み台と接続先を組み直さないために、ルートに名前を付けて保存できます。
-
-- SAVED ROUTES に名前を入力して `ルートを保存`（`Ctrl+Shift+S`）で保存します。名前を省略すると接続先の alias を使います。
-- 保存するのは `~/.ssh/config` の alias だけです。hostname / user / port / ProxyJump は複製せず、接続時に毎回 config を解決します。
-- 保存済みルートは `読み込む` で ROUTE WORKBENCH へ戻すか、`接続` で直接つなぎます。Command Palette からは `Workspace` として検索できます。
-- 終了時のタブと選択中のタブを記録し、次の起動でタブだけを復元します。**復元しただけでは接続しません。** 各タブの `接続`、`CONNECT`、`Ctrl+Shift+Enter` で開始します。
-- 切断済みのタブは同じタブのまま `再接続`（`Ctrl+Shift+Enter`）できます。scrollback とタブ位置は保持します。
-- `~/.ssh/config` を編集したら `Ctrl+Shift+R`（SSH CONFIG の `↻`）で再読み込みします。開いているセッションはそのままです。
-- config から alias が消えた場合は degraded 表示になります。該当ルートとピースを赤く示し、接続ボタンを無効にして、消えた Host 名を表示します。
-
-## コマンドとショートカット
-
-| 既定キー | コマンド |
+| ページ | 内容 |
 |---|---|
-| `Ctrl+Shift+P` | Command Palette |
-| `Ctrl+K` | Host 検索 |
-| `Ctrl+Enter` | 現在のルート、または選択中タブへ接続 |
-| `Ctrl+Backspace` | ルートをクリア |
-| `Ctrl+N` | 新しいルート |
-| `Ctrl+Shift+S` | 現在のルートを保存 |
-| `Ctrl+Shift+R` | SSH config を再読み込み |
-| `Ctrl+W` | 現在のセッションを閉じる |
-| `Ctrl+Tab` | 次のセッション |
-| `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
-| `Ctrl+Shift+K` | Keyboard Shortcuts |
+| [はじめに](https://hjosugi.github.io/ope-term/) | 設計の前提と現状 |
+| [起動](https://hjosugi.github.io/ope-term/GETTING_STARTED/) | 前提ツール、開発ビルド、検証コマンド |
+| [使い方](https://hjosugi.github.io/ope-term/USAGE/) | ルート、保存と復元、認証、ショートカット |
+| [アーキテクチャ](https://hjosugi.github.io/ope-term/ARCHITECTURE/) | Rust core と WebView の境界、接続シーケンス |
+| [ビルド・開発環境](https://hjosugi.github.io/ope-term/BUILD/) | Nix / Bazel / キャッシュ構成 |
+| [セキュリティ方針](https://hjosugi.github.io/ope-term/SECURITY_POLICY/) | プロトコル、権限、秘密情報、永続化 |
+| [脅威モデル](https://hjosugi.github.io/ope-term/THREAT_MODEL/) | 資産、境界、統制、残存リスク |
+| [ロードマップ](https://hjosugi.github.io/ope-term/ROADMAP/) | 実装済みの基盤とこれからの作業 |
 
-Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックして新しい組み合わせを入力できます。変更は Tauri WebView のローカルストレージへ保存されます。
+ソースは `docs/` にあり、サイトは `main` への push で GitHub Pages へ配信します。
 
-## セキュリティ方針
+```bash
+just docs-serve   # ローカルプレビュー
+just docs         # strict モードで静的生成
+```
 
-- 対応プロトコルは SSH2 のみです。SSH1 / rlogin は実装しません。
-- telnet / serial は運用上の需要を確認し、平文警告や権限制御を設計してから別 transport として検討します。
-- WebView は Node.js 権限を持ちません。Tauri capability は `core:default` のみに絞っています。
-- リモート出力は Rust から Channel 経由で xterm に渡し、HTML として挿入しません。
-- 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
-- password、OTP、秘密鍵passphraseは永続化・ログ出力せず、認証専用の使い捨てIPCでだけ渡します。
-- 保存するルートとタブは `~/.ssh/config` の alias 参照だけです。接続情報も認証情報も WebView へ複製しません。
-- 復元したタブは接続を自動で開始しません。踏み台へ通信するタイミングは常に操作者が決めます。
-- リモートのOSC 8リンクは開かず、window操作とclipboard連携を無効化しています。
+## 貢献とセキュリティ報告
 
-脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
-
-## 設計とロードマップ
-
-- [アーキテクチャ](docs/ARCHITECTURE.md)
-- [ビルド・開発環境](docs/BUILD.md)
-- [性能・安定性のゲート](docs/PERFORMANCE.md)
-- [脅威モデル](docs/THREAT_MODEL.md)
-- [端末セキュリティレビュー](docs/TERMINAL_SECURITY.md)
-- 未実装項目は [GitHub Issues](https://github.com/hjosugi/ope-term/issues) で管理
+- 開発の進め方とレビュー基準: [CONTRIBUTING.md](CONTRIBUTING.md)
+- 脆弱性の報告: [SECURITY.md](SECURITY.md)
+- 未実装項目: [GitHub Issues](https://github.com/hjosugi/ope-term/issues)
 
 ## ライセンス
 

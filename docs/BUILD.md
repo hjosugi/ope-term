@@ -30,9 +30,25 @@ just dev
 | `just fuzz-check` | 2つのfuzz targetをstable Rustでコンパイル |
 | `just fuzz-smoke 30` | nightly + ASanでparserとroute expansionを各30秒fuzz |
 | `just sbom` | CycloneDX JSONの依存SBOMを生成 |
+| `just docs` | MkDocs のドキュメントサイトを strict モードで `site/` へ生成 |
+| `just docs-serve` | ドキュメントサイトのローカルプレビュー |
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。
+
+## ドキュメントサイト
+
+`docs/` の Markdown を MkDocs（Material テーマ）で静的サイトへ変換し、`main` への push で
+GitHub Pages へ配信します。`mkdocs.yml` は `strict: true` のため、リンク切れや nav の
+記述漏れは build 失敗として検出されます。ツールチェーンは `requirements-docs.txt` に固定し、
+Nix dev shell にも同じ `mkdocs` / `mkdocs-material` を入れています。Nix を使わない場合は
+venv へ導入してください。
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-docs.txt
+just docs
+```
 
 ## `/mnt/data` のキャッシュ
 
