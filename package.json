@@ -19,7 +19,9 @@
     "security:policy": "node scripts/security-policy.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "graphify:setup": "sh scripts/graphify.sh setup",
+    "graphify:update": "sh scripts/graphify.sh update"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
