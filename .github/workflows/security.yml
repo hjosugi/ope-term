@@ -23,7 +23,7 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - run: nix develop --command just security
       - run: nix develop --command just sbom
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: ope-term-cyclonedx
           path: artifacts/security/ope-term.cdx.json
@@ -50,7 +50,7 @@ jobs:
         run: cargo fuzz run route_expansion -- -max_total_time=30 -timeout=10 -verbosity=0
       - name: Upload failing fuzz artifacts
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ope-term-fuzz-artifacts
           path: src-tauri/fuzz/artifacts
