@@ -20,6 +20,9 @@ describe('UI size tokens', () => {
       '--control-lg:',
       '--rail-width:',
       '--dialog-gutter:',
+      '--file-panel-min:',
+      '--file-panel-preferred:',
+      '--file-queue-min:',
     ]) {
       expect(appCss).toContain(token);
     }

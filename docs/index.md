@@ -37,6 +37,7 @@
 - `Ctrl+Shift+P` の fuzzy コマンドパレットと、multi-chord・context・JSON移行に対応するショートカット
 - WebGL レンダラと安全なフォールバック
 - Tauri IPC Channel を使った端末出力ストリーミング
+- 認証済み SSH session 上の SFTP と、local root を native picker に限定した 2 ペイン転送
 
 ## どこから読むか
 
@@ -49,6 +50,10 @@
 - **[使い方](USAGE.md)**
 
     SSH config、認証、ホスト鍵確認、ルートの組み立てと保存、ショートカット。
+
+- **[SFTP file manager](SFTP.md)**
+
+    local / remote の移動、転送 queue、上書き・symlink・path traversal の安全境界。
 
 - **[アーキテクチャ](ARCHITECTURE.md)**
 

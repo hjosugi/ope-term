@@ -12,7 +12,7 @@ plugin, transport, authentication method, or persistence mechanism is added.
 | `known_hosts` and host-key decisions | Integrity; changed keys are rejected and unknown keys require an explicit fingerprint decision |
 | `~/.ssh/config`, included files, route definitions | Local confidentiality and faithful parsing without code execution |
 | Terminal input and output | Session isolation, bounded resource use, and no interpretation as HTML or privileged UI commands |
-| Local filesystem and process authority | Unavailable to the WebView except through the eight allowlisted Tauri commands |
+| Local filesystem and process authority | Unavailable to the WebView except through allowlisted Tauri commands; SFTP paths remain scoped to a native-picker token |
 | Saved route workspaces and restored tabs in WebView storage | Alias references only; never secrets or resolved endpoints, and never an automatic connection |
 | Release artifacts and dependency graph | Reproducibility, vulnerability review, and an attached machine-readable SBOM |
 
@@ -70,6 +70,7 @@ containable. Such an attacker can read the same keys and memory as ope-term.
 | Parser/route denial of service | Include-depth and cycle checks, non-recursive polynomial-time wildcard matching, unit/property tests, continuous fuzzing, bounded fuzz inputs | Runtime config file size is not yet globally capped |
 | Vulnerable dependencies | `pnpm audit`, RustSec audit, weekly CI, CycloneDX SBOM, private reporting | Linux WebKitGTK/GTK stack inherits platform advisories and patch cadence |
 | Tampered or corrupt workspace storage | Stored entries are alias references only, re-validated and bounded on load, resolved through `~/.ssh/config` at connect time; a corrupt store degrades to an empty workspace instead of blocking startup | A local attacker who can already write WebView storage can rename a workspace to mislead an operator into connecting to a different, config-defined alias |
+| SFTP path traversal or unsafe overwrite | Native picker scopes local roots; Rust rejects absolute/parent/NUL paths and symlink escape; remote names are single components; temporary-file rename and backup rollback protect existing files | A malicious server may misreport metadata or fail operations; recursive directory transfer and resume are intentionally unavailable |
 
 ## Security invariants
 
@@ -82,3 +83,5 @@ containable. Such an attacker can read the same keys and memory as ope-term.
    restored tab connects only after an explicit operator action.
 6. Adding a capability or plugin requires updating this model and the automated
    policy audit.
+7. SFTP transfer commands cannot name an arbitrary local path; the path must resolve below a
+   native-picker scope held only by Rust.

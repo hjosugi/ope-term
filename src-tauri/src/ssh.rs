@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -10,12 +10,14 @@ use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::keys::ssh_key;
 use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
+use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use zeroize::Zeroize;
 
 use crate::host_keys::{self, KnownHostStatus};
+use crate::sftp::{SftpListing, SftpProgress, SftpTransferRequest, SftpTransferResult};
 use crate::ssh_config::{self, Endpoint};
 
 static HOST_KEY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -103,10 +105,25 @@ pub enum CloseReason {
     Failed,
 }
 
-#[derive(Debug)]
 pub enum SessionCommand {
     Input(String),
-    Resize { cols: u32, rows: u32 },
+    Resize {
+        cols: u32,
+        rows: u32,
+    },
+    SftpList {
+        path: String,
+        reply: oneshot::Sender<Result<SftpListing, String>>,
+    },
+    SftpTransfer {
+        request: SftpTransferRequest,
+        progress: Channel<SftpProgress>,
+        reply: oneshot::Sender<Result<SftpTransferResult, String>>,
+    },
+    SftpCancel {
+        transfer_id: String,
+        reply: oneshot::Sender<bool>,
+    },
     Close,
 }
 
@@ -285,7 +302,7 @@ pub async fn run(
     channel.request_shell(true).await?;
     send(&events, SessionEvent::Ready);
 
-    let outcome = session_loop(&mut channel, commands, &data).await;
+    let outcome = session_loop(&mut channel, final_handle, commands, &data).await;
     for handle in handles.iter_mut().rev() {
         let _ = handle
             .disconnect(Disconnect::ByApplication, "ope-term closed", "en")
@@ -304,9 +321,12 @@ pub async fn run(
 
 async fn session_loop(
     channel: &mut russh::Channel<client::Msg>,
+    handle: &mut client::Handle<HostVerifier>,
     mut commands: mpsc::Receiver<SessionCommand>,
     data_channel: &Channel<Response>,
 ) -> Result<CloseReason> {
+    let mut sftp_session: Option<Arc<SftpSession>> = None;
+    let transfers = Arc::new(Mutex::new(HashMap::<String, Arc<AtomicBool>>::new()));
     loop {
         tokio::select! {
             command = commands.recv() => {
@@ -315,7 +335,62 @@ async fn session_loop(
                     Some(SessionCommand::Resize { cols, rows }) => {
                         channel.window_change(cols.max(1), rows.max(1), 0, 0).await?;
                     }
+                    Some(SessionCommand::SftpList { path, reply }) => {
+                        let result = match open_sftp(handle, &mut sftp_session).await {
+                            Ok(session) => crate::sftp::list(&session, &path)
+                                .await
+                                .map_err(|error| format!("{error:#}")),
+                            Err(error) => Err(format!("{error:#}")),
+                        };
+                        let _ = reply.send(result);
+                    }
+                    Some(SessionCommand::SftpTransfer { request, progress, reply }) => {
+                        let transfer_id = request.transfer_id.clone();
+                        let session = match open_sftp(handle, &mut sftp_session).await {
+                            Ok(session) => session,
+                            Err(error) => {
+                                let _ = reply.send(Err(format!("{error:#}")));
+                                continue;
+                            }
+                        };
+                        let cancelled = Arc::new(AtomicBool::new(false));
+                        let duplicate = {
+                            let mut registry = transfers.lock().await;
+                            if registry.contains_key(&transfer_id) {
+                                true
+                            } else {
+                                registry.insert(transfer_id.clone(), Arc::clone(&cancelled));
+                                false
+                            }
+                        };
+                        if duplicate {
+                            let _ = reply.send(Err("同じ transfer id が既に存在します".to_owned()));
+                            continue;
+                        }
+                        let registry = Arc::clone(&transfers);
+                        tokio::spawn(async move {
+                            let result = crate::sftp::transfer(session, request, progress, cancelled)
+                                .await
+                                .map_err(|error| format!("{error:#}"));
+                            registry.lock().await.remove(&transfer_id);
+                            let _ = reply.send(result);
+                        });
+                    }
+                    Some(SessionCommand::SftpCancel { transfer_id, reply }) => {
+                        let cancelled = transfers.lock().await.get(&transfer_id).cloned();
+                        let found = cancelled.is_some();
+                        if let Some(cancelled) = cancelled {
+                            cancelled.store(true, Ordering::Relaxed);
+                        }
+                        let _ = reply.send(found);
+                    }
                     Some(SessionCommand::Close) | None => {
+                        for cancelled in transfers.lock().await.values() {
+                            cancelled.store(true, Ordering::Relaxed);
+                        }
+                        if let Some(session) = &sftp_session {
+                            let _ = session.close().await;
+                        }
                         let _ = channel.eof().await;
                         let _ = channel.close().await;
                         return Ok(CloseReason::Local);
@@ -339,6 +414,30 @@ async fn session_loop(
             }
         }
     }
+}
+
+async fn open_sftp(
+    handle: &mut client::Handle<HostVerifier>,
+    current: &mut Option<Arc<SftpSession>>,
+) -> Result<Arc<SftpSession>> {
+    if let Some(session) = current {
+        return Ok(Arc::clone(session));
+    }
+    let channel = handle
+        .channel_open_session()
+        .await
+        .context("SFTP 用 SSH channel を開けません")?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .context("SFTP subsystem を開始できません")?;
+    let session = Arc::new(
+        SftpSession::new(channel.into_stream())
+            .await
+            .context("SFTP protocol を初期化できません")?,
+    );
+    *current = Some(Arc::clone(&session));
+    Ok(session)
 }
 
 fn send(channel: &Channel<SessionEvent>, event: SessionEvent) {

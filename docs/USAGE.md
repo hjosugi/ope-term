@@ -68,6 +68,12 @@ SSH 接続を作り直さず、その DOM を pane へ移します。
 分割レイアウトの復元時も接続は自動開始しません。各 pane は前回の route を表示した idle
 terminal として戻ります。
 
+## SFTP file manager
+
+接続済み session で `Ctrl+Shift+F` を押すと terminal の右隣に local / remote の 2 ペインを
+開きます。native picker で local directory を選び、file を選択して upload / download します。
+queue、進捗、cancel、retry と安全上の制約は [SFTP file manager](SFTP.md) を参照してください。
+
 ## 切断と再接続
 
 セッションが終わった理由を 4 つに分けて表示し、再接続の扱いを変えます。
@@ -128,6 +134,7 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+W` | 現在のセッションを閉じる |
 | `Ctrl+Tab` | 次のセッション |
 | `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
+| `Ctrl+Shift+F` | SFTP file manager を開く / 閉じる |
 | `Ctrl+K Ctrl+ArrowRight` | 右に分割 |
 | `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
 | `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |

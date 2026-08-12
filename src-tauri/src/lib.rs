@@ -3,6 +3,10 @@
 #[cfg(feature = "app")]
 mod host_keys;
 #[cfg(feature = "app")]
+mod local_files;
+#[cfg(feature = "app")]
+mod sftp;
+#[cfg(feature = "app")]
 mod ssh;
 mod ssh_config;
 
@@ -32,11 +36,16 @@ pub fn fuzz_route_expansion(text: &str, route: &[String]) {
 mod application {
     use std::sync::Arc;
 
-    use tauri::State;
     use tauri::ipc::{Channel, Response};
-    use tokio::sync::mpsc;
+    use tauri::{AppHandle, State};
+    use tauri_plugin_dialog::DialogExt;
+    use tokio::sync::{mpsc, oneshot};
     use zeroize::Zeroize;
 
+    use crate::local_files::{LocalListing, LocalScopes, SelectedDirectory};
+    use crate::sftp::{
+        SftpListing, SftpProgress, SftpTransferInput, SftpTransferResult, TransferDirection,
+    };
     use crate::ssh::{
         self, AuthAnswer, CloseReason, ConnectRequest, HostKeyAnswer, HostKeyDecision,
         SessionCommand, SessionControl, SessionEvent, SessionMap,
@@ -46,6 +55,7 @@ mod application {
     #[derive(Default)]
     struct AppState {
         sessions: SessionMap,
+        local_scopes: LocalScopes,
     }
 
     #[tauri::command]
@@ -152,6 +162,102 @@ mod application {
     }
 
     #[tauri::command]
+    async fn sftp_list(
+        session_id: String,
+        path: String,
+        state: State<'_, AppState>,
+    ) -> Result<SftpListing, String> {
+        let (reply, result) = oneshot::channel();
+        send_command(state, &session_id, SessionCommand::SftpList { path, reply }).await?;
+        result
+            .await
+            .map_err(|_| "SFTP session は終了しています".to_owned())?
+    }
+
+    #[tauri::command]
+    async fn sftp_transfer(
+        session_id: String,
+        request: SftpTransferInput,
+        on_progress: Channel<SftpProgress>,
+        state: State<'_, AppState>,
+    ) -> Result<SftpTransferResult, String> {
+        let local_path = crate::local_files::resolve(
+            &state.local_scopes,
+            &request.local_token,
+            &request.local_relative_path,
+            request.direction == TransferDirection::Upload,
+        )
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+        let request = request.resolve(local_path);
+        let (reply, result) = oneshot::channel();
+        send_command(
+            state,
+            &session_id,
+            SessionCommand::SftpTransfer {
+                request,
+                progress: on_progress,
+                reply,
+            },
+        )
+        .await?;
+        result
+            .await
+            .map_err(|_| "SFTP transfer は終了しています".to_owned())?
+    }
+
+    #[tauri::command]
+    async fn sftp_cancel(
+        session_id: String,
+        transfer_id: String,
+        state: State<'_, AppState>,
+    ) -> Result<bool, String> {
+        let (reply, result) = oneshot::channel();
+        send_command(
+            state,
+            &session_id,
+            SessionCommand::SftpCancel { transfer_id, reply },
+        )
+        .await?;
+        result
+            .await
+            .map_err(|_| "SFTP session は終了しています".to_owned())
+    }
+
+    #[tauri::command]
+    async fn pick_local_directory(
+        app: AppHandle,
+        state: State<'_, AppState>,
+    ) -> Result<Option<SelectedDirectory>, String> {
+        let selected = app
+            .dialog()
+            .file()
+            .set_title("SFTP で使用する local directory")
+            .blocking_pick_folder();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|error| format!("local directory を path に変換できません: {error}"))?;
+        crate::local_files::register(&state.local_scopes, path)
+            .await
+            .map(Some)
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    #[tauri::command]
+    async fn local_list(
+        token: String,
+        relative_path: String,
+        state: State<'_, AppState>,
+    ) -> Result<LocalListing, String> {
+        crate::local_files::list(&state.local_scopes, &token, &relative_path)
+            .await
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    #[tauri::command]
     async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
         let control = state
             .sessions
@@ -248,6 +354,7 @@ mod application {
     #[cfg_attr(mobile, tauri::mobile_entry_point)]
     pub fn run() {
         tauri::Builder::default()
+            .plugin(tauri_plugin_dialog::init())
             .manage(AppState::default())
             .invoke_handler(tauri::generate_handler![
                 list_hosts,
@@ -255,6 +362,11 @@ mod application {
                 connect_session,
                 session_input,
                 session_resize,
+                sftp_list,
+                sftp_transfer,
+                sftp_cancel,
+                pick_local_directory,
+                local_list,
                 close_session,
                 answer_host_key,
                 answer_auth,

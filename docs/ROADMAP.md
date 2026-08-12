@@ -13,6 +13,7 @@
 | 対話認証 | ssh-agent / 公開鍵 / certificate / password / keyboard-interactive / 鍵 passphrase |
 | ルートワークスペース | 名前付きルートの保存、起動時のタブ復元、切断済みタブの再接続、degraded 表示 |
 | Terminal panes | 左右・上下分割、focus移動、pointer/keyboard resize、layout復元 |
+| SFTP file manager | 認証済み多段 session の共有、local / remote 一覧、直列 queue、進捗、cancel、retry、安全な一時 file 置換 |
 | Command system | multi-chord、context key、競合警告、JSON import/export、Ctrl/Cmd 移行 |
 | セキュリティ基盤 | 脅威モデル、CSP と capability の自動監査、fuzzing、SBOM、依存 audit |
 | 開発環境 | Nix flake と direnv、Bazel build、`/mnt/data` へのキャッシュ集約 |
@@ -22,7 +23,6 @@
 | 優先度 | Issue | 内容 |
 |---|---|---|
 | P0 | [#10 Performance](https://github.com/hjosugi/ope-term/issues/10) | cold start、input latency、100 MB output の throughput を計測し、回帰をゲートで検出する |
-| P1 | [#6 SFTP](https://github.com/hjosugi/ope-term/issues/6) | 多段 SSH セッションを共有する 2 ペインファイラー |
 | P1 | [#7 Reliability](https://github.com/hjosugi/ope-term/issues/7) | 切断分類と backoff 再接続は実装済み。残りは tmux/screen 再 attach と 24 時間 soak test |
 | P1 | [#9 Local terminal](https://github.com/hjosugi/ope-term/issues/9) | OS ネイティブ shell と環境プロファイル |
 | P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | Linux / Windows / macOS の署名・配布 CI |

@@ -39,6 +39,7 @@ import {
   type PaneSplit,
 } from './pane-layout';
 import { appendUnique, moveRouteItem, routePreview } from './route';
+import { createSftpPanel, type SftpPanel } from './sftp-ui';
 import type {
   AuthPrompt,
   CloseReason,
@@ -76,6 +77,7 @@ interface SessionUi {
   fit: FitAddon;
   view: HTMLElement;
   hopbar: HTMLElement;
+  sftp: SftpPanel;
   inputBuffer: string;
   inputTimer?: number;
   resizeTimer?: number;
@@ -245,6 +247,13 @@ const commands: CommandDefinition[] = [
     label: '現在のセッションへ接続 / 再接続',
     when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
     run: () => void startActiveSession(),
+  },
+  {
+    id: 'session.toggleSftp',
+    category: 'Files',
+    label: 'SFTP file manager を開く / 閉じる',
+    when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
+    run: toggleActiveSftp,
   },
   { id: 'pane.splitRight', category: 'Pane', label: '右に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('horizontal') },
   { id: 'pane.splitDown', category: 'Pane', label: '下に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('vertical') },
@@ -688,7 +697,10 @@ function createSession(sessionRoute: string[]): SessionUi {
   hopbar.className = 'hopbar';
   const terminalContainer = document.createElement('div');
   terminalContainer.className = 'terminal-container';
-  view.append(hopbar, terminalContainer);
+  const sessionBody = document.createElement('div');
+  sessionBody.className = 'session-body';
+  sessionBody.append(terminalContainer);
+  view.append(hopbar, sessionBody);
   ui.terminalStage.append(view);
 
   const terminal = new Terminal({
@@ -739,7 +751,15 @@ function createSession(sessionRoute: string[]): SessionUi {
   }
   fit.fit();
 
-  const session: SessionUi = {
+  let session: SessionUi;
+  const sftp = createSftpPanel({
+    getConnectionId: () => session.connectionId,
+    onLayoutChange: () => window.requestAnimationFrame(() => session.fit.fit()),
+    notify: toast,
+  });
+  sessionBody.append(sftp.element);
+
+  session = {
     key,
     connectionId: null,
     title: sessionRoute.at(-1) ?? 'ssh',
@@ -749,6 +769,7 @@ function createSession(sessionRoute: string[]): SessionUi {
     fit,
     view,
     hopbar,
+    sftp,
     inputBuffer: '',
     state: 'idle',
     retryAttempt: 0,
@@ -757,6 +778,11 @@ function createSession(sessionRoute: string[]): SessionUi {
   terminal.onResize(({ cols, rows }) => queueResize(session, cols, rows));
   renderHopbar(session);
   return session;
+}
+
+function toggleActiveSftp(): void {
+  const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
+  session?.sftp.toggle();
 }
 
 /**

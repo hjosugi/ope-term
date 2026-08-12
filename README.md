@@ -21,6 +21,7 @@
 - ProxyJump 自動展開と、任意に組んだ多段ルート、hop ごとの状態表示
 - ルートの保存と起動時のタブ復元（接続は自動で開始しない）、切断済みタブの再接続
 - xterm / SSH 接続を維持したまま移動できる、左右・上下の terminal pane
+- 認証済み多段 SSH session を共有する、安全な local / remote 2 ペイン SFTP file manager
 - 切断理由の分類と、transport 断だけを対象にした exponential backoff 自動再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
 - `Ctrl+Shift+P` の fuzzy コマンドパレットと、multi-chord・context・JSON移行に対応するショートカット
@@ -71,6 +72,7 @@ Host prod-db
 | [はじめに](https://hjosugi.github.io/ope-term/) | 設計の前提と現状 |
 | [起動](https://hjosugi.github.io/ope-term/GETTING_STARTED/) | 前提ツール、開発ビルド、検証コマンド |
 | [使い方](https://hjosugi.github.io/ope-term/USAGE/) | ルート、保存と復元、認証、ショートカット |
+| [SFTP file manager](https://hjosugi.github.io/ope-term/SFTP/) | 2 ペイン操作、転送 queue、安全境界 |
 | [アーキテクチャ](https://hjosugi.github.io/ope-term/ARCHITECTURE/) | Rust core と WebView の境界、接続シーケンス |
 | [長時間接続と再接続](https://hjosugi.github.io/ope-term/RELIABILITY/) | 24h soak、fault injection、tmux/screen復帰方針 |
 | [UI サイズと CSS token](https://hjosugi.github.io/ope-term/DESIGN_SYSTEM/) | spacing、文字、control、layout の共通 scale |

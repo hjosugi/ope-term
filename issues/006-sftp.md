@@ -7,8 +7,16 @@ Labels: priority:P1, area:files, area:ssh, enhancement
 
 ## 受け入れ条件
 
-- [ ] 既存 session 上で SFTP subsystem を開き、再認証しない
-- [ ] local / remote の一覧、移動、upload、download ができる
-- [ ] queue、進捗、cancel、失敗時 retry を表示する
-- [ ] symlink、permission、上書き、path traversal を安全に扱う
-- [ ] terminal の隣の pane として開ける
+- [x] 既存 session 上で SFTP subsystem を開き、再認証しない
+- [x] local / remote の一覧、移動、upload、download ができる
+- [x] queue、進捗、cancel、失敗時 retry を表示する
+- [x] symlink、permission、上書き、path traversal を安全に扱う
+- [x] terminal の隣の pane として開ける
+
+## 実装メモ
+
+- 最終 hop の認証済み `russh` handle に SFTP subsystem channel を遅延作成し、PTY と共有する。
+- local root は native folder picker で選び、Rust 内の token と相対 path で scope を強制する。
+- transfer は 256 KiB chunk、同一 session 内で直列 queue。一時 file + rename と backup rollback を使う。
+- `just check`（44 frontend tests、30 Rust tests、clippy、production build）と
+  `pnpm run security:policy`、`just docs` を通過。

@@ -10,12 +10,13 @@ Route builder ── explicit route or ProxyJump expansion
       │
       ▼
 Rust session task (one task per terminal)
-  russh handle ─ direct-tcpip ─ russh handle ─ session channel
+  russh handle ─ direct-tcpip ─ final authenticated handle
+      │                         ├─ PTY / shell channel ─ terminal bytes
+      │                         └─ SFTP subsystem ─ list / streamed transfer
       │                                      │
-      │ hop state                            │ terminal bytes
-      └──────────── Tauri IPC Channel ───────┘
+      └──────────── typed Tauri IPC ──────────┘
                                              ▼
-                                 xterm.js + WebGL fallback
+                              xterm.js + SFTP file manager
 ```
 
 ## 境界
@@ -24,6 +25,8 @@ Rust session task (one task per terminal)
 
 - `ssh_config.rs`: OpenSSH config の読み込み、first-match-wins 解決、ProxyJump 展開、循環検出
 - `ssh.rs`: known_hosts 検証、認証、多段トンネル、PTY、入出力、keepalive
+- `sftp.rs`: SFTP 一覧、chunk 転送、一時 file と rollback、symlink 検証
+- `local_files.rs`: native picker が許可した local root と相対 path の境界検証
 - `lib.rs`: 最小の Tauri command とセッション registry
 
 各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。大量データ向けでない Tauri event bus は端末出力に使いません。
@@ -36,8 +39,10 @@ Rust session task (one task per terminal)
 - `keybindings.ts`: ショートカットの正規化と永続化
 - `fuzzy.ts`: Host / command / shortcut の共通 fuzzy ranking
 - `auth-secrets.ts`: 認証入力欄と短命な応答配列の明示消去
+- `sftp-ui.ts`: 2 ペイン一覧と直列 transfer queue、進捗、cancel、retry
 
-WebView はファイルシステム、ソケット、鍵へ直接アクセスできません。
+WebView はファイルシステム、ソケット、鍵へ直接アクセスできません。SFTP の local 操作は native
+folder picker が Rust core に登録した不透明 token と、その root 配下の相対 path だけを使います。
 
 タブは接続から独立したUI識別子を持ち、接続ごとの backend session id とは別に管理します。復元したタブと切断済みタブは `idle` / `closed` 状態のまま同じ端末バッファを保持し、操作者が接続を開始したときだけ新しい backend session id を割り当てます。古い接続から遅れて届いた event は id 不一致で破棄します。
 
@@ -53,7 +58,8 @@ WebView はファイルシステム、ソケット、鍵へ直接アクセスで
 6. 次 hop があれば `channel_open_direct_tcpip` を開き、その `ChannelStream` を次の `russh::client::connect_stream` へ渡す。
 7. 最終 hop で PTY と shell を要求する。
 8. `tokio::select!` で UI command と SSH channel message を処理する。
-9. 終了時は最終 hop から逆順に disconnect する。
+9. 初回 SFTP 操作時だけ、最終 hop の同じ認証済み handle で subsystem channel を遅延作成する。
+10. 終了時は転送を cancel し、最終 hop から逆順に disconnect する。
 
 ## 故障分離
 
@@ -61,6 +67,8 @@ WebView はファイルシステム、ソケット、鍵へ直接アクセスで
 
 ## OpenSSH 互換範囲
 
-実装済み: `Host`, `HostName`, `User`, `Port`, `IdentityFile`, `ProxyJump`, `*`, `?`, `!`, `Key=Value`。
+実装済み: `Host`, `Match`, `Include`, `HostName`, `User`, `Port`, `IdentityFile`,
+`CertificateFile`, `IdentitiesOnly`, `ProxyJump`, `HostKeyAlias`, token、`*`, `?`, `!`, `Key=Value`。
 
-未実装: `Include`, `Match`, `CanonicalizeHostname`, `HostKeyAlias`, `CertificateFile`, token expansion の完全互換。互換範囲外は黙って安全性を弱めず、issue 単位で追加します。
+未実装: `CanonicalizeHostname` と OpenSSH config 全 directive / token の完全互換。互換範囲外は
+黙って安全性を弱めず、issue 単位で追加します。
