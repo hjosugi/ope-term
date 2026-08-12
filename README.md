@@ -71,6 +71,7 @@ Host prod-db
 | [起動](https://hjosugi.github.io/ope-term/GETTING_STARTED/) | 前提ツール、開発ビルド、検証コマンド |
 | [使い方](https://hjosugi.github.io/ope-term/USAGE/) | ルート、保存と復元、認証、ショートカット |
 | [アーキテクチャ](https://hjosugi.github.io/ope-term/ARCHITECTURE/) | Rust core と WebView の境界、接続シーケンス |
+| [UI サイズと CSS token](https://hjosugi.github.io/ope-term/DESIGN_SYSTEM/) | spacing、文字、control、layout の共通 scale |
 | [ビルド・開発環境](https://hjosugi.github.io/ope-term/BUILD/) | Nix / Bazel / キャッシュ構成 |
 | [セキュリティ方針](https://hjosugi.github.io/ope-term/SECURITY_POLICY/) | プロトコル、権限、秘密情報、永続化 |
 | [脅威モデル](https://hjosugi.github.io/ope-term/THREAT_MODEL/) | 資産、境界、統制、残存リスク |

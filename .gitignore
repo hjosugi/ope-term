@@ -3,7 +3,7 @@ dist/
 site/
 coverage/
 artifacts/
-.venv/
+.venv*/
 .direnv/
 bazel-*
 result

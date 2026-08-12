@@ -4,7 +4,7 @@
 
 `~/.ssh/config` の Host をピースのように並べ、踏み台から接続先までを組み立てます。Host を 1 台だけ置いた場合は `ProxyJump` を自動展開し、明示的に複数台を置いた場合はその順番で `direct-tcpip` トンネルを作ります。
 
-!!! warning "v0.1.0 alpha"
+!!! warning "v0.1.1 alpha"
 
     主要な SSH 認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の全ディレクティブ、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
 
@@ -53,6 +53,10 @@
 - **[アーキテクチャ](ARCHITECTURE.md)**
 
     Rust core と WebView の境界、接続シーケンス、故障分離。
+
+- **[UI サイズと CSS token](DESIGN_SYSTEM.md)**
+
+    spacing、文字、control、layout の共通 scale と変更ルール。
 
 - **[セキュリティ方針](SECURITY_POLICY.md)**
 
