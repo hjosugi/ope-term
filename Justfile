@@ -28,6 +28,9 @@ build:
     ./scripts/run-cached pnpm run build
     ./scripts/run-cached cargo build --manifest-path src-tauri/Cargo.toml
 
+version-check *args:
+    ./scripts/run-cached node scripts/version-consistency.mjs {{args}}
+
 check: lint test build
 
 security:

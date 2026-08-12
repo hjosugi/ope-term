@@ -19,6 +19,7 @@
     "performance:fixture": "node scripts/performance-fixture.mjs",
     "performance:gate": "node scripts/performance-gate.mjs",
     "reliability:gate": "node scripts/reliability-gate.mjs",
+    "version:check": "node scripts/version-consistency.mjs",
     "security:policy": "node scripts/security-policy.mjs",
     "test": "vitest run && node --test scripts/*.test.mjs",
     "test:watch": "vitest",

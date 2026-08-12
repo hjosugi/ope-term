@@ -26,6 +26,7 @@ just dev
 | `./scripts/nix-local build .#frontend` | Nix 固定依存によるフロントエンド成果物 |
 | `./scripts/nix-local build` | 配布可能な Tauri package |
 | `just check` | format、lint、test、通常 build の一括検証 |
+| `just version-check` | npm、Cargo、Cargo.lock、Tauri の version 一致を検証 |
 | `just security` | Tauri/CSP policy、pnpm、RustSec のセキュリティ監査 |
 | `just fuzz-check` | 2つのfuzz targetをstable Rustでコンパイル |
 | `just fuzz-smoke 30` | nightly + ASanでparserとroute expansionを各30秒fuzz |
@@ -36,6 +37,9 @@ just dev
 | `just performance-gate <report>` | 実機performance JSONをrelease閾値で検証 |
 | `just reliability-soak <upstream>` | root不要のTCP fault proxyで24h soak reportを生成 |
 | `just reliability-gate <report>` | 24h、fault、再接続、proxy errorの基準を検証 |
+
+配布 bundle の dry run、code signing secret、tag release の手順は
+[リリース工程](RELEASE.md)を参照してください。
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。

@@ -11,4 +11,4 @@ Labels: priority:P1, area:release, enhancement
 - [ ] Windows と macOS の code signing を設定する
 - [ ] SBOM、checksum、provenance を release に添付する
 - [ ] Tauri updater の署名検証と rollback 方針を実装する
-- [ ] tag と Cargo/npm/Tauri version の一致を検証する
+- [x] tag と Cargo/npm/Tauri version の一致を検証する

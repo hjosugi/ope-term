@@ -82,6 +82,7 @@ nav:
       - 長時間接続と再接続: RELIABILITY.md
       - UI サイズと CSS token: DESIGN_SYSTEM.md
       - ビルド・開発環境: BUILD.md
+      - リリース工程: RELEASE.md
       - 性能・安定性のゲート: PERFORMANCE.md
   - セキュリティ:
       - セキュリティ方針: SECURITY_POLICY.md
