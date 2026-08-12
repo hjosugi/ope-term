@@ -1,0 +1,203 @@
+import budgets from '../performance-budgets.json';
+
+export type RendererName = 'webgl' | 'fallback' | 'unknown';
+
+export interface PerformanceEnvironment {
+  operatingSystem: string;
+  webview: string;
+  renderer: RendererName;
+  machine: string;
+  commit: string;
+  notes?: string;
+}
+
+export interface PerformanceMemory {
+  idleMiB: number;
+  oneSessionMiB: number;
+}
+
+export interface PerformanceReport {
+  schemaVersion: 1;
+  createdAt: string;
+  environment: PerformanceEnvironment;
+  coldStartMs: number;
+  inputLatency: {
+    samples: number;
+    p50Ms: number;
+    p95Ms: number;
+    p99Ms: number;
+  };
+  memory: {
+    idleMiB: number;
+    oneSessionMiB: number;
+    sessionIncrementMiB: number;
+  };
+  output: {
+    bytes: number;
+    durationMs: number;
+    throughputMiBPerSecond: number;
+    maximumMainThreadStallMs: number;
+    longTaskObserverSupported: boolean;
+  };
+}
+
+export interface PerformanceVerdict {
+  name: keyof typeof budgets;
+  passed: boolean;
+  actual: number;
+  limit: number;
+}
+
+export interface PerformanceHarnessApi {
+  resetOutput(): void;
+  snapshot(environment: PerformanceEnvironment, memory: PerformanceMemory): PerformanceReport;
+  download(environment: PerformanceEnvironment, memory: PerformanceMemory): void;
+}
+
+declare global {
+  interface Window {
+    __opeTermPerformance?: PerformanceHarnessApi;
+  }
+}
+
+export function percentile(samples: readonly number[], requestedPercentile: number): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((left, right) => left - right);
+  const index = Math.max(0, Math.ceil(requestedPercentile * sorted.length) - 1);
+  return sorted[Math.min(index, sorted.length - 1)] ?? 0;
+}
+
+export function evaluatePerformance(report: PerformanceReport): PerformanceVerdict[] {
+  return [
+    verdict('coldStartMs', report.coldStartMs, budgets.coldStartMs, 'max'),
+    verdict('minimumInputSamples', report.inputLatency.samples, budgets.minimumInputSamples, 'min'),
+    verdict('inputLatencyP99Ms', report.inputLatency.p99Ms, budgets.inputLatencyP99Ms, 'max'),
+    verdict('idleMemoryMiB', report.memory.idleMiB, budgets.idleMemoryMiB, 'max'),
+    verdict('sessionIncrementMiB', report.memory.sessionIncrementMiB, budgets.sessionIncrementMiB, 'max'),
+    verdict('minimumOutputBytes', report.output.bytes, budgets.minimumOutputBytes, 'min'),
+    verdict(
+      'maximumMainThreadStallMs',
+      report.output.maximumMainThreadStallMs,
+      budgets.maximumMainThreadStallMs,
+      'max',
+    ),
+  ];
+}
+
+export class BrowserPerformanceHarness implements PerformanceHarnessApi {
+  private readonly inputLatencies: number[] = [];
+  private readonly longTasks: number[] = [];
+  private coldStartMs = 0;
+  private outputBytes = 0;
+  private outputStartedAt?: number;
+  private outputCompletedAt?: number;
+  private renderer: RendererName = 'unknown';
+  private readonly longTaskObserverSupported: boolean;
+  private observer?: PerformanceObserver;
+
+  constructor(private readonly clock: Pick<Performance, 'now'> = performance) {
+    this.longTaskObserverSupported = globalThis.PerformanceObserver?.supportedEntryTypes.includes('longtask') ?? false;
+  }
+
+  start(): void {
+    window.addEventListener('keydown', this.onKeydown, { capture: true });
+    if (!this.longTaskObserverSupported) return;
+    this.observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) this.longTasks.push(entry.duration);
+    });
+    this.observer.observe({ entryTypes: ['longtask'] });
+  }
+
+  stop(): void {
+    window.removeEventListener('keydown', this.onKeydown, { capture: true });
+    this.observer?.disconnect();
+  }
+
+  markReady(): void {
+    this.coldStartMs = this.clock.now();
+  }
+
+  setRenderer(renderer: RendererName): void {
+    this.renderer = renderer;
+  }
+
+  recordOutput(bytes: number): void {
+    if (!Number.isFinite(bytes) || bytes <= 0) return;
+    const now = this.clock.now();
+    this.outputStartedAt ??= now;
+    this.outputBytes += bytes;
+    if (this.outputBytes >= budgets.minimumOutputBytes && this.outputCompletedAt === undefined) {
+      this.outputCompletedAt = now;
+    }
+  }
+
+  resetOutput(): void {
+    this.outputBytes = 0;
+    this.outputStartedAt = undefined;
+    this.outputCompletedAt = undefined;
+    this.longTasks.length = 0;
+  }
+
+  snapshot(environment: PerformanceEnvironment, memory: PerformanceMemory): PerformanceReport {
+    const outputEnd = this.outputCompletedAt ?? this.clock.now();
+    const durationMs = this.outputStartedAt === undefined ? 0 : Math.max(0, outputEnd - this.outputStartedAt);
+    return {
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      environment: { ...environment, renderer: this.renderer },
+      coldStartMs: round(this.coldStartMs),
+      inputLatency: {
+        samples: this.inputLatencies.length,
+        p50Ms: round(percentile(this.inputLatencies, 0.5)),
+        p95Ms: round(percentile(this.inputLatencies, 0.95)),
+        p99Ms: round(percentile(this.inputLatencies, 0.99)),
+      },
+      memory: {
+        idleMiB: round(memory.idleMiB),
+        oneSessionMiB: round(memory.oneSessionMiB),
+        sessionIncrementMiB: round(memory.oneSessionMiB - memory.idleMiB),
+      },
+      output: {
+        bytes: this.outputBytes,
+        durationMs: round(durationMs),
+        throughputMiBPerSecond: durationMs === 0
+          ? 0
+          : round((this.outputBytes / 1024 / 1024) / (durationMs / 1000)),
+        maximumMainThreadStallMs: round(Math.max(0, ...this.longTasks)),
+        longTaskObserverSupported: this.longTaskObserverSupported,
+      },
+    };
+  }
+
+  download(environment: PerformanceEnvironment, memory: PerformanceMemory): void {
+    const report = this.snapshot(environment, memory);
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ope-term-performance-${report.createdAt.replaceAll(':', '-')}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url));
+  }
+
+  private readonly onKeydown = (event: KeyboardEvent): void => {
+    if (event.repeat) return;
+    const startedAt = this.clock.now();
+    window.requestAnimationFrame(() => this.inputLatencies.push(this.clock.now() - startedAt));
+  };
+}
+
+function verdict(
+  name: keyof typeof budgets,
+  actual: number,
+  limit: number,
+  comparison: 'min' | 'max',
+): PerformanceVerdict {
+  return { name, actual, limit, passed: comparison === 'min' ? actual >= limit : actual < limit };
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
+}

@@ -24,8 +24,88 @@
 - Rust セッション task を terminal ごとに分離
 - SSH keepalive 15 s、3 回失敗で切断検出
 
+## 計測 harness
+
+計測は明示的に有効化した実機だけで行います。DevTools console で次を実行して再読み込みします。
+
+```js
+localStorage.setItem('ope-term.performance.enabled', 'true');
+location.reload();
+```
+
+有効時は `window.__opeTermPerformance` が次を記録します。
+
+- navigation start から Host 読み込みとtab復元が終わるまでのcold start
+- repeatではないkeydownから次のanimation frameまでのlatency
+- Long Tasks APIが使えるengineでのmain-thread stall
+- Tauri IPC Channelからxtermへ渡した出力bytesと、100 MiB到達までのthroughput
+- xtermのWebGL / fallback renderer
+
+通常利用時はlistenerもobserverも作らないため、計測自体が製品のlatencyへ影響しません。
+
+### 100 MiB output
+
+接続先でrepositoryを利用できる場合は、terminalから次を実行します。stdoutへ正確に100 MiBを
+streamし、ファイル全体をmemoryへ載せません。
+
+```bash
+node scripts/performance-fixture.mjs
+```
+
+開始直前にDevTools consoleでcounterをresetします。
+
+```js
+window.__opeTermPerformance.resetOutput();
+```
+
+### Memory とreport
+
+idle時と1 session接続時に、ope-term関連processのRSS合計を同じOS toolで測ります。Linux例:
+
+```bash
+ps -C ope-term -o rss= | awk '{ total += $1 } END { print total / 1024 " MiB" }'
+```
+
+100回以上の入力、memory採取、100 MiB出力を終えたらJSONを保存します。`renderer` は実測値で
+上書きされるため、呼び出し側は `unknown` で構いません。
+
+```js
+window.__opeTermPerformance.download(
+  {
+    operatingSystem: 'CachyOS Wayland',
+    webview: 'WebKitGTK 2.x',
+    renderer: 'unknown',
+    machine: 'CPU / RAM / GPU',
+    commit: 'git commit SHA',
+    notes: '電源設定、display scale、cold/warm条件'
+  },
+  { idleMiB: 100, oneSessionMiB: 115 }
+);
+```
+
+reportは秘密値やterminal内容を含まず、集計値とenvironment metadataだけを保持します。完了後は
+flagを消して通常modeへ戻します。
+
+```js
+localStorage.removeItem('ope-term.performance.enabled');
+location.reload();
+```
+
+### Release gate
+
+thresholdの正本はrepository rootの`performance-budgets.json`です。reportを検証し、1項目でも
+超過または欠落があればnon-zeroで終了します。
+
+```bash
+just performance-gate artifacts/performance/cachyos-webkitgtk-webgl.json
+```
+
+最低100 input sample、100 MiB以上のoutputを要求します。Long Tasks APIがないWebKitでは警告を
+出すため、platform profilerの結果をreportと同じartifactに添付します。
+
 ## 未達・未計測
 
 上表はまだ CI/実機で合否を測定していません。特に Linux の WebKitGTK、Windows の WebView2、macOS の WKWebView は別々に計測します。CachyOS/Wayland を最初の実測対象とし、WebGL と fallback renderer の双方で確認します。
 
-回帰ベンチ、100 MB fixture、24 h soak test、計測結果の保存は performance issue の完了条件です。
+WebKitGTK / WebView2 / WKWebView のWebGL・fallback比較、CachyOS/Wayland実測結果のartifact保存、
+24 h soak testは未完了です。report schema・100 MiB fixture・release gateは実装済みです。

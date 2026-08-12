@@ -39,7 +39,7 @@ sbom:
     mkdir -p artifacts/security
     ./scripts/run-cached syft scan dir:. \
         --source-name ope-term \
-        --source-version 0.1.0 \
+        --source-version 0.1.1 \
         --exclude './node_modules/**' \
         --exclude './dist/**' \
         --exclude './artifacts/**' \
@@ -70,6 +70,12 @@ bazel:
 
 benchmark-build:
     hyperfine --warmup 1 --runs 5 './scripts/run-cached pnpm run build' './scripts/run-bazel build //:frontend'
+
+performance-fixture bytes="104857600":
+    ./scripts/run-cached node scripts/performance-fixture.mjs {{bytes}}
+
+performance-gate report:
+    ./scripts/run-cached node scripts/performance-gate.mjs {{report}}
 
 nix:
     ./scripts/nix-local flake check

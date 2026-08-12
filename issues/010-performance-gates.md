@@ -7,8 +7,8 @@ Labels: priority:P0, performance, reliability
 
 ## 受け入れ条件
 
-- [ ] cold start、input latency p50/p95/p99、memory を計測する harness を作る
-- [ ] 100 MB output fixture で throughput と main-thread stall を記録する
+- [x] cold start、input latency p50/p95/p99、memory を計測する harness を作る
+- [x] 100 MB output fixture で throughput と main-thread stall を記録する
 - [ ] WebGL / fallback を WebKitGTK、WebView2、WKWebView で比較する
 - [ ] CachyOS Wayland 実機結果を artifact として保存する
-- [ ] 基準超過を CI または release gate で検出する
+- [x] 基準超過を release gate で検出する（version付きJSONを `just performance-gate` で判定）

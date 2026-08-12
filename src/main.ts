@@ -22,6 +22,7 @@ import {
   type CommandId,
 } from './keybindings';
 import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
+import type { BrowserPerformanceHarness } from './performance';
 import { appendUnique, moveRouteItem, routePreview } from './route';
 import type {
   AuthPrompt,
@@ -178,6 +179,14 @@ const pendingHostKeyPrompts: HostKeyDialogItem[] = [];
 let activeAuthPrompt: AuthDialogItem | null = null;
 const pendingAuthPrompts: AuthDialogItem[] = [];
 const sessions = new Map<string, SessionUi>();
+let performanceHarness: BrowserPerformanceHarness | undefined;
+const performanceHarnessReady = localStorage.getItem('ope-term.performance.enabled') === 'true'
+  ? import('./performance').then(({ BrowserPerformanceHarness: Harness }) => {
+      performanceHarness = new Harness();
+      performanceHarness.start();
+      window.__opeTermPerformance = performanceHarness;
+    })
+  : Promise.resolve();
 
 const commands: CommandDefinition[] = [
   {
@@ -585,7 +594,10 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
   const onEvent = new Channel<SessionEvent>();
   onEvent.onmessage = (event) => handleSessionEvent(session, connectionId, event);
   const onData = new Channel<ArrayBuffer>();
-  onData.onmessage = (data) => session.terminal.write(new Uint8Array(data));
+  onData.onmessage = (data) => {
+    performanceHarness?.recordOutput(data.byteLength);
+    session.terminal.write(new Uint8Array(data));
+  };
   const request: ConnectRequest = {
     sessionId: connectionId,
     route: [...session.route],
@@ -664,10 +676,15 @@ function createSession(sessionRoute: string[]): SessionUi {
   terminal.open(terminalContainer);
   try {
     const webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
+    webgl.onContextLoss(() => {
+      webgl.dispose();
+      performanceHarness?.setRenderer('fallback');
+    });
     terminal.loadAddon(webgl);
+    performanceHarness?.setRenderer('webgl');
   } catch {
     // WebGL is optional on WebKitGTK; xterm's renderer is the stable fallback.
+    performanceHarness?.setRenderer('fallback');
   }
   fit.fit();
 
@@ -1606,10 +1623,12 @@ window.addEventListener('resize', () => {
 });
 
 async function boot(): Promise<void> {
+  await performanceHarnessReady;
   syncKeybindingLabels();
   await loadHosts();
   void loadConfigPath();
   restoreTabs();
+  performanceHarness?.markReady();
 }
 
 void boot();

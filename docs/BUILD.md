@@ -32,6 +32,8 @@ just dev
 | `just sbom` | CycloneDX JSONの依存SBOMを生成 |
 | `just docs` | MkDocs のドキュメントサイトを strict モードで `site/` へ生成 |
 | `just docs-serve` | ドキュメントサイトのローカルプレビュー |
+| `just performance-fixture` | 100 MiBのterminal output fixtureをstdoutへstream |
+| `just performance-gate <report>` | 実機performance JSONをrelease閾値で検証 |
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。

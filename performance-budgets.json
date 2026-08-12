@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "coldStartMs": 500,
+  "minimumInputSamples": 100,
+  "inputLatencyP99Ms": 16,
+  "idleMemoryMiB": 150,
+  "sessionIncrementMiB": 20,
+  "minimumOutputBytes": 104857600,
+  "maximumMainThreadStallMs": 100
+}

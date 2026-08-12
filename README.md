@@ -73,6 +73,7 @@ Host prod-db
 | [アーキテクチャ](https://hjosugi.github.io/ope-term/ARCHITECTURE/) | Rust core と WebView の境界、接続シーケンス |
 | [UI サイズと CSS token](https://hjosugi.github.io/ope-term/DESIGN_SYSTEM/) | spacing、文字、control、layout の共通 scale |
 | [ビルド・開発環境](https://hjosugi.github.io/ope-term/BUILD/) | Nix / Bazel / キャッシュ構成 |
+| [性能・安定性のゲート](https://hjosugi.github.io/ope-term/PERFORMANCE/) | 実機harness、100 MiB fixture、release gate |
 | [セキュリティ方針](https://hjosugi.github.io/ope-term/SECURITY_POLICY/) | プロトコル、権限、秘密情報、永続化 |
 | [脅威モデル](https://hjosugi.github.io/ope-term/THREAT_MODEL/) | 資産、境界、統制、残存リスク |
 | [ロードマップ](https://hjosugi.github.io/ope-term/ROADMAP/) | 実装済みの基盤とこれからの作業 |
