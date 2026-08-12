@@ -77,6 +77,18 @@ performance-fixture bytes="104857600":
 performance-gate report:
     ./scripts/run-cached node scripts/performance-gate.mjs {{report}}
 
+reliability-soak upstream upstream_port="22" listen_port="2222" duration="86400" fault_every="900" report="artifacts/reliability/soak.json":
+    ./scripts/run-cached node scripts/fault-proxy.mjs \
+        --upstream-host {{upstream}} \
+        --upstream-port {{upstream_port}} \
+        --listen-port {{listen_port}} \
+        --duration-seconds {{duration}} \
+        --fault-every-seconds {{fault_every}} \
+        --report {{report}}
+
+reliability-gate report:
+    ./scripts/run-cached node scripts/reliability-gate.mjs {{report}}
+
 nix:
     ./scripts/nix-local flake check
     ./scripts/nix-local build

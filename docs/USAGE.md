@@ -76,7 +76,7 @@ exponential backoff で最大 5 回まで自動再接続します。hopbar に�
 
     切断時に未送信の入力は破棄します。再接続は新しい shell を開くため、書きかけの
     コマンドが新しいプロンプトへ流れ込むことはありません。tmux / screen への
-    再 attach は [ロードマップ](ROADMAP.md) の Reliability issue で扱います。
+    再 attach は [長時間接続と再接続](RELIABILITY.md) のopt-in境界に従います。
 
 ## ホスト鍵の確認
 

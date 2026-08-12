@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "minimumDurationSeconds": 86400,
+  "minimumFaultEvents": 10
+}

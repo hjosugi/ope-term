@@ -34,6 +34,8 @@ just dev
 | `just docs-serve` | ドキュメントサイトのローカルプレビュー |
 | `just performance-fixture` | 100 MiBのterminal output fixtureをstdoutへstream |
 | `just performance-gate <report>` | 実機performance JSONをrelease閾値で検証 |
+| `just reliability-soak <upstream>` | root不要のTCP fault proxyで24h soak reportを生成 |
+| `just reliability-gate <report>` | 24h、fault、再接続、proxy errorの基準を検証 |
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。

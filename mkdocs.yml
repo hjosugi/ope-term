@@ -79,6 +79,7 @@ nav:
   - 使い方: USAGE.md
   - 設計:
       - アーキテクチャ: ARCHITECTURE.md
+      - 長時間接続と再接続: RELIABILITY.md
       - UI サイズと CSS token: DESIGN_SYSTEM.md
       - ビルド・開発環境: BUILD.md
       - 性能・安定性のゲート: PERFORMANCE.md
