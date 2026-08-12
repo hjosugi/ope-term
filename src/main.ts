@@ -23,6 +23,21 @@ import {
 } from './keybindings';
 import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
 import type { BrowserPerformanceHarness } from './performance';
+import {
+  containsPaneSession,
+  focusPane,
+  paneLeaf,
+  paneSessions,
+  removePaneSession,
+  replacePaneSession,
+  resizePane,
+  setSplitRatio,
+  splitPane,
+  type PaneAxis,
+  type PaneDirection,
+  type PaneLayout,
+  type PaneSplit,
+} from './pane-layout';
 import { appendUnique, moveRouteItem, routePreview } from './route';
 import type {
   AuthPrompt,
@@ -37,8 +52,10 @@ import {
   loadWorkspaces,
   missingAliases,
   removeSavedRoute,
+  restorePaneLayout,
   sanitizeName,
   saveWorkspaces,
+  storePaneLayout,
   suggestRouteName,
   upsertSavedRoute,
   type SavedRoute,
@@ -100,6 +117,11 @@ interface AuthDialogItem {
   prompt: AuthPrompt;
 }
 
+interface PendingPaneSplit {
+  anchorSessionKey: string;
+  axis: PaneAxis;
+}
+
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`Missing #${id}`);
@@ -136,6 +158,11 @@ const ui = {
   shortcutQuery: element<HTMLInputElement>('shortcut-query'),
   shortcutList: element<HTMLElement>('shortcut-list'),
   shortcutImport: element<HTMLInputElement>('shortcut-import'),
+  panePicker: element<HTMLElement>('pane-picker'),
+  panePickerTitle: element<HTMLElement>('pane-picker-title'),
+  panePickerList: element<HTMLElement>('pane-picker-list'),
+  paneNewRoute: element<HTMLButtonElement>('pane-new-route'),
+  panePickerCancel: element<HTMLButtonElement>('pane-picker-cancel'),
   hostKeyDialog: element<HTMLElement>('host-key-dialog'),
   hostKeyTitle: element<HTMLElement>('host-key-title'),
   hostKeyStatus: element<HTMLElement>('host-key-status'),
@@ -163,6 +190,8 @@ let hosts: HostProfile[] = [];
 let route: string[] = [];
 let routeDragIndex: number | null = null;
 let activeSessionKey: string | null = null;
+let paneLayout: PaneLayout | null = null;
+let pendingPaneSplit: PendingPaneSplit | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
 let selectedCommand = 0;
 let paletteItems: PaletteItem[] = [];
@@ -217,6 +246,17 @@ const commands: CommandDefinition[] = [
     when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
     run: () => void startActiveSession(),
   },
+  { id: 'pane.splitRight', category: 'Pane', label: '右に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('horizontal') },
+  { id: 'pane.splitDown', category: 'Pane', label: '下に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('vertical') },
+  { id: 'pane.focusLeft', category: 'Pane', label: '左の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('left') },
+  { id: 'pane.focusRight', category: 'Pane', label: '右の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('right') },
+  { id: 'pane.focusUp', category: 'Pane', label: '上の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('up') },
+  { id: 'pane.focusDown', category: 'Pane', label: '下の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('down') },
+  { id: 'pane.close', category: 'Pane', label: '現在の pane を閉じる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: closeActivePane },
+  { id: 'pane.resizeWider', category: 'Pane', label: 'pane を横に広げる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('horizontal', 0.05) },
+  { id: 'pane.resizeNarrower', category: 'Pane', label: 'pane を横に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('horizontal', -0.05) },
+  { id: 'pane.resizeTaller', category: 'Pane', label: 'pane を縦に広げる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', 0.05) },
+  { id: 'pane.resizeShorter', category: 'Pane', label: 'pane を縦に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', -0.05) },
   {
     id: 'preferences.openKeyboardShortcuts',
     category: 'Preferences',
@@ -278,10 +318,12 @@ function hostAliases(): string[] {
 }
 
 function persistWorkspaces(): void {
+  const sessionKeys = [...sessions.keys()];
   workspaces = {
     saved: workspaces.saved,
     tabs: [...sessions.values()].map((session) => [...session.route]),
-    activeTab: activeSessionKey ? [...sessions.keys()].indexOf(activeSessionKey) : -1,
+    activeTab: activeSessionKey ? sessionKeys.indexOf(activeSessionKey) : -1,
+    paneLayout: storePaneLayout(paneLayout, sessionKeys),
   };
   try {
     saveWorkspaces(workspaces);
@@ -544,7 +586,8 @@ function deleteSavedRoute(entry: SavedRoute): void {
   toast(`保存したルートを削除しました: ${entry.name}`);
 }
 
-function showBuilder(): void {
+function showBuilder(cancelPendingSplit = true): void {
+  if (cancelPendingSplit) pendingPaneSplit = null;
   activeSessionKey = null;
   ui.builder.classList.remove('hidden');
   ui.terminalStage.classList.add('hidden');
@@ -559,7 +602,15 @@ async function connectRoute(): Promise<void> {
   if (route.length === 0) return;
   const session = createSession([...route]);
   sessions.set(session.key, session);
+  const split = pendingPaneSplit;
+  pendingPaneSplit = null;
+  let splitAdded = false;
+  if (split && containsPaneSession(paneLayout, split.anchorSessionKey)) {
+    paneLayout = splitPane(paneLayout, split.anchorSessionKey, session.key, split.axis);
+    splitAdded = true;
+  }
   activateSession(session.key);
+  if (splitAdded) renderPaneLayout();
   await startSession(session);
 }
 
@@ -1040,6 +1091,14 @@ function renderHopbar(session: SessionUi): void {
   target.className = 'terminal-host';
   target.textContent = session.title;
   session.hopbar.append(target);
+  const closePaneButton = document.createElement('button');
+  closePaneButton.type = 'button';
+  closePaneButton.className = 'pane-close';
+  closePaneButton.textContent = '×';
+  closePaneButton.title = 'pane を閉じる（session は tab に残ります）';
+  closePaneButton.setAttribute('aria-label', `${session.title} の pane を閉じる`);
+  closePaneButton.addEventListener('click', () => closePane(session.key));
+  session.hopbar.append(closePaneButton);
 
   if (live) return;
   const missing = missingAliases(session.route, hostAliases());
@@ -1082,13 +1141,25 @@ function renderHopbar(session: SessionUi): void {
 function activateSession(key: string): void {
   const session = sessions.get(key);
   if (!session) return;
+  let layoutChanged = false;
+  if (!paneLayout) {
+    paneLayout = paneLeaf(key);
+    layoutChanged = true;
+  } else if (!containsPaneSession(paneLayout, key)) {
+    const target = activeSessionKey && containsPaneSession(paneLayout, activeSessionKey)
+      ? activeSessionKey
+      : paneSessions(paneLayout)[0];
+    paneLayout = target ? replacePaneSession(paneLayout, target, key) : paneLeaf(key);
+    layoutChanged = true;
+  }
   activeSessionKey = key;
   ui.builder.classList.add('hidden');
   ui.terminalStage.classList.remove('hidden');
   ui.statusMode.textContent = 'TERMINAL';
   ui.statusRoute.textContent = session.route.join(' → ');
-  for (const candidate of sessions.values()) {
-    candidate.view.classList.toggle('inactive', candidate.key !== key);
+  if (layoutChanged) renderPaneLayout();
+  for (const pane of ui.terminalStage.querySelectorAll<HTMLElement>('.pane-leaf')) {
+    pane.classList.toggle('active', pane.dataset.sessionKey === key);
   }
   renderTabs();
   updateConnectionState(session);
@@ -1097,6 +1168,163 @@ function activateSession(key: string): void {
     session.fit.fit();
     session.terminal.focus();
   });
+}
+
+function renderPaneLayout(): void {
+  ui.terminalStage.replaceChildren();
+  if (!paneLayout) return;
+  ui.terminalStage.append(buildPaneNode(paneLayout));
+  window.requestAnimationFrame(() => {
+    for (const key of paneSessions(paneLayout)) sessions.get(key)?.fit.fit();
+  });
+}
+
+function buildPaneNode(node: PaneLayout): HTMLElement {
+  if (node.type === 'leaf') {
+    const frame = document.createElement('section');
+    frame.className = `pane-leaf${node.sessionKey === activeSessionKey ? ' active' : ''}`;
+    frame.dataset.sessionKey = node.sessionKey;
+    const session = sessions.get(node.sessionKey);
+    if (!session) return frame;
+    session.view.classList.remove('inactive');
+    frame.append(session.view);
+    frame.addEventListener('pointerdown', () => {
+      if (activeSessionKey !== session.key) activateSession(session.key);
+    });
+    return frame;
+  }
+
+  const split = document.createElement('div');
+  split.className = `pane-split ${node.axis}`;
+  applySplitTemplate(split, node.axis, node.ratio);
+  split.append(buildPaneNode(node.first));
+  const divider = document.createElement('button');
+  divider.type = 'button';
+  divider.className = 'pane-divider';
+  divider.setAttribute('aria-label', node.axis === 'horizontal' ? '左右 pane のサイズを変更' : '上下 pane のサイズを変更');
+  divider.addEventListener('pointerdown', (event) => startDividerDrag(event, split, node));
+  split.append(divider, buildPaneNode(node.second));
+  return split;
+}
+
+function applySplitTemplate(element: HTMLElement, axis: PaneAxis, ratio: number): void {
+  const first = `${ratio}fr`;
+  const second = `${1 - ratio}fr`;
+  if (axis === 'horizontal') element.style.gridTemplateColumns = `${first} var(--pane-divider-size) ${second}`;
+  else element.style.gridTemplateRows = `${first} var(--pane-divider-size) ${second}`;
+}
+
+function startDividerDrag(event: PointerEvent, element: HTMLElement, split: PaneSplit): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const rect = element.getBoundingClientRect();
+  let ratio = split.ratio;
+  element.classList.add('resizing');
+
+  const move = (moveEvent: PointerEvent): void => {
+    ratio = split.axis === 'horizontal'
+      ? (moveEvent.clientX - rect.left) / rect.width
+      : (moveEvent.clientY - rect.top) / rect.height;
+    ratio = Math.min(0.85, Math.max(0.15, ratio));
+    applySplitTemplate(element, split.axis, ratio);
+    for (const key of paneSessions(split)) sessions.get(key)?.fit.fit();
+  };
+  const finish = (): void => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
+    window.removeEventListener('pointercancel', finish);
+    paneLayout = setSplitRatio(paneLayout, split, ratio);
+    renderPaneLayout();
+    persistWorkspaces();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', finish, { once: true });
+  window.addEventListener('pointercancel', finish, { once: true });
+}
+
+function openPanePicker(axis: PaneAxis): void {
+  if (!activeSessionKey || !containsPaneSession(paneLayout, activeSessionKey)) return;
+  pendingPaneSplit = { anchorSessionKey: activeSessionKey, axis };
+  ui.panePickerTitle.textContent = axis === 'horizontal' ? '右に表示する session' : '下に表示する session';
+  ui.panePickerList.replaceChildren();
+  const visible = new Set(paneSessions(paneLayout));
+  const candidates = [...sessions.values()].filter((session) => !visible.has(session.key));
+  if (candidates.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'pane-picker-empty';
+    empty.textContent = '非表示の既存 session はありません。新しい route を組み立てられます。';
+    ui.panePickerList.append(empty);
+  }
+  for (const session of candidates) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pane-picker-item';
+    const title = document.createElement('strong');
+    title.textContent = session.title;
+    const detail = document.createElement('small');
+    detail.textContent = session.route.join(' → ');
+    button.append(title, detail);
+    button.addEventListener('click', () => completePaneSplit(session.key));
+    ui.panePickerList.append(button);
+  }
+  ui.panePicker.classList.remove('hidden');
+  window.requestAnimationFrame(() => (ui.panePickerList.querySelector('button') ?? ui.paneNewRoute).focus());
+}
+
+function closePanePicker(cancel = true): void {
+  ui.panePicker.classList.add('hidden');
+  if (cancel) pendingPaneSplit = null;
+}
+
+function completePaneSplit(sessionKey: string): void {
+  const request = pendingPaneSplit;
+  if (!request || !sessions.has(sessionKey)) return;
+  paneLayout = splitPane(paneLayout, request.anchorSessionKey, sessionKey, request.axis);
+  closePanePicker(false);
+  pendingPaneSplit = null;
+  activateSession(sessionKey);
+  renderPaneLayout();
+}
+
+function beginNewRouteForPane(): void {
+  if (!pendingPaneSplit) return;
+  closePanePicker(false);
+  route = [];
+  renderRoute();
+  showBuilder(false);
+  toast('分割する新しい route を組み立て、CONNECT を押してください。');
+}
+
+function movePaneFocus(direction: PaneDirection): void {
+  if (!activeSessionKey) return;
+  const next = focusPane(paneLayout, activeSessionKey, direction);
+  if (next) activateSession(next);
+}
+
+function resizeActivePane(axis: PaneAxis, delta: number): void {
+  if (!activeSessionKey) return;
+  const resized = resizePane(paneLayout, activeSessionKey, axis, delta);
+  if (resized === paneLayout) return;
+  paneLayout = resized;
+  renderPaneLayout();
+  persistWorkspaces();
+}
+
+function closePane(sessionKey: string): void {
+  if (!containsPaneSession(paneLayout, sessionKey)) return;
+  paneLayout = removePaneSession(paneLayout, sessionKey);
+  const next = paneSessions(paneLayout)[0];
+  if (activeSessionKey === sessionKey) {
+    if (next) activateSession(next);
+    else showBuilder();
+  }
+  renderPaneLayout();
+  renderTabs();
+  persistWorkspaces();
+}
+
+function closeActivePane(): void {
+  if (activeSessionKey) closePane(activeSessionKey);
 }
 
 function updateConnectionState(session: SessionUi): void {
@@ -1124,9 +1352,10 @@ function updateConnectionState(session: SessionUi): void {
 function renderTabs(): void {
   ui.tabs.replaceChildren();
   for (const session of sessions.values()) {
+    const visible = containsPaneSession(paneLayout, session.key);
     const tab = document.createElement('button');
     tab.type = 'button';
-    tab.className = `session-tab${session.key === activeSessionKey ? ' active' : ''}`;
+    tab.className = `session-tab${session.key === activeSessionKey ? ' active' : ''}${visible ? ' visible' : ''}`;
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', String(session.key === activeSessionKey));
     const dot = document.createElement('span');
@@ -1134,6 +1363,7 @@ function renderTabs(): void {
     const label = document.createElement('span');
     label.className = 'session-tab-label';
     label.textContent = session.title;
+    tab.title = visible ? '表示中の pane へ focus' : '現在の pane にこの session を表示';
     const close = document.createElement('span');
     close.className = 'tab-close';
     close.textContent = '×';
@@ -1159,14 +1389,16 @@ function closeSession(key: string): void {
   clearRetryTimers(session);
   discardPendingInput(session);
   if (session.resizeTimer !== undefined) window.clearTimeout(session.resizeTimer);
+  paneLayout = removePaneSession(paneLayout, key);
   session.terminal.dispose();
   session.view.remove();
   sessions.delete(key);
   if (activeSessionKey === key) {
-    const next = [...sessions.keys()].at(-1);
+    const next = paneSessions(paneLayout)[0] ?? [...sessions.keys()].at(-1);
     if (next) activateSession(next);
     else showBuilder();
   }
+  renderPaneLayout();
   renderTabs();
   persistWorkspaces();
 }
@@ -1200,8 +1432,10 @@ function restoreTabs(): void {
       '\x1b[38;2;127;137;150m[ope-term] 接続はまだ開始していません。接続するには CONNECT または Ctrl+Shift+Enter。\x1b[0m',
     );
   }
+  paneLayout = restorePaneLayout(workspaces.paneLayout, keys);
+  if (paneLayout) renderPaneLayout();
   renderTabs();
-  const restoredKey = activeTab >= 0 ? keys[activeTab] : undefined;
+  const restoredKey = activeTab >= 0 ? keys[activeTab] : paneSessions(paneLayout)[0];
   if (restoredKey) activateSession(restoredKey);
   toast(`前回のタブを ${keys.length} 件復元しました。接続は自動では開始しません。`);
 }
@@ -1491,7 +1725,9 @@ async function importShortcuts(file: File): Promise<void> {
 
 ui.hostSearch.addEventListener('input', renderHosts);
 ui.connect.addEventListener('click', () => void connectRoute());
-ui.newRoute.addEventListener('click', showBuilder);
+ui.newRoute.addEventListener('click', () => showBuilder());
+element<HTMLButtonElement>('split-right').addEventListener('click', () => openPanePicker('horizontal'));
+element<HTMLButtonElement>('split-down').addEventListener('click', () => openPanePicker('vertical'));
 ui.reloadHosts.addEventListener('click', () => void reloadHosts());
 ui.saveRoute.addEventListener('click', saveCurrentRoute);
 ui.routeName.addEventListener('keydown', (event) => {
@@ -1568,6 +1804,11 @@ ui.authSubmit.addEventListener('click', () => void submitAuthPrompt(false));
 ui.shortcutEditor.addEventListener('mousedown', (event) => {
   if (event.target === ui.shortcutEditor) closeShortcutEditor();
 });
+ui.paneNewRoute.addEventListener('click', beginNewRouteForPane);
+ui.panePickerCancel.addEventListener('click', () => closePanePicker());
+ui.panePicker.addEventListener('mousedown', (event) => {
+  if (event.target === ui.panePicker) closePanePicker();
+});
 
 window.addEventListener(
   'keydown',
@@ -1586,6 +1827,13 @@ window.addEventListener(
         event.stopPropagation();
         if (activeHostKeyPrompt?.prompt.status === 'changed') finishHostKeyPrompt();
         else void answerHostKey('reject');
+      }
+      return;
+    }
+    if (!ui.panePicker.classList.contains('hidden')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closePanePicker();
       }
       return;
     }
@@ -1617,9 +1865,9 @@ window.addEventListener(
 );
 
 window.addEventListener('resize', () => {
-  if (!activeSessionKey) return;
-  const session = sessions.get(activeSessionKey);
-  if (session) window.requestAnimationFrame(() => session.fit.fit());
+  window.requestAnimationFrame(() => {
+    for (const key of paneSessions(paneLayout)) sessions.get(key)?.fit.fit();
+  });
 });
 
 async function boot(): Promise<void> {

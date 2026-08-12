@@ -20,6 +20,7 @@
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート、hop ごとの状態表示
 - ルートの保存と起動時のタブ復元（接続は自動で開始しない）、切断済みタブの再接続
+- xterm / SSH 接続を維持したまま移動できる、左右・上下の terminal pane
 - 切断理由の分類と、transport 断だけを対象にした exponential backoff 自動再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
 - `Ctrl+Shift+P` の fuzzy コマンドパレットと、multi-chord・context・JSON移行に対応するショートカット

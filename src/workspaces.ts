@@ -1,3 +1,5 @@
+import type { PaneLayout } from './pane-layout';
+
 /**
  * Route workspaces persist only `~/.ssh/config` alias references.
  *
@@ -14,7 +16,12 @@ export interface WorkspaceState {
   saved: SavedRoute[];
   tabs: string[][];
   activeTab: number;
+  paneLayout: StoredPaneLayout | null;
 }
+
+export type StoredPaneLayout =
+  | { type: 'leaf'; tab: number }
+  | { type: 'split'; axis: 'horizontal' | 'vertical'; ratio: number; first: StoredPaneLayout; second: StoredPaneLayout };
 
 /** Matches `MAX_ROUTE_HOPS` in `src-tauri/src/ssh_config.rs`. */
 export const MAX_ROUTE_HOPS = 32;
@@ -28,7 +35,7 @@ const MAX_ID_LENGTH = 64;
 const STORAGE_KEY = 'ope-term.workspaces.v1';
 
 export function emptyWorkspaces(): WorkspaceState {
-  return { saved: [], tabs: [], activeTab: -1 };
+  return { saved: [], tabs: [], activeTab: -1, paneLayout: null };
 }
 
 export function sanitizeName(value: unknown): string {
@@ -100,10 +107,62 @@ export function parseWorkspaces(raw: string | null): WorkspaceState {
     if (typeof active === 'number' && Number.isInteger(active) && active >= 0 && active < state.tabs.length) {
       state.activeTab = active;
     }
+    state.paneLayout = sanitizeStoredPaneLayout(parsed.paneLayout, state.tabs.length);
   } catch {
     // A corrupt workspace store must never prevent the terminal from starting.
   }
   return state;
+}
+
+export function storePaneLayout(layout: PaneLayout | null, sessionKeys: readonly string[]): StoredPaneLayout | null {
+  if (!layout) return null;
+  if (layout.type === 'leaf') {
+    const tab = sessionKeys.indexOf(layout.sessionKey);
+    return tab >= 0 ? { type: 'leaf', tab } : null;
+  }
+  const first = storePaneLayout(layout.first, sessionKeys);
+  const second = storePaneLayout(layout.second, sessionKeys);
+  if (!first) return second;
+  if (!second) return first;
+  return { type: 'split', axis: layout.axis, ratio: layout.ratio, first, second };
+}
+
+export function restorePaneLayout(layout: StoredPaneLayout | null, sessionKeys: readonly string[]): PaneLayout | null {
+  if (!layout) return null;
+  if (layout.type === 'leaf') {
+    const sessionKey = sessionKeys[layout.tab];
+    return sessionKey ? { type: 'leaf', sessionKey } : null;
+  }
+  const first = restorePaneLayout(layout.first, sessionKeys);
+  const second = restorePaneLayout(layout.second, sessionKeys);
+  if (!first) return second;
+  if (!second) return first;
+  return { type: 'split', axis: layout.axis, ratio: layout.ratio, first, second };
+}
+
+function sanitizeStoredPaneLayout(value: unknown, tabCount: number): StoredPaneLayout | null {
+  const seen = new Set<number>();
+  function visit(node: unknown, depth: number): StoredPaneLayout | null {
+    if (depth > MAX_RESTORED_TABS || typeof node !== 'object' || node === null) return null;
+    const record = node as Record<string, unknown>;
+    if (record.type === 'leaf') {
+      const tab = record.tab;
+      if (typeof tab !== 'number' || !Number.isInteger(tab) || tab < 0 || tab >= tabCount || seen.has(tab)) {
+        return null;
+      }
+      seen.add(tab);
+      return { type: 'leaf', tab };
+    }
+    if (record.type !== 'split' || (record.axis !== 'horizontal' && record.axis !== 'vertical')) return null;
+    const first = visit(record.first, depth + 1);
+    const second = visit(record.second, depth + 1);
+    if (!first) return second;
+    if (!second) return first;
+    const rawRatio = typeof record.ratio === 'number' && Number.isFinite(record.ratio) ? record.ratio : 0.5;
+    const ratio = Math.min(0.85, Math.max(0.15, rawRatio));
+    return { type: 'split', axis: record.axis, ratio, first, second };
+  }
+  return visit(value, 0);
 }
 
 export function loadWorkspaces(storage: Pick<Storage, 'getItem'> = localStorage): WorkspaceState {

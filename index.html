@@ -41,6 +41,8 @@
         <header class="topbar">
           <div id="session-tabs" class="session-tabs" role="tablist"></div>
           <button id="new-route" class="icon-button" type="button" title="新しいルート">＋</button>
+          <button id="split-right" class="icon-button pane-button" type="button" title="右に分割" aria-label="右に分割">▥</button>
+          <button id="split-down" class="icon-button pane-button" type="button" title="下に分割" aria-label="下に分割">⬒</button>
           <div class="topbar-spacer"></div>
           <span id="connection-state" class="connection-state">ROUTE READY</span>
         </header>
@@ -153,6 +155,21 @@
             <button id="reset-shortcuts" type="button">すべて初期化</button>
           </span>
           <input id="shortcut-import" class="hidden" type="file" accept="application/json,.json" />
+        </footer>
+      </section>
+    </div>
+    <div id="pane-picker" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pane-picker-title">
+      <section class="pane-picker-box">
+        <header>
+          <div>
+            <div class="eyebrow">PANE LAYOUT</div>
+            <h2 id="pane-picker-title">分割して表示</h2>
+          </div>
+          <button id="pane-picker-cancel" class="icon-button" type="button" aria-label="閉じる">×</button>
+        </header>
+        <div id="pane-picker-list" class="pane-picker-list"></div>
+        <footer>
+          <button id="pane-new-route" class="primary-button" type="button">新しい route を組み立てる</button>
         </footer>
       </section>
     </div>

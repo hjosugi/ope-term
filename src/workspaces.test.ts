@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { paneLeaf, splitPane } from './pane-layout';
 import {
   MAX_RESTORED_TABS,
   MAX_ROUTE_HOPS,
@@ -7,9 +8,11 @@ import {
   missingAliases,
   parseWorkspaces,
   removeSavedRoute,
+  restorePaneLayout,
   sanitizeName,
   sanitizeRoute,
   suggestRouteName,
+  storePaneLayout,
   upsertSavedRoute,
 } from './workspaces';
 
@@ -75,11 +78,29 @@ describe('workspace persistence', () => {
         saved: [{ id: 'a', name: 'prod', route: ['bastion', 'prod'] }],
         tabs: [['bastion'], ['bastion', 'prod']],
         activeTab: 1,
+        paneLayout: {
+          type: 'split', axis: 'horizontal', ratio: 0.6,
+          first: { type: 'leaf', tab: 0 }, second: { type: 'leaf', tab: 1 },
+        },
       }),
     );
     expect(state.saved).toEqual([{ id: 'a', name: 'prod', route: ['bastion', 'prod'] }]);
     expect(state.tabs).toEqual([['bastion'], ['bastion', 'prod']]);
     expect(state.activeTab).toBe(1);
+    expect(state.paneLayout).toMatchObject({ type: 'split', ratio: 0.6 });
+  });
+
+  it('maps runtime session keys to tab indexes and back', () => {
+    const runtime = splitPane(paneLeaf('session-a'), 'session-a', 'session-b', 'vertical');
+    const stored = storePaneLayout(runtime, ['session-a', 'session-b']);
+    expect(stored).toEqual({
+      type: 'split', axis: 'vertical', ratio: 0.5,
+      first: { type: 'leaf', tab: 0 }, second: { type: 'leaf', tab: 1 },
+    });
+    expect(restorePaneLayout(stored, ['new-a', 'new-b'])).toEqual({
+      type: 'split', axis: 'vertical', ratio: 0.5,
+      first: { type: 'leaf', sessionKey: 'new-a' }, second: { type: 'leaf', sessionKey: 'new-b' },
+    });
   });
 
   it('drops malformed entries instead of failing to start', () => {
@@ -102,13 +123,13 @@ describe('workspace persistence', () => {
   });
 
   it('falls back to an empty workspace for corrupt or unreadable storage', () => {
-    expect(parseWorkspaces('not json')).toEqual({ saved: [], tabs: [], activeTab: -1 });
-    expect(parseWorkspaces(null)).toEqual({ saved: [], tabs: [], activeTab: -1 });
+    expect(parseWorkspaces('not json')).toEqual({ saved: [], tabs: [], activeTab: -1, paneLayout: null });
+    expect(parseWorkspaces(null)).toEqual({ saved: [], tabs: [], activeTab: -1, paneLayout: null });
     const storage = {
       getItem: () => {
         throw new Error('storage disabled');
       },
     };
-    expect(loadWorkspaces(storage)).toEqual({ saved: [], tabs: [], activeTab: -1 });
+    expect(loadWorkspaces(storage)).toEqual({ saved: [], tabs: [], activeTab: -1, paneLayout: null });
   });
 });

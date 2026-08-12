@@ -40,7 +40,7 @@ config を編集したら `Ctrl+Shift+R`（一覧見出しの `↻`）で再読�
   複製せず、接続時に毎回 config を解決します。
 - 保存済みルートは `読み込む` で ROUTE WORKBENCH へ戻すか、`接続` で直接つなぎます。
   Command Palette からは `Workspace` として検索できます。
-- 終了時のタブと選択中のタブを記録し、次の起動でタブだけを復元します。
+- 終了時のタブ、選択中のタブ、pane の分割方向と比率を記録し、次の起動で復元します。
 
 !!! note "復元しただけでは接続しません"
 
@@ -51,6 +51,22 @@ config を編集したら `Ctrl+Shift+R`（一覧見出しの `↻`）で再読�
   scrollback とタブ位置は保持します。
 - config から alias が消えた場合は degraded 表示になります。該当ルートとピースを
   赤く示し、接続ボタンを無効にして、消えた Host 名を表示します。
+
+## Terminal pane
+
+topbar の `▥` で右、`⬒` で下へ分割します。picker では、tab に残っている非表示の既存
+session、または新しく組み立てる route を選べます。既存 session を選んだ場合は xterm と
+SSH 接続を作り直さず、その DOM を pane へ移します。
+
+- pane 内をクリックするか focus command で操作対象を切り替えます。
+- divider を pointer で drag するか resize command で比率を変更します。最小比率は 15% です。
+- hopbar の `×` または `Pane: 現在の pane を閉じる` は表示だけを閉じます。session と接続は
+  tab に残るため、tab を選ぶと現在の pane へ戻せます。
+- tab 自体の `×` または `Ctrl+W` は session を終了します。
+- 非表示 tab を選ぶと、focus 中の pane の内容だけをその session へ入れ替えます。
+
+分割レイアウトの復元時も接続は自動開始しません。各 pane は前回の route を表示した idle
+terminal として戻ります。
 
 ## 切断と再接続
 
@@ -112,6 +128,11 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+W` | 現在のセッションを閉じる |
 | `Ctrl+Tab` | 次のセッション |
 | `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
+| `Ctrl+K Ctrl+ArrowRight` | 右に分割 |
+| `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
+| `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |
+| `Ctrl+K Ctrl+X` | 現在の pane を閉じる（session は残す） |
+| `Ctrl+K Ctrl+Shift+Arrow` | 現在の pane を広げる / 狭める |
 | `Ctrl+K Ctrl+K` | Keyboard Shortcuts |
 
 Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックして新しい組み合わせを

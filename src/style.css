@@ -50,6 +50,7 @@
   --chrome-status: 1.75rem;
   --chrome-hop: 2.25rem;
   --dialog-footer: 3.5rem;
+  --pane-divider-size: var(--space-2);
   --rail-width: 17.5rem;
   --rail-width-compact: 13.75rem;
   --content-block-padding: clamp(var(--space-7), 5vw, 4.5rem);
@@ -105,6 +106,7 @@ kbd { border: var(--border-width) solid var(--line); background: var(--panel-2);
 .session-tabs { display: flex; min-width: 0; overflow-x: auto; }
 .session-tab { display: flex; align-items: center; gap: var(--space-2); max-width: 14rem; border: 0; border-right: var(--border-width) solid var(--line); border-bottom: var(--focus-ring-width) solid transparent; background: transparent; color: var(--muted); padding: 0 var(--space-3); cursor: pointer; font: var(--font-sm) var(--mono); }
 .session-tab.active { color: var(--text); border-bottom-color: var(--amber); background: var(--panel); }
+.session-tab.visible:not(.active) { color: #b5bec9; border-bottom-color: #536171; }
 .session-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-close { color: var(--muted); padding: var(--focus-ring-width); }
 .tab-close:hover { color: var(--red); }
@@ -178,6 +180,15 @@ h1 { margin: 0; font-size: clamp(1.75rem, 3vw, 2.75rem); letter-spacing: -.045em
 .feature-grid p { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--font-sm); line-height: 1.65; }
 
 .terminal-stage { position: relative; min-height: 0; background: #070a0e; }
+.pane-split { width: 100%; height: 100%; min-width: 0; min-height: 0; display: grid; }
+.pane-split.horizontal { grid-template-rows: minmax(0, 1fr); }
+.pane-split.vertical { grid-template-columns: minmax(0, 1fr); }
+.pane-leaf { position: relative; min-width: 0; min-height: 0; overflow: hidden; box-shadow: inset 0 0 0 var(--border-width) transparent; }
+.pane-leaf.active { box-shadow: inset 0 0 0 var(--border-width) var(--amber); }
+.pane-divider { z-index: 2; min-width: 0; min-height: 0; border: 0; background: var(--line); padding: 0; touch-action: none; }
+.pane-split.horizontal > .pane-divider { cursor: col-resize; }
+.pane-split.vertical > .pane-divider { cursor: row-resize; }
+.pane-divider:hover, .pane-split.resizing > .pane-divider { background: var(--amber); }
 .terminal-view { position: absolute; inset: 0; display: grid; grid-template-rows: var(--chrome-hop) minmax(0, 1fr); }
 .terminal-view.inactive { visibility: hidden; pointer-events: none; }
 .hopbar { display: flex; align-items: center; gap: var(--space-2); overflow-x: auto; padding: 0 var(--space-3); border-bottom: var(--border-width) solid var(--line); background: var(--panel); font: var(--font-xs) var(--mono); }
@@ -189,6 +200,8 @@ h1 { margin: 0; font-size: clamp(1.75rem, 3vw, 2.75rem); letter-spacing: -.045em
 .hop-separator { color: #47515d; }
 .hop.pending { color: #5c6672; }
 .terminal-host { margin-left: auto; color: var(--muted); }
+.pane-close { flex: none; border: 0; background: transparent; color: var(--muted); padding: var(--space-1) var(--space-2); cursor: pointer; font: var(--font-md) var(--mono); }
+.pane-close:hover { color: var(--red); background: rgba(242, 125, 136, .1); }
 .hop-missing { margin-left: var(--space-3); color: var(--red); white-space: nowrap; }
 .hop-action { margin-left: var(--space-3); border: var(--border-width) solid var(--amber); background: transparent; color: var(--amber); padding: var(--space-1) var(--space-2); cursor: pointer; font: var(--font-xs) var(--mono); white-space: nowrap; }
 .hop-action:hover:not(:disabled) { background: var(--amber-soft); }
@@ -238,6 +251,20 @@ h1 { margin: 0; font-size: clamp(1.75rem, 3vw, 2.75rem); letter-spacing: -.045em
 .shortcut-box > footer { display: flex; justify-content: space-between; align-items: center; min-height: var(--chrome-top); padding: 0 var(--dialog-gutter); border-top: var(--border-width) solid var(--line); color: var(--muted); font: var(--font-2xs) var(--mono); }
 .shortcut-box > footer button { border: var(--border-width) solid var(--line); background: var(--panel); color: var(--text); padding: var(--space-2) var(--space-3); cursor: pointer; font: var(--font-xs) var(--mono); }
 .shortcut-footer-actions { display: flex; gap: var(--space-2); }
+
+.pane-picker-box { width: min(34rem, calc(100vw - var(--space-8))); max-height: min(36rem, calc(100vh - var(--space-9))); margin: 12vh auto 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: var(--border-width) solid #384452; background: #10151b; box-shadow: 0 var(--space-6) 5rem rgba(0,0,0,.62); }
+.pane-picker-box > header { display: flex; justify-content: space-between; align-items: start; padding: var(--space-5) var(--dialog-gutter) var(--space-3); border-bottom: var(--border-width) solid var(--line); }
+.pane-picker-box h2 { margin: 0; font-size: var(--font-title); }
+.pane-picker-box .eyebrow { margin-bottom: var(--space-2); }
+.pane-picker-box .icon-button { height: var(--control-md); border: 0; }
+.pane-picker-list { min-height: 8rem; overflow-y: auto; padding: var(--space-2); }
+.pane-picker-empty { margin: 0; padding: var(--space-5); color: var(--muted); font: var(--font-sm)/1.7 var(--mono); }
+.pane-picker-item { width: 100%; display: grid; gap: var(--space-1); border: var(--border-width) solid transparent; background: transparent; color: var(--text); padding: var(--space-3); text-align: left; cursor: pointer; }
+.pane-picker-item:hover, .pane-picker-item:focus-visible { outline: 0; border-color: var(--amber); background: var(--amber-soft); }
+.pane-picker-item strong { font: 500 var(--font-md) var(--mono); }
+.pane-picker-item small { overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: var(--font-xs) var(--mono); white-space: nowrap; }
+.pane-picker-box > footer { display: flex; justify-content: flex-end; padding: var(--space-3) var(--dialog-gutter); border-top: var(--border-width) solid var(--line); }
+.pane-picker-box > footer button { padding: var(--space-2) var(--space-3); cursor: pointer; font: var(--font-xs) var(--mono); }
 
 .host-key-overlay { z-index: 40; display: grid; place-items: center; padding: var(--space-5); background: rgba(0, 0, 0, .72); }
 .host-key-box { width: min(41rem, 100%); border: var(--border-width) solid #4b5663; background: #10151b; box-shadow: 0 var(--space-7) 5.5rem rgba(0,0,0,.68); }
