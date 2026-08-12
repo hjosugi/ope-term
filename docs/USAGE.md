@@ -34,7 +34,7 @@ config を編集したら `Ctrl+Shift+R`（一覧見出しの `↻`）で再読�
 
 毎日同じ踏み台と接続先を組み直さないために、ルートに名前を付けて保存できます。
 
-- SAVED ROUTES に名前を入力して `ルートを保存`（`Ctrl+Shift+S`）で保存します。
+- SAVED ROUTES に名前を入力して `ルートを保存`（`Ctrl+K Ctrl+S`）で保存します。
   名前を省略すると接続先の alias を使います。
 - 保存するのは `~/.ssh/config` の alias だけです。hostname / user / port / ProxyJump は
   複製せず、接続時に毎回 config を解決します。
@@ -107,15 +107,24 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+Enter` | 現在のルート、または選択中タブへ接続 |
 | `Ctrl+Backspace` | ルートをクリア |
 | `Ctrl+N` | 新しいルート |
-| `Ctrl+Shift+S` | 現在のルートを保存 |
+| `Ctrl+K Ctrl+S` | 現在のルートを保存 |
 | `Ctrl+Shift+R` | SSH config を再読み込み |
 | `Ctrl+W` | 現在のセッションを閉じる |
 | `Ctrl+Tab` | 次のセッション |
 | `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
-| `Ctrl+Shift+K` | Keyboard Shortcuts |
+| `Ctrl+K Ctrl+K` | Keyboard Shortcuts |
 
 Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックして新しい組み合わせを
-入力できます。変更は Tauri WebView のローカルストレージへ保存されます。
+入力できます。multi-chord は続けて入力し、最後の入力から1.2秒後に確定します。最大4 chord
+まで設定できます。変更は Tauri WebView のローカルストレージへ保存されます。
 
-multi-chord や文脈依存のキー割り当ては [ロードマップ](ROADMAP.md) の Command system issue
-で扱います。
+macOS では既定の `Ctrl` を `Cmd` として表示・実行し、Linux / Windows では `Ctrl` を使います。
+別OSで保存したJSONを読み込むと primary modifier を現在のOSへ移行します。旧v1設定は、
+macOSで初めて開いたときに既定値だけをCmdへ移し、明示的なCtrl customizationは保持します。
+
+各commandには `terminalFocus`、`routeFocus`、`paletteOpen`、`shortcutEditorOpen` の context keyを
+組み合わせた `when` 条件があります。同じkey sequenceでも同時に成立しないcontextなら共存でき、
+同時に成立する割り当てはeditorで赤い競合警告を表示します。
+
+footerの `JSON を保存` / `JSON を読込` でversion付き設定を持ち運べます。読込は64 KiBに制限し、
+未知commandを無視して不足項目を現在OSの既定値で補います。

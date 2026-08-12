@@ -12,6 +12,7 @@
 | ホスト鍵の信頼 | 未知鍵の SHA256 fingerprint 確認、変更鍵の拒否、`known_hosts` への追記 |
 | 対話認証 | ssh-agent / 公開鍵 / certificate / password / keyboard-interactive / 鍵 passphrase |
 | ルートワークスペース | 名前付きルートの保存、起動時のタブ復元、切断済みタブの再接続、degraded 表示 |
+| Command system | multi-chord、context key、競合警告、JSON import/export、Ctrl/Cmd 移行 |
 | セキュリティ基盤 | 脅威モデル、CSP と capability の自動監査、fuzzing、SBOM、依存 audit |
 | 開発環境 | Nix flake と direnv、Bazel build、`/mnt/data` へのキャッシュ集約 |
 
@@ -27,7 +28,6 @@
 | P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | Linux / Windows / macOS の署名・配布 CI |
 | P2 | [#8 Session logs](https://github.com/hjosugi/ope-term/issues/8) | 明示変数、ローテーション、fzf 風検索ビューア |
 | P2 | [#12 Transports](https://github.com/hjosugi/ope-term/issues/12) | telnet / serial console の需要検証と安全な境界 |
-| P2 | [#13 Command system](https://github.com/hjosugi/ope-term/issues/13) | multi-chord、context key、競合表示、設定 export |
 
 ## 進め方
 

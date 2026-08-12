@@ -17,7 +17,7 @@
         <label class="host-search">
           <span aria-hidden="true">⌕</span>
           <input id="host-search" type="search" placeholder="HOST を検索" autocomplete="off" />
-          <kbd>⌘K</kbd>
+          <kbd data-keybinding="workbench.action.quickOpenHost"></kbd>
         </label>
 
         <div class="rail-heading">
@@ -53,7 +53,7 @@
               <p>左の Host を順番に置く。1 台だけなら ProxyJump を自動で展開します。</p>
             </div>
             <button id="connect" class="connect-button" type="button" disabled>
-              <span>CONNECT</span><kbd>Ctrl ↵</kbd>
+              <span>CONNECT</span><kbd data-keybinding="route.connect"></kbd>
             </button>
           </div>
 
@@ -82,7 +82,7 @@
                 aria-label="保存するルート名"
               />
               <button id="save-route" class="secondary-button" type="button" disabled>
-                ルートを保存<kbd>Ctrl ⇧ S</kbd>
+                ルートを保存<kbd data-keybinding="route.save"></kbd>
               </button>
             </div>
             <div id="workspace-list" class="workspace-list" role="list"></div>
@@ -114,8 +114,8 @@
           <span><b id="status-mode">ROUTE</b></span>
           <span id="status-route">NO ROUTE</span>
           <span class="status-spacer"></span>
-          <span>Ctrl+Shift+P commands</span>
-          <span>Ctrl+K hosts</span>
+          <span><span data-keybinding="workbench.action.showCommands"></span> commands</span>
+          <span><span data-keybinding="workbench.action.quickOpenHost"></span> hosts</span>
         </footer>
       </main>
     </div>
@@ -135,6 +135,7 @@
           <div>
             <div class="eyebrow">PREFERENCES</div>
             <h2 id="shortcut-title">Keyboard Shortcuts</h2>
+            <small id="shortcut-platform" class="shortcut-platform"></small>
           </div>
           <button id="close-shortcuts" class="icon-button" type="button" aria-label="閉じる">×</button>
         </header>
@@ -144,7 +145,15 @@
         </label>
         <div class="shortcut-table-head"><span>COMMAND</span><span>KEYBINDING</span><span></span></div>
         <div id="shortcut-list" class="shortcut-list"></div>
-        <footer><span>キー欄をクリックして新しい組み合わせを入力</span><button id="reset-shortcuts" type="button">すべて初期化</button></footer>
+        <footer>
+          <span>multi-chord は続けて入力（1.2 秒で確定）</span>
+          <span class="shortcut-footer-actions">
+            <button id="import-shortcuts" type="button">JSON を読込</button>
+            <button id="export-shortcuts" type="button">JSON を保存</button>
+            <button id="reset-shortcuts" type="button">すべて初期化</button>
+          </span>
+          <input id="shortcut-import" class="hidden" type="file" accept="application/json,.json" />
+        </footer>
       </section>
     </div>
     <div id="host-key-dialog" class="overlay host-key-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="host-key-title" aria-describedby="host-key-message">

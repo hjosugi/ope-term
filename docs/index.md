@@ -34,7 +34,7 @@
   exponential backoff 自動再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
 - 複数セッションのタブ切替、端末リサイズ、切断
-- `Ctrl+Shift+P` の fuzzy コマンドパレットと、UI で変更できるキーボードショートカット
+- `Ctrl+Shift+P` の fuzzy コマンドパレットと、multi-chord・context・JSON移行に対応するショートカット
 - WebGL レンダラと安全なフォールバック
 - Tauri IPC Channel を使った端末出力ストリーミング
 

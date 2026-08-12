@@ -22,7 +22,7 @@
 - ルートの保存と起動時のタブ復元（接続は自動で開始しない）、切断済みタブの再接続
 - 切断理由の分類と、transport 断だけを対象にした exponential backoff 自動再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
-- `Ctrl+Shift+P` の fuzzy コマンドパレットと、UI で変更できるキーボードショートカット
+- `Ctrl+Shift+P` の fuzzy コマンドパレットと、multi-chord・context・JSON移行に対応するショートカット
 
 ## 起動
 
