@@ -1,0 +1,290 @@
+use std::env;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::sync::mpsc as std_mpsc;
+
+use anyhow::{Context, Result, anyhow, bail};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use serde::{Deserialize, Serialize};
+use tauri::ipc::{Channel, Response};
+use tokio::sync::{mpsc, oneshot};
+
+use crate::ssh::{CloseReason, SessionEvent};
+
+const MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellProfile {
+    pub id: String,
+    pub label: String,
+    pub program: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalConnectRequest {
+    pub session_id: String,
+    pub profile_id: String,
+    pub working_directory_token: Option<String>,
+    pub shell_integration: bool,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+pub enum LocalCommand {
+    Input(String),
+    Resize { cols: u32, rows: u32 },
+    Close,
+}
+
+pub fn profiles() -> Vec<ShellProfile> {
+    let default = default_shell();
+    let mut candidates = vec![(
+        "default".to_owned(),
+        "Default shell".to_owned(),
+        default,
+        true,
+    )];
+
+    #[cfg(unix)]
+    for (id, label, paths) in [
+        ("bash", "Bash", ["/bin/bash", "/usr/bin/bash"]),
+        ("zsh", "Zsh", ["/bin/zsh", "/usr/bin/zsh"]),
+        ("fish", "Fish", ["/usr/bin/fish", "/bin/fish"]),
+    ] {
+        if let Some(path) = paths.iter().map(PathBuf::from).find(|path| path.is_file()) {
+            candidates.push((id.to_owned(), label.to_owned(), path, false));
+        }
+    }
+
+    #[cfg(windows)]
+    for (id, label, program) in [
+        ("powershell", "PowerShell", "powershell.exe"),
+        ("cmd", "Command Prompt", "cmd.exe"),
+    ] {
+        candidates.push((
+            id.to_owned(),
+            label.to_owned(),
+            PathBuf::from(program),
+            false,
+        ));
+    }
+
+    let mut result = Vec::new();
+    for (id, label, program, is_default) in candidates {
+        if result
+            .iter()
+            .any(|profile: &ShellProfile| profile.program == program.display().to_string())
+        {
+            continue;
+        }
+        result.push(ShellProfile {
+            id,
+            label,
+            program: program.display().to_string(),
+            is_default,
+        });
+    }
+    result
+}
+
+pub async fn run(
+    request: LocalConnectRequest,
+    working_directory: Option<PathBuf>,
+    events: Channel<SessionEvent>,
+    data: Channel<Response>,
+    mut commands: mpsc::Receiver<LocalCommand>,
+) -> Result<CloseReason> {
+    let profile = profiles()
+        .into_iter()
+        .find(|profile| profile.id == request.profile_id)
+        .ok_or_else(|| anyhow!("shell profile が見つかりません"))?;
+    let size = pty_size(request.cols, request.rows);
+    let pair = native_pty_system()
+        .openpty(size)
+        .context("local PTY を作成できません")?;
+    let mut command = CommandBuilder::new(&profile.program);
+    if let Some(directory) = working_directory {
+        command.cwd(directory);
+    }
+    command.env("TERM", "xterm-256color");
+    command.env("TERM_PROGRAM", "ope-term");
+    if request.shell_integration {
+        command.env("OPE_TERM_SHELL_INTEGRATION", "1");
+    }
+
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .with_context(|| format!("{} を PTY で起動できません", profile.program))?;
+    drop(pair.slave);
+    let mut killer = child.clone_killer();
+    let mut reader = pair.master.try_clone_reader()?;
+    let mut writer = pair.master.take_writer()?;
+
+    let (writer_tx, writer_rx) = std_mpsc::channel::<Vec<u8>>();
+    if let Err(error) = std::thread::Builder::new()
+        .name("ope-term-local-pty-writer".to_owned())
+        .spawn(move || {
+            while let Ok(bytes) = writer_rx.recv() {
+                if writer
+                    .write_all(&bytes)
+                    .and_then(|()| writer.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error).context("local PTY writer thread を開始できません");
+    }
+    let output = data.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("ope-term-local-pty-reader".to_owned())
+        .spawn(move || {
+            let mut buffer = vec![0_u8; 64 * 1024];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        let _ = output.send(Response::new(buffer[..read].to_vec()));
+                    }
+                }
+            }
+        })
+    {
+        drop(writer_tx);
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error).context("local PTY reader thread を開始できません");
+    }
+
+    let (exit_tx, mut exit_rx) = oneshot::channel();
+    if let Err(error) = std::thread::Builder::new()
+        .name("ope-term-local-pty-child".to_owned())
+        .spawn(move || {
+            let _ = exit_tx.send(child.wait());
+        })
+    {
+        drop(writer_tx);
+        let _ = killer.kill();
+        return Err(error).context("local shell 監視 thread を開始できません");
+    }
+    let _ = events.send(SessionEvent::Ready);
+
+    loop {
+        tokio::select! {
+            status = &mut exit_rx => {
+                match status {
+                    Ok(Ok(_)) => return Ok(CloseReason::Remote),
+                    Ok(Err(error)) => return Err(error).context("local shell の終了状態を取得できません"),
+                    Err(_) => bail!("local shell の監視 thread が終了しました"),
+                }
+            }
+            command = commands.recv() => match command {
+                Some(LocalCommand::Input(input)) => {
+                    if input.len() > MAX_INPUT_BYTES {
+                        bail!("local terminal input が大きすぎます");
+                    }
+                    writer_tx.send(input.into_bytes()).map_err(|_| anyhow!("local PTY input は終了しています"))?;
+                }
+                Some(LocalCommand::Resize { cols, rows }) => pair.master.resize(pty_size(cols, rows))?,
+                Some(LocalCommand::Close) | None => {
+                    drop(writer_tx);
+                    let _ = killer.kill();
+                    let _ = exit_rx.await;
+                    return Ok(CloseReason::Local);
+                }
+            }
+        }
+    }
+}
+
+fn pty_size(cols: u32, rows: u32) -> PtySize {
+    PtySize {
+        rows: rows.clamp(1, u16::MAX.into()) as u16,
+        cols: cols.clamp(1, u16::MAX.into()) as u16,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+#[cfg(unix)]
+fn default_shell() -> PathBuf {
+    env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+        .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+}
+
+#[cfg(windows)]
+fn default_shell() -> PathBuf {
+    env::var_os("COMSPEC")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("cmd.exe"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    use super::*;
+
+    #[test]
+    fn dimensions_are_bounded_for_the_native_pty_api() {
+        assert_eq!(pty_size(0, 0).cols, 1);
+        assert_eq!(pty_size(u32::MAX, u32::MAX).rows, u16::MAX);
+    }
+
+    #[test]
+    fn profiles_have_one_default_and_unique_programs() {
+        let profiles = profiles();
+        assert_eq!(
+            profiles.iter().filter(|profile| profile.is_default).count(),
+            1
+        );
+        let mut programs = profiles
+            .iter()
+            .map(|profile| &profile.program)
+            .collect::<Vec<_>>();
+        programs.sort();
+        programs.dedup();
+        assert_eq!(programs.len(), profiles.len());
+    }
+
+    #[test]
+    fn native_pty_spawns_a_platform_shell_and_reaps_it() {
+        let pair = native_pty_system()
+            .openpty(PtySize::default())
+            .expect("native PTY");
+        let mut command = smoke_command();
+        command.env("TERM", "xterm-256color");
+        let mut child = pair.slave.spawn_command(command).expect("spawn shell");
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().expect("reader");
+        let status = child.wait().expect("wait");
+        assert!(status.success());
+        let mut output = String::new();
+        reader.read_to_string(&mut output).expect("read output");
+        assert!(output.contains("ope-term-local-pty-smoke"));
+    }
+
+    #[cfg(unix)]
+    fn smoke_command() -> CommandBuilder {
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "printf 'ope-term-local-pty-smoke\\n'"]);
+        command
+    }
+
+    #[cfg(windows)]
+    fn smoke_command() -> CommandBuilder {
+        let mut command = CommandBuilder::new("cmd.exe");
+        command.args(["/C", "echo ope-term-local-pty-smoke"]);
+        command
+    }
+}

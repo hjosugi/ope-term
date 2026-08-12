@@ -138,6 +138,24 @@ pub async fn resolve(
     Ok(canonical_parent.join(name))
 }
 
+pub async fn resolve_directory(scopes: &LocalScopes, token: &str) -> Result<PathBuf> {
+    let root = scopes
+        .lock()
+        .await
+        .iter()
+        .find(|(candidate, _)| candidate == token)
+        .map(|(_, path)| path.clone())
+        .ok_or_else(|| anyhow!("working directory の許可が期限切れです。選択し直してください"))?;
+    let canonical = fs::canonicalize(&root)
+        .await
+        .context("working directory を解決できません")?;
+    ensure_below(&root, &canonical)?;
+    if !fs::metadata(&canonical).await?.is_dir() {
+        bail!("working directory は directory ではありません");
+    }
+    Ok(canonical)
+}
+
 async fn scoped_path(
     scopes: &LocalScopes,
     token: &str,

@@ -169,7 +169,39 @@
         </header>
         <div id="pane-picker-list" class="pane-picker-list"></div>
         <footer>
+          <button id="pane-new-local" class="secondary-button" type="button">local terminal を開く</button>
           <button id="pane-new-route" class="primary-button" type="button">新しい route を組み立てる</button>
+        </footer>
+      </section>
+    </div>
+    <div id="local-terminal-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="local-terminal-title">
+      <section class="local-terminal-box">
+        <header>
+          <div>
+            <div class="eyebrow">LOCAL PTY</div>
+            <h2 id="local-terminal-title">Local terminal を開く</h2>
+          </div>
+          <button id="local-terminal-close" class="icon-button" type="button" aria-label="閉じる">×</button>
+        </header>
+        <label>
+          <span>SHELL PROFILE</span>
+          <select id="local-shell-profile"></select>
+        </label>
+        <div class="local-directory-row">
+          <span>WORKING DIRECTORY</span>
+          <code id="local-directory-label">default</code>
+          <button id="local-directory-pick" class="secondary-button" type="button">選択</button>
+          <button id="local-directory-clear" class="secondary-button" type="button">default</button>
+        </div>
+        <label class="local-integration-row">
+          <input id="local-shell-integration" type="checkbox" />
+          <span>OSC 133 command boundary を取得する（opt-in）</span>
+        </label>
+        <p>profile は検出済み shell から選びます。任意 command や argument は実行しません。</p>
+        <footer>
+          <button id="local-terminal-cancel" class="secondary-button" type="button">キャンセル</button>
+          <span class="dialog-spacer"></span>
+          <button id="local-terminal-open" class="primary-button" type="button">PTY を開く</button>
         </footer>
       </section>
     </div>

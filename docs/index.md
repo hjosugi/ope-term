@@ -6,7 +6,7 @@
 
 !!! warning "v0.1.1 alpha"
 
-    主要な SSH 認証と strict `known_hosts` 検証に対応していますが、OpenSSH config の全ディレクティブ、再接続、長時間運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
+    主要な SSH 認証、strict `known_hosts` 検証、自動再接続に対応していますが、OpenSSH config の全ディレクティブと24時間実機運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
 
     `russh` の未修正 RSA 依存を出荷しないため、現在は RSA 秘密鍵認証と RSA のみの host key を無効化しています。Ed25519 / ECDSA を使用してください。
 
@@ -38,6 +38,7 @@
 - WebGL レンダラと安全なフォールバック
 - Tauri IPC Channel を使った端末出力ストリーミング
 - 認証済み SSH session 上の SFTP と、local root を native picker に限定した 2 ペイン転送
+- native PTY の local shell と、opt-in の OSC 133 command boundary 受信
 
 ## どこから読むか
 
@@ -54,6 +55,10 @@
 - **[SFTP file manager](SFTP.md)**
 
     local / remote の移動、転送 queue、上書き・symlink・path traversal の安全境界。
+
+- **[Local terminal](LOCAL_TERMINAL.md)**
+
+    OS native PTY、検出済み shell profile、working directory、child process の終了保証。
 
 - **[アーキテクチャ](ARCHITECTURE.md)**
 

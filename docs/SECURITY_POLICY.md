@@ -20,6 +20,8 @@
 - CSP はローカル資産のみを許可し、`scripts/security-policy.mjs` が CI で逸脱を検出します。
 - SFTP の local filesystem 操作は WebView へ一般権限を与えず、native picker で選択した root の
   不透明 token と相対 path を検証する Rust command に限定します。
+- Local terminal は任意 executable / argument を IPC で受け付けず、Rust が検出した固定 shell
+  profile ID だけを起動します。working directory は native picker token で指定します。
 
 ## 秘密情報
 

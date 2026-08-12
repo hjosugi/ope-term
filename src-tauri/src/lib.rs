@@ -5,6 +5,8 @@ mod host_keys;
 #[cfg(feature = "app")]
 mod local_files;
 #[cfg(feature = "app")]
+mod local_terminal;
+#[cfg(feature = "app")]
 mod sftp;
 #[cfg(feature = "app")]
 mod ssh;
@@ -34,6 +36,7 @@ pub fn fuzz_route_expansion(text: &str, route: &[String]) {
 
 #[cfg(feature = "app")]
 mod application {
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use tauri::ipc::{Channel, Response};
@@ -43,6 +46,7 @@ mod application {
     use zeroize::Zeroize;
 
     use crate::local_files::{LocalListing, LocalScopes, SelectedDirectory};
+    use crate::local_terminal::{LocalCommand, LocalConnectRequest, ShellProfile};
     use crate::sftp::{
         SftpListing, SftpProgress, SftpTransferInput, SftpTransferResult, TransferDirection,
     };
@@ -55,6 +59,7 @@ mod application {
     #[derive(Default)]
     struct AppState {
         sessions: SessionMap,
+        local_sessions: Arc<tokio::sync::Mutex<HashMap<String, mpsc::Sender<LocalCommand>>>>,
         local_scopes: LocalScopes,
     }
 
@@ -148,6 +153,13 @@ mod application {
         data: String,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        let local = state.local_sessions.lock().await.get(&session_id).cloned();
+        if let Some(sender) = local {
+            return sender
+                .send(LocalCommand::Input(data))
+                .await
+                .map_err(|_| "local session は終了しています".to_owned());
+        }
         send_command(state, &session_id, SessionCommand::Input(data)).await
     }
 
@@ -158,7 +170,69 @@ mod application {
         rows: u32,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        let local = state.local_sessions.lock().await.get(&session_id).cloned();
+        if let Some(sender) = local {
+            return sender
+                .send(LocalCommand::Resize { cols, rows })
+                .await
+                .map_err(|_| "local session は終了しています".to_owned());
+        }
         send_command(state, &session_id, SessionCommand::Resize { cols, rows }).await
+    }
+
+    #[tauri::command]
+    fn list_shell_profiles() -> Vec<ShellProfile> {
+        crate::local_terminal::profiles()
+    }
+
+    #[tauri::command]
+    async fn connect_local_session(
+        request: LocalConnectRequest,
+        on_event: Channel<SessionEvent>,
+        on_data: Channel<Response>,
+        state: State<'_, AppState>,
+    ) -> Result<(), String> {
+        let session_id = request.session_id.clone();
+        if state.sessions.lock().await.contains_key(&session_id)
+            || state.local_sessions.lock().await.contains_key(&session_id)
+        {
+            return Err("同じ session id が既に存在します".to_owned());
+        }
+        let working_directory = match &request.working_directory_token {
+            Some(token) => Some(
+                crate::local_files::resolve_directory(&state.local_scopes, token)
+                    .await
+                    .map_err(|error| format!("{error:#}"))?,
+            ),
+            None => None,
+        };
+        let (sender, receiver) = mpsc::channel(256);
+        state
+            .local_sessions
+            .lock()
+            .await
+            .insert(session_id.clone(), sender);
+        let registry = Arc::clone(&state.local_sessions);
+        tauri::async_runtime::spawn(async move {
+            let reason = match crate::local_terminal::run(
+                request,
+                working_directory,
+                on_event.clone(),
+                on_data,
+                receiver,
+            )
+            .await
+            {
+                Ok(reason) => reason,
+                Err(error) => {
+                    ssh::event_error(&on_event, &error);
+                    CloseReason::Failed
+                }
+            };
+            ssh::event_closed(&on_event, reason);
+            registry.lock().await.remove(&session_id);
+        });
+        Ok(())
     }
 
     #[tauri::command]
@@ -259,6 +333,13 @@ mod application {
 
     #[tauri::command]
     async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+        let local = state.local_sessions.lock().await.get(&session_id).cloned();
+        if let Some(sender) = local {
+            return sender
+                .send(LocalCommand::Close)
+                .await
+                .map_err(|_| "local session は終了しています".to_owned());
+        }
         let control = state
             .sessions
             .lock()
@@ -362,6 +443,8 @@ mod application {
                 connect_session,
                 session_input,
                 session_resize,
+                list_shell_profiles,
+                connect_local_session,
                 sftp_list,
                 sftp_transfer,
                 sftp_cancel,

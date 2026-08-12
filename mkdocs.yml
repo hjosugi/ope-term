@@ -78,6 +78,7 @@ nav:
   - 起動: GETTING_STARTED.md
   - 使い方: USAGE.md
   - SFTP file manager: SFTP.md
+  - Local terminal: LOCAL_TERMINAL.md
   - 設計:
       - アーキテクチャ: ARCHITECTURE.md
       - 長時間接続と再接続: RELIABILITY.md

@@ -74,6 +74,13 @@ terminal として戻ります。
 開きます。native picker で local directory を選び、file を選択して upload / download します。
 queue、進捗、cancel、retry と安全上の制約は [SFTP file manager](SFTP.md) を参照してください。
 
+## Local terminal
+
+`Ctrl+Shift+L` で作成画面を開き、OS の既定 shell または検出済み profile と working directory を
+選びます。SSH と同じ tab / pane / resize / close lifecycle で動きます。shell integration は
+OSC 133 marker の受信だけを opt-in にできます。詳細は [Local terminal](LOCAL_TERMINAL.md) を
+参照してください。
+
 ## 切断と再接続
 
 セッションが終わった理由を 4 つに分けて表示し、再接続の扱いを変えます。
@@ -135,6 +142,7 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+Tab` | 次のセッション |
 | `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
 | `Ctrl+Shift+F` | SFTP file manager を開く / 閉じる |
+| `Ctrl+Shift+L` | 新しい local terminal を開く |
 | `Ctrl+K Ctrl+ArrowRight` | 右に分割 |
 | `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
 | `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |

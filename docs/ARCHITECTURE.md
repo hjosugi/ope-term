@@ -27,6 +27,7 @@ Rust session task (one task per terminal)
 - `ssh.rs`: known_hosts 検証、認証、多段トンネル、PTY、入出力、keepalive
 - `sftp.rs`: SFTP 一覧、chunk 転送、一時 file と rollback、symlink 検証
 - `local_files.rs`: native picker が許可した local root と相対 path の境界検証
+- `local_terminal.rs`: Windows ConPTY / Unix PTY、検出 shell profile、child kill + wait
 - `lib.rs`: 最小の Tauri command とセッション registry
 
 各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。大量データ向けでない Tauri event bus は端末出力に使いません。
@@ -43,6 +44,8 @@ Rust session task (one task per terminal)
 
 WebView はファイルシステム、ソケット、鍵へ直接アクセスできません。SFTP の local 操作は native
 folder picker が Rust core に登録した不透明 token と、その root 配下の相対 path だけを使います。
+local terminal も program / argument を WebView から受け取らず、Rust が列挙した profile ID と
+picker token だけを受け付けます。
 
 タブは接続から独立したUI識別子を持ち、接続ごとの backend session id とは別に管理します。復元したタブと切断済みタブは `idle` / `closed` 状態のまま同じ端末バッファを保持し、操作者が接続を開始したときだけ新しい backend session id を割り当てます。古い接続から遅れて届いた event は id 不一致で破棄します。
 

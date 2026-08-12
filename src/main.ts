@@ -64,6 +64,27 @@ import {
 } from './workspaces';
 
 type SessionState = 'idle' | 'connecting' | 'connected' | 'closed';
+type SessionKind = 'ssh' | 'local';
+
+interface ShellProfile {
+  id: string;
+  label: string;
+  program: string;
+  isDefault: boolean;
+}
+
+interface LocalDirectory {
+  token: string;
+  displayPath: string;
+}
+
+interface LocalSessionConfig {
+  profileId: string;
+  profileLabel: string;
+  workingDirectory: LocalDirectory | null;
+  shellIntegration: boolean;
+  commandBoundaries: number;
+}
 
 interface SessionUi {
   /** Stable UI identity that survives reconnects. */
@@ -71,6 +92,8 @@ interface SessionUi {
   /** Backend session id of the current connection, or null while idle. */
   connectionId: string | null;
   title: string;
+  kind: SessionKind;
+  local?: LocalSessionConfig;
   route: string[];
   hops: HopStatus[];
   terminal: Terminal;
@@ -164,7 +187,17 @@ const ui = {
   panePickerTitle: element<HTMLElement>('pane-picker-title'),
   panePickerList: element<HTMLElement>('pane-picker-list'),
   paneNewRoute: element<HTMLButtonElement>('pane-new-route'),
+  paneNewLocal: element<HTMLButtonElement>('pane-new-local'),
   panePickerCancel: element<HTMLButtonElement>('pane-picker-cancel'),
+  localTerminalDialog: element<HTMLElement>('local-terminal-dialog'),
+  localTerminalClose: element<HTMLButtonElement>('local-terminal-close'),
+  localTerminalCancel: element<HTMLButtonElement>('local-terminal-cancel'),
+  localTerminalOpen: element<HTMLButtonElement>('local-terminal-open'),
+  localShellProfile: element<HTMLSelectElement>('local-shell-profile'),
+  localDirectoryLabel: element<HTMLElement>('local-directory-label'),
+  localDirectoryPick: element<HTMLButtonElement>('local-directory-pick'),
+  localDirectoryClear: element<HTMLButtonElement>('local-directory-clear'),
+  localShellIntegration: element<HTMLInputElement>('local-shell-integration'),
   hostKeyDialog: element<HTMLElement>('host-key-dialog'),
   hostKeyTitle: element<HTMLElement>('host-key-title'),
   hostKeyStatus: element<HTMLElement>('host-key-status'),
@@ -194,6 +227,8 @@ let routeDragIndex: number | null = null;
 let activeSessionKey: string | null = null;
 let paneLayout: PaneLayout | null = null;
 let pendingPaneSplit: PendingPaneSplit | null = null;
+let localProfiles: ShellProfile[] = [];
+let selectedLocalDirectory: LocalDirectory | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
 let selectedCommand = 0;
 let paletteItems: PaletteItem[] = [];
@@ -254,6 +289,13 @@ const commands: CommandDefinition[] = [
     label: 'SFTP file manager を開く / 閉じる',
     when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
     run: toggleActiveSftp,
+  },
+  {
+    id: 'session.newLocal',
+    category: 'Terminal',
+    label: '新しい local terminal を開く',
+    when: '!paletteOpen && !shortcutEditorOpen',
+    run: () => void openLocalTerminalDialog(),
   },
   { id: 'pane.splitRight', category: 'Pane', label: '右に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('horizontal') },
   { id: 'pane.splitDown', category: 'Pane', label: '下に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('vertical') },
@@ -633,7 +675,7 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
   if (session.state === 'connecting' || session.state === 'connected') return;
   clearRetryTimers(session);
   if (resetRetries) session.retryAttempt = 0;
-  const missing = missingAliases(session.route, hostAliases());
+  const missing = session.kind === 'ssh' ? missingAliases(session.route, hostAliases()) : [];
   if (missing.length > 0) {
     toast(`SSH config に無い Host のため接続できません: ${missing.join(', ')}`);
     renderHopbar(session);
@@ -658,17 +700,35 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
     performanceHarness?.recordOutput(data.byteLength);
     session.terminal.write(new Uint8Array(data));
   };
-  const request: ConnectRequest = {
-    sessionId: connectionId,
-    route: [...session.route],
-    cols: session.terminal.cols,
-    rows: session.terminal.rows,
-  };
-  session.terminal.writeln(
-    `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${routePreview(session.route, hosts).join(' → ')} へ接続中…`,
-  );
   try {
-    await invoke('connect_session', { request, onEvent, onData });
+    if (session.kind === 'local' && session.local) {
+      session.terminal.writeln(
+        `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${session.local.profileLabel} を local PTY で起動中…`,
+      );
+      await invoke('connect_local_session', {
+        request: {
+          sessionId: connectionId,
+          profileId: session.local.profileId,
+          workingDirectoryToken: session.local.workingDirectory?.token,
+          shellIntegration: session.local.shellIntegration,
+          cols: session.terminal.cols,
+          rows: session.terminal.rows,
+        },
+        onEvent,
+        onData,
+      });
+    } else {
+      const request: ConnectRequest = {
+        sessionId: connectionId,
+        route: [...session.route],
+        cols: session.terminal.cols,
+        rows: session.terminal.rows,
+      };
+      session.terminal.writeln(
+        `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${routePreview(session.route, hosts).join(' → ')} へ接続中…`,
+      );
+      await invoke('connect_session', { request, onEvent, onData });
+    }
   } catch (error) {
     handleSessionEvent(session, connectionId, { type: 'error', message: String(error) });
     handleSessionEvent(session, connectionId, { type: 'closed', reason: 'failed' });
@@ -688,7 +748,7 @@ function connectCurrent(): Promise<void> {
   return connectRoute();
 }
 
-function createSession(sessionRoute: string[]): SessionUi {
+function createSession(sessionRoute: string[], local?: LocalSessionConfig): SessionUi {
   const key = crypto.randomUUID();
   const view = document.createElement('section');
   view.className = 'terminal-view inactive';
@@ -753,7 +813,7 @@ function createSession(sessionRoute: string[]): SessionUi {
 
   let session: SessionUi;
   const sftp = createSftpPanel({
-    getConnectionId: () => session.connectionId,
+    getConnectionId: () => session.kind === 'ssh' ? session.connectionId : null,
     onLayoutChange: () => window.requestAnimationFrame(() => session.fit.fit()),
     notify: toast,
   });
@@ -762,7 +822,9 @@ function createSession(sessionRoute: string[]): SessionUi {
   session = {
     key,
     connectionId: null,
-    title: sessionRoute.at(-1) ?? 'ssh',
+    title: local?.profileLabel ?? sessionRoute.at(-1) ?? 'ssh',
+    kind: local ? 'local' : 'ssh',
+    local,
     route: sessionRoute,
     hops: [],
     terminal,
@@ -776,12 +838,23 @@ function createSession(sessionRoute: string[]): SessionUi {
   };
   terminal.onData((data) => queueInput(session, data));
   terminal.onResize(({ cols, rows }) => queueResize(session, cols, rows));
+  if (local?.shellIntegration) {
+    terminal.parser.registerOscHandler(133, () => {
+      local.commandBoundaries += 1;
+      renderHopbar(session);
+      return true;
+    });
+  }
   renderHopbar(session);
   return session;
 }
 
 function toggleActiveSftp(): void {
   const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
+  if (session?.kind === 'local') {
+    toast('SFTP は SSH session でのみ使用できます。');
+    return;
+  }
   session?.sftp.toggle();
 }
 
@@ -896,10 +969,13 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
       session.closeReason = event.reason;
       session.connectionId = null;
       discardPendingInput(session);
+      const message = session.kind === 'local' && event.reason === 'remote'
+        ? 'local shell が終了しました'
+        : closeMessage(event.reason);
       session.terminal.writeln(
-        `\r\n\x1b[38;2;127;137;150m[ope-term] ${closeMessage(event.reason)} · 再接続は Ctrl+Shift+Enter\x1b[0m`,
+        `\r\n\x1b[38;2;127;137;150m[ope-term] ${message} · 再起動は Ctrl+Shift+Enter\x1b[0m`,
       );
-      if (shouldAutoRetry(event.reason, session.retryAttempt + 1)) {
+      if (session.kind === 'ssh' && shouldAutoRetry(event.reason, session.retryAttempt + 1)) {
         scheduleRetry(session);
       } else {
         clearRetryTimers(session);
@@ -1097,8 +1173,9 @@ function renderHopbar(session: SessionUi): void {
   const live = session.state === 'connecting' || session.state === 'connected';
   // Before the backend reports a chain, show the planned hops so an idle or
   // restored tab still explains where it would connect.
-  const hops: HopStatus[] =
-    session.hops.length > 0
+  const hops: HopStatus[] = session.kind === 'local'
+    ? [{ index: 0, alias: 'LOCAL PTY', state: session.state === 'connected' ? 'connected' : 'pending' }]
+    : session.hops.length > 0
       ? session.hops
       : routePreview(session.route, hosts).map((alias, index) => ({ index, alias, state: 'pending' as const }));
   hops.forEach((hop, index) => {
@@ -1117,6 +1194,12 @@ function renderHopbar(session: SessionUi): void {
   target.className = 'terminal-host';
   target.textContent = session.title;
   session.hopbar.append(target);
+  if (session.local?.shellIntegration) {
+    const integration = document.createElement('span');
+    integration.className = 'hop-retry';
+    integration.textContent = `OSC 133 · ${session.local.commandBoundaries} boundaries`;
+    session.hopbar.append(integration);
+  }
   const closePaneButton = document.createElement('button');
   closePaneButton.type = 'button';
   closePaneButton.className = 'pane-close';
@@ -1127,7 +1210,7 @@ function renderHopbar(session: SessionUi): void {
   session.hopbar.append(closePaneButton);
 
   if (live) return;
-  const missing = missingAliases(session.route, hostAliases());
+  const missing = session.kind === 'ssh' ? missingAliases(session.route, hostAliases()) : [];
   if (missing.length > 0) {
     const warning = document.createElement('span');
     warning.className = 'hop-missing';
@@ -1182,7 +1265,9 @@ function activateSession(key: string): void {
   ui.builder.classList.add('hidden');
   ui.terminalStage.classList.remove('hidden');
   ui.statusMode.textContent = 'TERMINAL';
-  ui.statusRoute.textContent = session.route.join(' → ');
+  ui.statusRoute.textContent = session.kind === 'local'
+    ? `LOCAL · ${session.local?.workingDirectory?.displayPath ?? 'default directory'}`
+    : session.route.join(' → ');
   if (layoutChanged) renderPaneLayout();
   for (const pane of ui.terminalStage.querySelectorAll<HTMLElement>('.pane-leaf')) {
     pane.classList.toggle('active', pane.dataset.sessionKey === key);
@@ -1321,6 +1406,12 @@ function beginNewRouteForPane(): void {
   toast('分割する新しい route を組み立て、CONNECT を押してください。');
 }
 
+function beginLocalTerminalForPane(): void {
+  if (!pendingPaneSplit) return;
+  closePanePicker(false);
+  void openLocalTerminalDialog();
+}
+
 function movePaneFocus(direction: PaneDirection): void {
   if (!activeSessionKey) return;
   const next = focusPane(paneLayout, activeSessionKey, direction);
@@ -1360,6 +1451,11 @@ function updateConnectionState(session: SessionUi): void {
     connected: 'SSH CONNECTED',
     closed: 'DISCONNECTED',
   } as const;
+  if (session.kind === 'local' && session.state === 'connected') {
+    ui.connectionState.textContent = 'LOCAL PTY';
+    ui.connectionState.style.color = 'var(--green)';
+    return;
+  }
   const colors = {
     idle: 'var(--muted)',
     connecting: 'var(--amber)',
@@ -1749,6 +1845,63 @@ async function importShortcuts(file: File): Promise<void> {
   toast(`Keyboard Shortcuts を読み込みました。${migration}`);
 }
 
+async function openLocalTerminalDialog(): Promise<void> {
+  closeCommandPalette();
+  try {
+    localProfiles = await invoke<ShellProfile[]>('list_shell_profiles');
+  } catch (error) {
+    toast(`shell profile を取得できません: ${String(error)}`);
+    return;
+  }
+  ui.localShellProfile.replaceChildren();
+  for (const profile of localProfiles) {
+    const option = document.createElement('option');
+    option.value = profile.id;
+    option.textContent = `${profile.label}${profile.isDefault ? ' (default)' : ''} · ${profile.program}`;
+    ui.localShellProfile.append(option);
+  }
+  selectedLocalDirectory = null;
+  ui.localDirectoryLabel.textContent = 'default';
+  ui.localDirectoryLabel.title = 'default';
+  ui.localShellIntegration.checked = false;
+  ui.localTerminalDialog.classList.remove('hidden');
+  window.requestAnimationFrame(() => ui.localShellProfile.focus());
+}
+
+function closeLocalTerminalDialog(): void {
+  ui.localTerminalDialog.classList.add('hidden');
+}
+
+async function pickLocalWorkingDirectory(): Promise<void> {
+  const selected = await invoke<LocalDirectory | null>('pick_local_directory');
+  if (!selected) return;
+  selectedLocalDirectory = selected;
+  ui.localDirectoryLabel.textContent = selected.displayPath;
+  ui.localDirectoryLabel.title = selected.displayPath;
+}
+
+async function createLocalTerminal(): Promise<void> {
+  const profile = localProfiles.find((candidate) => candidate.id === ui.localShellProfile.value);
+  if (!profile) return;
+  const session = createSession([], {
+    profileId: profile.id,
+    profileLabel: profile.label,
+    workingDirectory: selectedLocalDirectory,
+    shellIntegration: ui.localShellIntegration.checked,
+    commandBoundaries: 0,
+  });
+  sessions.set(session.key, session);
+  const split = pendingPaneSplit;
+  pendingPaneSplit = null;
+  if (split && containsPaneSession(paneLayout, split.anchorSessionKey)) {
+    paneLayout = splitPane(paneLayout, split.anchorSessionKey, session.key, split.axis);
+  }
+  closeLocalTerminalDialog();
+  activateSession(session.key);
+  renderPaneLayout();
+  await startSession(session);
+}
+
 ui.hostSearch.addEventListener('input', renderHosts);
 ui.connect.addEventListener('click', () => void connectRoute());
 ui.newRoute.addEventListener('click', () => showBuilder());
@@ -1831,9 +1984,22 @@ ui.shortcutEditor.addEventListener('mousedown', (event) => {
   if (event.target === ui.shortcutEditor) closeShortcutEditor();
 });
 ui.paneNewRoute.addEventListener('click', beginNewRouteForPane);
+ui.paneNewLocal.addEventListener('click', beginLocalTerminalForPane);
 ui.panePickerCancel.addEventListener('click', () => closePanePicker());
 ui.panePicker.addEventListener('mousedown', (event) => {
   if (event.target === ui.panePicker) closePanePicker();
+});
+ui.localTerminalClose.addEventListener('click', closeLocalTerminalDialog);
+ui.localTerminalCancel.addEventListener('click', closeLocalTerminalDialog);
+ui.localTerminalOpen.addEventListener('click', () => void createLocalTerminal());
+ui.localDirectoryPick.addEventListener('click', () => void pickLocalWorkingDirectory());
+ui.localDirectoryClear.addEventListener('click', () => {
+  selectedLocalDirectory = null;
+  ui.localDirectoryLabel.textContent = 'default';
+  ui.localDirectoryLabel.title = 'default';
+});
+ui.localTerminalDialog.addEventListener('mousedown', (event) => {
+  if (event.target === ui.localTerminalDialog) closeLocalTerminalDialog();
 });
 
 window.addEventListener(
@@ -1860,6 +2026,13 @@ window.addEventListener(
       if (event.key === 'Escape') {
         event.preventDefault();
         closePanePicker();
+      }
+      return;
+    }
+    if (!ui.localTerminalDialog.classList.contains('hidden')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeLocalTerminalDialog();
       }
       return;
     }
