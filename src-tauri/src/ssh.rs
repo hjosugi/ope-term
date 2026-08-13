@@ -25,6 +25,7 @@ static HOST_KEY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 static AUTH_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const HOST_KEY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+const CONNECTION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_AUTH_PROMPTS: usize = 32;
 const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
@@ -276,13 +277,31 @@ pub async fn run(
         });
 
         let mut handle = if let Some(stream) = tunnel.take() {
-            client::connect_stream(config, stream, handler).await?
+            tokio::time::timeout(
+                CONNECTION_SETUP_TIMEOUT,
+                client::connect_stream(config, stream, handler),
+            )
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "{} へのSSH handshakeが30秒でtimeoutしました",
+                    endpoint.alias
+                )
+            })??
         } else {
-            client::connect(config, (endpoint.hostname.as_str(), endpoint.port), handler)
-                .await
-                .with_context(|| {
-                    format!("{}:{} へ接続できません", endpoint.hostname, endpoint.port)
-                })?
+            tokio::time::timeout(
+                CONNECTION_SETUP_TIMEOUT,
+                client::connect(config, (endpoint.hostname.as_str(), endpoint.port), handler),
+            )
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "{}:{} への接続が30秒でtimeoutしました",
+                    endpoint.hostname,
+                    endpoint.port
+                )
+            })?
+            .with_context(|| format!("{}:{} へ接続できません", endpoint.hostname, endpoint.port))?
         };
         authenticate(&mut handle, endpoint, &auth_prompter).await?;
         send(
@@ -297,15 +316,18 @@ pub async fn run(
         );
 
         if let Some(next) = chain.get(index + 1) {
-            let channel = handle
-                .channel_open_direct_tcpip(&next.hostname, next.port.into(), "127.0.0.1", 0)
-                .await
-                .with_context(|| {
-                    format!(
-                        "{} から {} へのトンネルを開けません",
-                        endpoint.alias, next.alias
-                    )
-                })?;
+            let channel = tokio::time::timeout(
+                CONNECTION_SETUP_TIMEOUT,
+                handle.channel_open_direct_tcpip(&next.hostname, next.port.into(), "127.0.0.1", 0),
+            )
+            .await
+            .map_err(|_| anyhow!("{} へのtunnel openが30秒でtimeoutしました", next.alias))?
+            .with_context(|| {
+                format!(
+                    "{} から {} へのトンネルを開けません",
+                    endpoint.alias, next.alias
+                )
+            })?;
             tunnel = Some(channel.into_stream());
         }
         handles.push(handle);

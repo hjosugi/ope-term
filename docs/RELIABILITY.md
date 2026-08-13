@@ -4,6 +4,10 @@ ope-term はtransport断だけをexponential backoffで再接続します。remo
 host key変更、操作者によるcloseは自動再試行しません。このページは24時間soak testと、再接続後に
 tmux / screenへ安全に復帰する方針を定義します。
 
+初回TCP / SSH handshakeと各ProxyJump tunnel openは30秒で停止します。shell到達前のtimeoutは
+`failed`として手動再試行にし、接続済みsessionのkeepalive / inactivity timeoutだけを`transport`
+として自動再接続します。host-key / auth promptは操作者の確認用に別途5分待ちます。
+
 ## Root権限不要のfault injection
 
 `scripts/fault-proxy.mjs` はlocalhostでTCPを中継し、既定で15分ごとに確立済みsocketを切断します。

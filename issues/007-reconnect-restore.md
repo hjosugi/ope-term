@@ -8,6 +8,7 @@ keepalive はあるが、切断後の再接続や screen/tmux への復帰を扱
 ## 受け入れ条件
 
 - [x] timeout / remote close / network change を区別する（`local` / `remote` / `transport` / `failed`）
+  - 初回TCP / SSH handshakeと各tunnel openは30秒で`failed`、接続後のkeepalive timeoutは`transport`
 - [x] exponential backoff と手動 retry を実装する（transport 断のみ 1→16 秒で最大 5 回、停止と即時再試行つき）
 - [x] 意図しないコマンド再送をしない（切断時に未送信バッファを破棄し、再接続後も再送しない）
   - event / terminal dataをconnection IDで世代分離し、tab close時に即時無効化する
