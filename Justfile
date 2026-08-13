@@ -63,6 +63,12 @@ sbom:
 fuzz-check:
     ./scripts/run-cached cargo check --locked --manifest-path src-tauri/fuzz/Cargo.toml --bins
 
+msrv-check:
+    msrv="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' src-tauri/Cargo.toml)"; \
+        test -n "$msrv"; \
+        ./scripts/run-cached rustup toolchain install "$msrv" --profile minimal --no-self-update; \
+        ./scripts/run-cached rustup run "$msrv" cargo check --locked --manifest-path src-tauri/Cargo.toml
+
 fuzz-bootstrap:
     ./scripts/run-cached rustup toolchain install {{fuzz-toolchain}} --profile minimal --no-self-update
 

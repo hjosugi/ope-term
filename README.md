@@ -30,7 +30,7 @@
 
 ## 起動
 
-Node.js 22 以上、Rust 1.85 以上と、Tauri が各 OS で必要とするシステムパッケージが前提です。
+Node.js 22.12 以上、Rust 1.88 以上と、Tauri が各 OS で必要とするシステムパッケージが前提です。
 
 ```bash
 ./scripts/nix-local develop   # Nix を使う場合（推奨）

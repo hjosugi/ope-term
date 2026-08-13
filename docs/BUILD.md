@@ -29,6 +29,7 @@ just dev
 | `just version-check` | npm、Cargo、Cargo.lock、Tauri の version 一致を検証 |
 | `just security` | Tauri/CSP policy、pnpm、RustSec のセキュリティ監査 |
 | `just fuzz-check` | 2つのfuzz targetをstable Rustでコンパイル |
+| `just msrv-check` | manifest の Rust MSRV で lockfile 全体をコンパイル |
 | `just fuzz-smoke 30` | nightly + ASanでparserとroute expansionを各30秒fuzz |
 | `just sbom` | CycloneDX JSONの依存SBOMを生成 |
 | `just docs` | MkDocs を strict 生成し、生成 HTML と README の内部 URL / anchor を検証 |
@@ -116,3 +117,7 @@ just benchmark-build
 Node、pnpm、Bazel はそれぞれ `flake.nix`、`packageManager`、`.bazelversion` で明示的に
 固定しています。更新時は CI とローカルの両方で同じ major が使われることを
 確認してください。
+Rust の MSRV は `src-tauri/Cargo.toml` の `rust-version` が正本です。依存更新時は
+`cargo metadata --locked` で transitive crate の要求 version が MSRV を超えていないことも
+確認し、`just msrv-check` を通します。CI / Nix の通常 toolchain は MSRV より新しい固定 versionを
+使用し、CI は MSRV でも別途 compile します。
