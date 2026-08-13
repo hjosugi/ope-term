@@ -318,11 +318,15 @@ const rendererAddonReady = rendererPreference === 'fallback'
       });
 let performanceHarness: BrowserPerformanceHarness | undefined;
 const performanceHarnessReady = readStorage(localStorage, 'ope-term.performance.enabled') === 'true'
-  ? import('./performance').then(({ BrowserPerformanceHarness: Harness }) => {
-      performanceHarness = new Harness();
-      performanceHarness.start();
-      window.__opeTermPerformance = performanceHarness;
-    })
+  ? import('./performance')
+      .then(({ BrowserPerformanceHarness: Harness }) => {
+        performanceHarness = new Harness();
+        performanceHarness.start();
+        window.__opeTermPerformance = performanceHarness;
+      })
+      .catch((error: unknown) => {
+        toast(`performance harness を読み込めません。通常modeで続行します: ${String(error)}`);
+      })
   : Promise.resolve();
 
 const commands: CommandDefinition[] = [
@@ -2380,4 +2384,6 @@ async function boot(): Promise<void> {
   performanceHarness?.markReady();
 }
 
-void boot();
+void boot().catch((error: unknown) => {
+  toast(`起動処理を完了できません: ${String(error)}`);
+});

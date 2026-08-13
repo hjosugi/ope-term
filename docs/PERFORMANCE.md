@@ -103,6 +103,7 @@ flagを消して通常modeへ戻します。
 
 長時間flagを有効にした場合もmemoryを増やし続けないよう、入力latencyは最新10,000 samplesの
 固定容量bufferに保持し、Long Taskは最大値だけを記録します。
+optional harness chunkを読み込めない場合はtoastを表示し、terminal本体は通常modeで起動を続けます。
 
 ```js
 localStorage.removeItem('ope-term.performance.enabled');

@@ -23,5 +23,6 @@ Labels: priority:P0, performance, reliability
   500 kB 警告を解消。fallback 強制時は WebGL addon を読み込まない。
 - input latencyは最新10,000 samplesに制限し、Long Taskは最大値だけを保持して、長時間の
   profilingでもharness自身がmemoryを増やし続けないようにする。
+- optional harness chunkのload失敗は通常起動を止めず、toastへ理由を表示する。
 - 残る2条件は WebKitGTK / WebView2 / WKWebView 実機測定と CachyOS Wayland での採取そのもの。
   未計測値は作らず、実機 report を保存してから check する。
