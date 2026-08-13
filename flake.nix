@@ -44,7 +44,6 @@
             "CONTRIBUTING.md"
             "flake.lock"
             "flake.nix"
-            "Justfile"
             "MODULE.bazel"
             "MODULE.bazel.lock"
             "README.md"
