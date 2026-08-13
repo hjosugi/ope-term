@@ -29,7 +29,9 @@ Every release candidate must:
 3. generate `artifacts/security/ope-term.cdx.json` with `just sbom`;
 4. review all RustSec informational warnings and unresolved package-manager
    advisories;
-5. attach the CycloneDX SBOM to the release artifacts.
+5. pass the Cargo license, source, and wildcard dependency policy in
+   `deny.toml`;
+6. attach the CycloneDX SBOM to the release artifacts.
 
 The threat model and terminal review live in
 [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) and

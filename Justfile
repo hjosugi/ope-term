@@ -41,6 +41,7 @@ security:
     ./scripts/run-cached pnpm run security:policy
     ./scripts/run-cached pnpm audit --audit-level high
     ./scripts/run-cached cargo audit --file src-tauri/Cargo.lock
+    ./scripts/run-cached cargo deny --manifest-path src-tauri/Cargo.toml check bans licenses sources
 
 sbom:
     mkdir -p artifacts/security

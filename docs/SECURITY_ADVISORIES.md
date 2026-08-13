@@ -1,10 +1,16 @@
 # Dependency advisory review
 
-Last reviewed: 2026-07-30 with `cargo-audit` and the current RustSec database.
+Last reviewed: 2026-08-13 with `cargo-audit`, `cargo-deny`, and the current
+RustSec database.
 
 `just security` reports no RustSec vulnerabilities and no pnpm vulnerabilities
 at high severity or above. Informational RustSec warnings remain visible in CI;
 they are not silently ignored by configuration.
+
+`cargo-deny` independently rejects unapproved dependency licenses, wildcard
+version requirements, unknown registries, and Git dependencies. Duplicate
+transitive versions remain Cargo/upstream maintenance work rather than a
+release failure; vulnerabilities in any duplicate still fail `cargo-audit`.
 
 ## Removed vulnerable RSA implementation
 
