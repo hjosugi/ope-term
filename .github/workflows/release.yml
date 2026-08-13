@@ -174,23 +174,19 @@ jobs:
           nix develop --command just sbom
           cp artifacts/security/ope-term.cdx.json release-assets/ope-term.cdx.json
 
-      - name: Generate SHA-256 checksums
-        run: |
-          find release-assets -type f ! -name SHA256SUMS -print0 \
-            | sort -z \
-            | xargs -0 sha256sum \
-            | sed 's#release-assets/##' > release-assets/SHA256SUMS
+      - name: Stage release assets and generate SHA-256 checksums
+        run: node scripts/release-assets.mjs release-assets release-upload
 
       - name: Attest release assets
         uses: actions/attest@v4
         with:
-          subject-path: release-assets/**/*
+          subject-path: release-upload/*
 
       - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mapfile -d '' assets < <(find release-assets -type f -print0)
+          mapfile -d '' assets < <(find release-upload -type f -print0)
           gh release create "$GITHUB_REF_NAME" \
             --draft \
             --verify-tag \

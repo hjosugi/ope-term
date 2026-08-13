@@ -21,6 +21,11 @@ tag build では、これらに次の supply-chain metadata を加えます。
 
 `gh attestation verify <asset> -R hjosugi/ope-term` と
 `sha256sum --check SHA256SUMS` で provenance と内容を別々に検証できます。
+SBOM の source version は `package.json` から取得し、`.venv*`、`node_modules`、build output、
+生成 docs / knowledge graph は走査対象から除外します。
+workflow artifact は OS / bundle ごとの directory から、重複 basename を拒否しながら
+`release-upload` へ平坦化します。`SHA256SUMS` は GitHub Release からダウンロードしたファイル名と
+そのまま一致します。
 
 ## version gate
 

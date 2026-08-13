@@ -13,5 +13,7 @@ Labels: priority:P1, area:release, enhancement
     Ubuntu Actions、Windows、macOS の workflow artifact 実証は未完了
 - [ ] Windows と macOS の code signing を設定する
 - [ ] SBOM、checksum、provenance を release に添付する
+  - workflow artifact の basename 衝突検査、Release と一致する flat checksum、attestation の
+    local policy test は完了。tag draft Release 上での実証は未完了
 - [ ] Tauri updater の署名検証と rollback 方針を実装する
 - [x] tag と Cargo/npm/Tauri version の一致を検証する

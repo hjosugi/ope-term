@@ -47,10 +47,14 @@ sbom:
     mkdir -p artifacts/security
     ./scripts/run-cached syft scan dir:. \
         --source-name ope-term \
-        --source-version 0.1.1 \
+        --source-version "$(node -p 'require("./package.json").version')" \
+        --exclude './.git/**' \
+        --exclude './.venv*/**' \
         --exclude './node_modules/**' \
         --exclude './dist/**' \
         --exclude './artifacts/**' \
+        --exclude './graphify-out/**' \
+        --exclude './site/**' \
         --exclude './src-tauri/target/**' \
         --exclude './src-tauri/fuzz/target/**' \
         --exclude './bazel-*' \
@@ -107,5 +111,5 @@ nix:
     ./scripts/nix-local build
 
 cache-stats:
-    @echo "cache root: $${OPE_TERM_CACHE_ROOT:-/mnt/data/ope-term/cache}"
+    @echo "cache root: ${OPE_TERM_CACHE_ROOT:-/mnt/data/ope-term/cache}"
     ./scripts/run-cached sccache --show-stats

@@ -23,9 +23,10 @@ function requireWorkflowFragment(workflow, fragment, description) {
 
 export async function verifyReleasePolicy(root = process.cwd()) {
   const tauriRoot = resolve(root, "src-tauri");
-  const [configText, workflow] = await Promise.all([
+  const [configText, workflow, justfile] = await Promise.all([
     readFile(resolve(tauriRoot, "tauri.conf.json"), "utf8"),
     readFile(resolve(root, ".github/workflows/release.yml"), "utf8"),
+    readFile(resolve(root, "Justfile"), "utf8"),
   ]);
   const config = JSON.parse(configText);
   const icons = config.bundle?.icon;
@@ -69,12 +70,22 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     ["APPLE_CERTIFICATE", "macOS signing secret gate"],
     ["uploadWorkflowArtifacts: true", "workflow artifact upload"],
     ["ope-term.cdx.json", "CycloneDX SBOM generation"],
-    ["SHA256SUMS", "release checksums"],
+    ["node scripts/release-assets.mjs release-assets release-upload", "flat release staging"],
+    ["generate SHA-256 checksums", "release checksums"],
     ["uses: actions/attest@v4", "artifact provenance attestation"],
+    ["subject-path: release-upload/*", "attestation of published asset paths"],
     ["gh release create", "draft Release creation"],
   ];
   for (const [fragment, description] of workflowRequirements) {
     requireWorkflowFragment(workflow, fragment, description);
+  }
+
+  for (const [fragment, description] of [
+    ["require(\"./package.json\").version", "package-derived SBOM version"],
+    ["--exclude './.venv*/**'", "local Python environment SBOM exclusion"],
+    ["--exclude './graphify-out/**'", "generated knowledge graph SBOM exclusion"],
+  ]) {
+    requireValue(justfile.includes(fragment), `SBOM recipe is missing ${description}`);
   }
 
   return { iconCount: icons.length, pngSizes: [...pngSizes].sort((left, right) => left - right) };
