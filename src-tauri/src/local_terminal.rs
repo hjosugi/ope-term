@@ -1,7 +1,6 @@
 use std::env;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::mpsc as std_mpsc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -13,6 +12,7 @@ use crate::session_log::LogInput;
 use crate::ssh::{CloseReason, SessionEvent};
 
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
+const PTY_WRITE_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,11 +133,11 @@ pub async fn run(
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
 
-    let (writer_tx, writer_rx) = std_mpsc::channel::<Vec<u8>>();
+    let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(PTY_WRITE_QUEUE_CAPACITY);
     if let Err(error) = std::thread::Builder::new()
         .name("ope-term-local-pty-writer".to_owned())
         .spawn(move || {
-            while let Ok(bytes) = writer_rx.recv() {
+            while let Some(bytes) = writer_rx.blocking_recv() {
                 if writer
                     .write_all(&bytes)
                     .and_then(|()| writer.flush())
@@ -202,11 +202,26 @@ pub async fn run(
             command = commands.recv() => match command {
                 Some(LocalCommand::Input(input)) => {
                     if input.len() > MAX_INPUT_BYTES {
+                        drop(writer_tx);
+                        let _ = killer.kill();
+                        let _ = exit_rx.await;
                         bail!("local terminal input が大きすぎます");
                     }
-                    writer_tx.send(input.into_bytes()).map_err(|_| anyhow!("local PTY input は終了しています"))?;
+                    if writer_tx.send(input.into_bytes()).await.is_err() {
+                        drop(writer_tx);
+                        let _ = killer.kill();
+                        let _ = exit_rx.await;
+                        bail!("local PTY input は終了しています");
+                    }
                 }
-                Some(LocalCommand::Resize { cols, rows }) => pair.master.resize(pty_size(cols, rows))?,
+                Some(LocalCommand::Resize { cols, rows }) => {
+                    if let Err(error) = pair.master.resize(pty_size(cols, rows)) {
+                        drop(writer_tx);
+                        let _ = killer.kill();
+                        let _ = exit_rx.await;
+                        return Err(error).context("local PTY のサイズを変更できません");
+                    }
+                }
                 Some(LocalCommand::Close) | None => {
                     drop(writer_tx);
                     let _ = killer.kill();
