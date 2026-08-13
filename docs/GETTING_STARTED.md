@@ -45,7 +45,7 @@ macOS の Tauri ビルドには、Nix 外で Xcode Command Line Tools も必要�
 
 ```bash
 just check      # format、lint、test、通常 build
-just security   # Tauri/CSP policy、pnpm audit、RustSec audit
+just security   # Tauri/CSP、pnpm/RustSec、Cargo license/source policy
 ```
 
 再現可能な Nix package と、sandbox 化したフロントエンドの Bazel build も用意しています。

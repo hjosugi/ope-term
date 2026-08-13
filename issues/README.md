@@ -1,6 +1,7 @@
 # Issue drafts
 
-公開ロードマップの正本です。各ファイルは GitHub issue 1 件に対応します。
+GitHub Issuesへ登録する本文のローカル下書きです。公開状態の正本は
+[GitHub Issues](https://github.com/hjosugi/ope-term/issues)で、各ファイルが1件に対応します。
 
 ```bash
 ./scripts/create-issues.sh hjosugi/ope-term

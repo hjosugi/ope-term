@@ -17,17 +17,23 @@
 | Local terminal | Windows / Linux / macOS native PTY、shell profile、working directory、OSC 133 opt-in、child reap |
 | Session logs | host/profile別明示 enable、固定変数、timestamp、rotation、100 MiB 超 streaming viewer |
 | Command system | multi-chord、context key、競合警告、JSON import/export、Ctrl/Cmd 移行 |
-| セキュリティ基盤 | 脅威モデル、CSP と capability の自動監査、fuzzing、SBOM、依存 audit |
+| セキュリティ基盤 | 脅威モデル、CSP と capability の自動監査、fuzzing、SBOM、脆弱性・license・source audit |
 | 開発環境 | Nix flake と direnv、Bazel build、`/mnt/data` へのキャッシュ集約 |
+| 性能ゲート | cold start / latency / memory / 100 MiB output harness、WebGL/fallback artifact bundle、version付きbudget判定 |
+| リリース基盤 | multi-OS bundle workflow、version/icon/signing/supply-chain policy、Linux deb/rpm local smoke |
+| Transport 境界 | SSH/local共通input/resize/close、telnet optionとserial OS lifecycleの実装前gate |
 
 ## これからの作業
 
 | 優先度 | Issue | 内容 |
 |---|---|---|
-| P0 | [#10 Performance](https://github.com/hjosugi/ope-term/issues/10) | cold start、input latency、100 MB output の throughput を計測し、回帰をゲートで検出する |
-| P1 | [#7 Reliability](https://github.com/hjosugi/ope-term/issues/7) | 切断分類と backoff 再接続は実装済み。残りは tmux/screen 再 attach と 24 時間 soak test |
-| P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | Linux / Windows / macOS の署名・配布 CI |
-| P2 | [#12 Transports](https://github.com/hjosugi/ope-term/issues/12) | telnet / serial console の需要検証と安全な境界 |
+| P0 | [#10 Performance](https://github.com/hjosugi/ope-term/issues/10) | harnessとbudget gateは実装済み。残りはWebKitGTK / WebView2 / WKWebViewとCachyOS Wayland実機artifact |
+| P1 | [#7 Reliability](https://github.com/hjosugi/ope-term/issues/7) | 切断分類、backoff、tmux/screen opt-in設計は完了。残りは外部SSH先を使う24時間soakの完走記録 |
+| P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | workflowは実装済み。残りは全OS dry run、Windows/macOS署名、Release添付、updater鍵運用 |
+| P2 | [#12 Transports](https://github.com/hjosugi/ope-term/issues/12) | 境界とdesk researchは完了。残りはoperator/実機需要確認と、採用時のtelnet平文UI enforcement |
+
+未完了欄は、実機・24時間・署名鍵・利用者ヒアリングなどリポジトリ外の証跡が揃うまで
+完了扱いにしません。ローカルの準備状況は各リンク先issueと対応する`issues/*.md`に記録します。
 
 ## 進め方
 

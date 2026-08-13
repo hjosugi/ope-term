@@ -45,7 +45,7 @@ Nix を使わない場合は、[Tauri prerequisites](https://v2.tauri.app/start/
 ./scripts/run-cached pnpm run tauri dev
 ```
 
-検証は `just check` と `just security` です。詳細は
+検証は `just check` と `just security`（脆弱性、依存license/sourceを含む）です。詳細は
 [起動](https://hjosugi.github.io/ope-term/GETTING_STARTED/) を参照してください。
 
 ## SSH config
