@@ -48,10 +48,10 @@ import {
 } from './pane-layout';
 import { appendUnique, moveRouteItem, routePreview } from './route';
 import {
+  createLogPolicy,
   defaultLogPolicy,
   loadLogPolicies,
   saveLogPolicies,
-  type SessionLogPolicy,
 } from './session-log-settings';
 import { createSftpPanel, type SftpPanel } from './sftp-ui';
 import type {
@@ -2086,26 +2086,19 @@ function saveLogPolicy(): void {
     toast('設定対象の terminal tab を選択してください。');
     return;
   }
-  const template = ui.logTemplate.value.trim();
-  const unknown = template.replaceAll('{host}', '').replaceAll('{user}', '').replaceAll('{date}', '').replaceAll('{time}', '');
-  if (!template.endsWith('.log') || template.length > 160 || /[\\/\0{}]/u.test(unknown)) {
-    toast('file template は固定変数だけを使い、separator を含めず .log で終えてください。');
-    return;
-  }
-  if (ui.logEnabled.checked && !logDirectories.has(editingLogTarget)) {
-    toast('有効化する前に保存先 directory を選択してください。');
-    return;
-  }
-  const rotationMiB = Math.min(1024, Math.max(1, Number(ui.logRotation.value) || 25));
-  const retained = Math.min(20, Math.max(1, Number(ui.logRetained.value) || 5));
-  const policy: SessionLogPolicy = {
+  const result = createLogPolicy({
     enabled: ui.logEnabled.checked,
-    fileNameTemplate: template,
+    fileNameTemplate: ui.logTemplate.value,
     timestamps: ui.logTimestamps.checked,
-    rotationBytes: Math.floor(rotationMiB * 1024 * 1024),
-    retainedFiles: Math.floor(retained),
-  };
-  logPolicies[editingLogTarget] = policy;
+    rotationMiB: ui.logRotation.value,
+    retainedFiles: ui.logRetained.value,
+    hasDirectory: logDirectories.has(editingLogTarget),
+  });
+  if (!result.ok) {
+    toast(result.message);
+    return;
+  }
+  logPolicies[editingLogTarget] = result.policy;
   saveLogPolicies(logPolicies);
   toast(`${editingLogTarget} の session log 設定を保存しました。次回接続から反映します。`);
 }

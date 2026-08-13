@@ -372,9 +372,13 @@ fn validate_file_name(name: &str) -> Result<()> {
     if name.is_empty()
         || name == "."
         || name == ".."
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains('\0')
+        || name.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*'
+                )
+        })
         || name.len() > 255
     {
         bail!("安全でない log file name です");
@@ -425,6 +429,24 @@ mod tests {
             )
             .is_err()
         );
+        for template in ["line\nbreak.log", "windows?.log", "directory/name.log"] {
+            assert!(
+                configure(
+                    LogInput {
+                        enabled: true,
+                        directory_token: None,
+                        file_name_template: template.to_owned(),
+                        timestamps: false,
+                        rotation_bytes: MIN_ROTATION_BYTES,
+                        retained_files: 1,
+                    },
+                    directory.path().to_path_buf(),
+                    "h",
+                    "u"
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

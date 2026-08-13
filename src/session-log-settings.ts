@@ -9,6 +9,22 @@ export interface SessionLogPolicy {
 const STORAGE_KEY = 'ope-term.session-logs.v1';
 const MAX_POLICIES = 256;
 const MIB = 1024 * 1024;
+const MAX_TEMPLATE_BYTES = 160;
+const TEMPLATE_VARIABLES = ['{host}', '{user}', '{date}', '{time}'] as const;
+const UNSAFE_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f\\/<>:"|?*]/u;
+
+export interface SessionLogPolicyDraft {
+  enabled: boolean;
+  fileNameTemplate: string;
+  timestamps: boolean;
+  rotationMiB: string | number;
+  retainedFiles: string | number;
+  hasDirectory: boolean;
+}
+
+export type SessionLogPolicyResult =
+  | { ok: true; policy: SessionLogPolicy }
+  | { ok: false; message: string };
 
 export function defaultLogPolicy(): SessionLogPolicy {
   return {
@@ -46,7 +62,7 @@ export function saveLogPolicies(
 export function normalizePolicy(value: unknown): SessionLogPolicy | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<SessionLogPolicy>;
-  if (typeof candidate.fileNameTemplate !== 'string' || candidate.fileNameTemplate.length < 1 || candidate.fileNameTemplate.length > 160) return null;
+  if (typeof candidate.fileNameTemplate !== 'string' || !isValidFileNameTemplate(candidate.fileNameTemplate)) return null;
   if (typeof candidate.enabled !== 'boolean' || typeof candidate.timestamps !== 'boolean') return null;
   if (!Number.isSafeInteger(candidate.rotationBytes) || !Number.isSafeInteger(candidate.retainedFiles)) return null;
   return {
@@ -58,3 +74,47 @@ export function normalizePolicy(value: unknown): SessionLogPolicy | null {
   };
 }
 
+export function createLogPolicy(draft: SessionLogPolicyDraft): SessionLogPolicyResult {
+  const fileNameTemplate = draft.fileNameTemplate.trim();
+  if (!isValidFileNameTemplate(fileNameTemplate)) {
+    return {
+      ok: false,
+      message: 'file template は固定変数だけを使い、portableな名前で .log で終えてください。',
+    };
+  }
+  if (draft.enabled && !draft.hasDirectory) {
+    return { ok: false, message: '有効化する前に保存先 directory を選択してください。' };
+  }
+
+  const rotationMiB = boundedNumber(draft.rotationMiB, 25, 1, 1024);
+  const retainedFiles = Math.floor(boundedNumber(draft.retainedFiles, 5, 1, 20));
+  return {
+    ok: true,
+    policy: {
+      enabled: draft.enabled,
+      fileNameTemplate,
+      timestamps: draft.timestamps,
+      rotationBytes: Math.floor(rotationMiB * MIB),
+      retainedFiles,
+    },
+  };
+}
+
+export function isValidFileNameTemplate(template: string): boolean {
+  if (
+    !template.endsWith('.log')
+    || new TextEncoder().encode(template).length > MAX_TEMPLATE_BYTES
+    || UNSAFE_FILE_NAME_CHARACTERS.test(template)
+  ) {
+    return false;
+  }
+  let staticText = template;
+  for (const variable of TEMPLATE_VARIABLES) staticText = staticText.replaceAll(variable, '');
+  return !/[{}]/u.test(staticText);
+}
+
+function boundedNumber(value: string | number, fallback: number, minimum: number, maximum: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  const finite = Number.isFinite(parsed) && parsed !== 0 ? parsed : fallback;
+  return Math.min(maximum, Math.max(minimum, finite));
+}

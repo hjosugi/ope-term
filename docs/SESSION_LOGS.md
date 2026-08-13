@@ -13,9 +13,9 @@ picker で選択するまで有効化できません。
 | `{date}` | 接続開始時の UTC date | `2026-08-13` |
 | `{time}` | 接続開始時の UTC time | `09-15-30Z` |
 
-既定は `{host}-{user}-{date}-{time}.log` です。未定義変数、path separator、NUL、255 bytes 超の
-展開結果を Rust 側で拒否し、template は `.log` で終える必要があります。host/user の危険文字は
-`_` に置換します。
+既定は `{host}-{user}-{date}-{time}.log` です。未定義変数、path separator、制御文字、Windowsで
+file名に使えない文字、160 bytes超のtemplate、255 bytes超の展開結果をfrontendとRust側で拒否し、
+templateは `.log` で終える必要があります。host/user の危険文字は `_` に置換します。
 
 ## 設定と rotation
 
