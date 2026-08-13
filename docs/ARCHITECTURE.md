@@ -78,6 +78,8 @@ picker token だけを受け付けます。
 
 実装済み: `Host`, `Match`, `Include`, `HostName`, `User`, `Port`, `IdentityFile`,
 `CertificateFile`, `IdentitiesOnly`, `ProxyJump`, `HostKeyAlias`, token、`*`, `?`, `!`, `Key=Value`。
+Include は循環と 32 階層を検査し、全 config 8 MiB / 1024 file、1 glob 1024 match の
+budget 内で lexical order に読み込みます。
 
 未実装: `CanonicalizeHostname` と OpenSSH config 全 directive / token の完全互換。互換範囲外は
 黙って安全性を弱めず、issue 単位で追加します。

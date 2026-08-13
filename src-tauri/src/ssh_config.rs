@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -15,6 +16,9 @@ const MULTI_VALUE_KEYS: &[&str] = &[
     "sendenv",
 ];
 const MAX_INCLUDE_DEPTH: usize = 32;
+const MAX_CONFIG_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CONFIG_FILES: usize = 1024;
+const MAX_INCLUDE_MATCHES: usize = 1024;
 const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
 const MAX_ROUTE_HOPS: usize = 32;
 
@@ -75,6 +79,20 @@ pub struct HostProfile {
     pub chain: Vec<String>,
 }
 
+struct ParseBudget {
+    remaining_bytes: usize,
+    files: usize,
+}
+
+impl Default for ParseBudget {
+    fn default() -> Self {
+        Self {
+            remaining_bytes: MAX_CONFIG_BYTES,
+            files: 0,
+        }
+    }
+}
+
 pub fn default_config_path() -> Result<PathBuf> {
     dirs::home_dir()
         .map(|home| home.join(".ssh").join("config"))
@@ -93,7 +111,8 @@ pub fn load(path: &Path) -> Result<Vec<Block>> {
     let include_root = path.parent().unwrap_or_else(|| Path::new("."));
     let mut blocks = vec![implicit_block()];
     let mut active = Vec::new();
-    parse_file(path, include_root, &mut active, &mut blocks)?;
+    let mut budget = ParseBudget::default();
+    parse_file(path, include_root, &mut active, &mut blocks, &mut budget)?;
     Ok(blocks)
 }
 
@@ -146,7 +165,14 @@ pub fn tokenize(line: &str) -> Vec<String> {
 #[cfg(any(test, feature = "fuzzing"))]
 pub(crate) fn parse(text: &str) -> Vec<Block> {
     let mut blocks = vec![implicit_block()];
-    parse_text(text, None, &mut Vec::new(), &mut blocks).expect("in-memory config has no includes");
+    parse_text(
+        text,
+        None,
+        &mut Vec::new(),
+        &mut blocks,
+        &mut ParseBudget::default(),
+    )
+    .expect("in-memory config has no includes");
     blocks
 }
 
@@ -164,6 +190,7 @@ fn parse_file(
     include_root: &Path,
     active: &mut Vec<PathBuf>,
     blocks: &mut Vec<Block>,
+    budget: &mut ParseBudget,
 ) -> Result<()> {
     if active.len() >= MAX_INCLUDE_DEPTH {
         bail!("SSH config Include が {MAX_INCLUDE_DEPTH} 階層を超えています");
@@ -182,10 +209,9 @@ fn parse_file(
         );
     }
 
-    let text = fs::read_to_string(&canonical)
-        .with_context(|| format!("{} を読み込めません", canonical.display()))?;
+    let text = read_config_file(&canonical, budget)?;
     active.push(canonical);
-    let result = parse_text(&text, Some(include_root), active, blocks);
+    let result = parse_text(&text, Some(include_root), active, blocks, budget);
     active.pop();
     result
 }
@@ -195,6 +221,7 @@ fn parse_text(
     include_root: Option<&Path>,
     active: &mut Vec<PathBuf>,
     blocks: &mut Vec<Block>,
+    budget: &mut ParseBudget,
 ) -> Result<()> {
     for raw in text.lines() {
         let trimmed = raw.trim();
@@ -229,7 +256,7 @@ fn parse_text(
             };
             for pattern in values {
                 for path in expand_include_pattern(pattern, include_root)? {
-                    parse_file(&path, include_root, active, blocks)?;
+                    parse_file(&path, include_root, active, blocks, budget)?;
                 }
             }
             continue;
@@ -246,6 +273,32 @@ fn parse_text(
     Ok(())
 }
 
+fn read_config_file(path: &Path, budget: &mut ParseBudget) -> Result<String> {
+    if budget.files >= MAX_CONFIG_FILES {
+        bail!("SSH config Include が合計 {MAX_CONFIG_FILES} file を超えています");
+    }
+    let mut file =
+        fs::File::open(path).with_context(|| format!("{} を読み込めません", path.display()))?;
+    let declared_bytes = file
+        .metadata()
+        .with_context(|| format!("{} のサイズを確認できません", path.display()))?
+        .len();
+    if declared_bytes > budget.remaining_bytes as u64 {
+        bail!("SSH config Include の合計が {MAX_CONFIG_BYTES} bytes を超えています");
+    }
+    let mut bytes = Vec::with_capacity(declared_bytes as usize);
+    file.by_ref()
+        .take(budget.remaining_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("{} を読み込めません", path.display()))?;
+    if bytes.len() > budget.remaining_bytes {
+        bail!("SSH config Include の合計が {MAX_CONFIG_BYTES} bytes を超えています");
+    }
+    budget.remaining_bytes -= bytes.len();
+    budget.files += 1;
+    String::from_utf8(bytes).with_context(|| format!("{} は UTF-8 ではありません", path.display()))
+}
+
 fn expand_include_pattern(value: &str, include_root: &Path) -> Result<Vec<PathBuf>> {
     let expanded = expand_environment(value);
     let expanded = expand_home(&expanded, dirs::home_dir().as_deref());
@@ -258,7 +311,11 @@ fn expand_include_pattern(value: &str, include_root: &Path) -> Result<Vec<PathBu
     let mut matches = glob(&pattern)
         .with_context(|| format!("Include pattern が不正です: {pattern}"))?
         .filter_map(std::result::Result::ok)
+        .take(MAX_INCLUDE_MATCHES + 1)
         .collect::<Vec<_>>();
+    if matches.len() > MAX_INCLUDE_MATCHES {
+        bail!("Include pattern が {MAX_INCLUDE_MATCHES} file を超えて展開されます: {pattern}");
+    }
     matches.sort();
     Ok(matches)
 }
@@ -901,6 +958,18 @@ Host prod
 
         assert!(error.to_string().contains("循環"));
         assert!(error.to_string().contains("child.conf"));
+    }
+
+    #[test]
+    fn rejects_a_config_larger_than_the_global_parse_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len((MAX_CONFIG_BYTES + 1) as u64).unwrap();
+
+        let error = load(&path).unwrap_err();
+
+        assert!(error.to_string().contains(&MAX_CONFIG_BYTES.to_string()));
     }
 
     #[cfg(unix)]
