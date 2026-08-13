@@ -115,8 +115,10 @@ thresholdの正本はrepository rootの`performance-budgets.json`です。report
 just performance-gate artifacts/performance/cachyos-webkitgtk-webgl.json
 ```
 
-最低100 input sample、100 MiB以上のoutputを要求します。Long Tasks APIがないWebKitでは警告を
-出すため、platform profilerの結果をreportと同じartifactに添付します。
+最低100 input sample、100 MiB以上のoutputを要求します。gateはtimestamp、percentileの順序、
+memory差分、output duration / throughputも検証するため、欠落または自己矛盾したreportは計測結果として
+受理しません。Long Tasks APIがないWebKitでは警告を出すため、platform profilerの結果をreportと同じ
+artifactに添付します。
 
 WebGL と fallback の2 reportを採取したら、environmentが同一でrendererが正しいことを検証し、
 比較delta・OS/session metadata・原本JSONを1 directoryへまとめます。
