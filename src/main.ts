@@ -22,7 +22,7 @@ import {
   type CommandId,
 } from './keybindings';
 import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
-import type { BrowserPerformanceHarness } from './performance';
+import { loadRendererPreference, type BrowserPerformanceHarness } from './performance';
 import {
   containsPaneSession,
   focusPane,
@@ -292,6 +292,7 @@ const performanceHarnessReady = localStorage.getItem('ope-term.performance.enabl
       window.__opeTermPerformance = performanceHarness;
     })
   : Promise.resolve();
+const rendererPreference = loadRendererPreference();
 
 const commands: CommandDefinition[] = [
   {
@@ -858,17 +859,23 @@ function createSession(sessionRoute: string[], local?: LocalSessionConfig): Sess
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(terminalContainer);
-  try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => {
-      webgl.dispose();
-      performanceHarness?.setRenderer('fallback');
-    });
-    terminal.loadAddon(webgl);
-    performanceHarness?.setRenderer('webgl');
-  } catch {
-    // WebGL is optional on WebKitGTK; xterm's renderer is the stable fallback.
+  if (rendererPreference === 'fallback') {
     performanceHarness?.setRenderer('fallback');
+  } else {
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        performanceHarness?.setRenderer('fallback');
+      });
+      terminal.loadAddon(webgl);
+      performanceHarness?.setRenderer('webgl');
+    } catch (error) {
+      performanceHarness?.setRenderer('fallback');
+      if (rendererPreference === 'webgl') {
+        toast(`WebGL renderer を強制できません: ${String(error)}`);
+      }
+    }
   }
   fit.fit();
 

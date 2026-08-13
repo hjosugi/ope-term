@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluatePerformance, percentile, type PerformanceReport } from './performance';
+import { evaluatePerformance, loadRendererPreference, percentile, type PerformanceReport } from './performance';
 
 function report(overrides: Partial<PerformanceReport> = {}): PerformanceReport {
   return {
@@ -27,6 +27,11 @@ function report(overrides: Partial<PerformanceReport> = {}): PerformanceReport {
 }
 
 describe('performance gates', () => {
+  it('loads only explicit renderer preferences', () => {
+    expect(loadRendererPreference({ getItem: () => 'fallback' })).toBe('fallback');
+    expect(loadRendererPreference({ getItem: () => 'webgl' })).toBe('webgl');
+    expect(loadRendererPreference({ getItem: () => 'broken' })).toBe('auto');
+  });
   it('computes nearest-rank percentiles without mutating samples', () => {
     const samples = [40, 10, 30, 20];
     expect(percentile(samples, 0.5)).toBe(20);

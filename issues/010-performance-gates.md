@@ -12,3 +12,12 @@ Labels: priority:P0, performance, reliability
 - [ ] WebGL / fallback を WebKitGTK、WebView2、WKWebView で比較する
 - [ ] CachyOS Wayland 実機結果を artifact として保存する
 - [x] 基準超過を release gate で検出する（version付きJSONを `just performance-gate` で判定）
+
+## 計測準備
+
+- `ope-term.performance.renderer` で WebGL / fallback を明示固定し、実際に選ばれた renderer を
+  report に記録する。WebGL 強制失敗は toast と fallback report になる。
+- `just performance-bundle <webgl.json> <fallback.json> <output>` が同一 environment / commit と
+  renderer を検証し、metric delta・Wayland session metadata・原本を artifact directory にまとめる。
+- 残る2条件は WebKitGTK / WebView2 / WKWebView 実機測定と CachyOS Wayland での採取そのもの。
+  未計測値は作らず、実機 report を保存してから check する。

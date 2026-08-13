@@ -43,6 +43,19 @@ location.reload();
 
 通常利用時はlistenerもobserverも作らないため、計測自体が製品のlatencyへ影響しません。
 
+### Renderer を固定する
+
+同じ環境で比較できるよう、測定前に renderer を明示します。`webgl` は初期化に失敗した場合
+toastを出して fallback を report に記録するため、誤って WebGL 結果として扱われません。
+
+```js
+localStorage.setItem('ope-term.performance.renderer', 'webgl'); // 1回目
+location.reload();
+
+localStorage.setItem('ope-term.performance.renderer', 'fallback'); // 2回目
+location.reload();
+```
+
 ### 100 MiB output
 
 接続先でrepositoryを利用できる場合は、terminalから次を実行します。stdoutへ正確に100 MiBを
@@ -103,9 +116,27 @@ just performance-gate artifacts/performance/cachyos-webkitgtk-webgl.json
 最低100 input sample、100 MiB以上のoutputを要求します。Long Tasks APIがないWebKitでは警告を
 出すため、platform profilerの結果をreportと同じartifactに添付します。
 
+WebGL と fallback の2 reportを採取したら、environmentが同一でrendererが正しいことを検証し、
+比較delta・OS/session metadata・原本JSONを1 directoryへまとめます。
+
+```bash
+just performance-bundle \
+  artifacts/performance/cachyos-webkitgtk-webgl.json \
+  artifacts/performance/cachyos-webkitgtk-fallback.json \
+  artifacts/performance/cachyos-wayland
+
+just performance-gate artifacts/performance/cachyos-webkitgtk-webgl.json
+just performance-gate artifacts/performance/cachyos-webkitgtk-fallback.json
+```
+
+`artifacts/performance/cachyos-wayland/` を CI artifact に upload します。bundle の manifest は
+rendererごとの cold start、p99、memory、throughput、stall とdelta、および Wayland session の有無を
+保持し、terminal内容や環境変数値は保存しません。
+
 ## 未達・未計測
 
 上表はまだ CI/実機で合否を測定していません。特に Linux の WebKitGTK、Windows の WebView2、macOS の WKWebView は別々に計測します。CachyOS/Wayland を最初の実測対象とし、WebGL と fallback renderer の双方で確認します。
 
 WebKitGTK / WebView2 / WKWebView のWebGL・fallback比較、CachyOS/Wayland実測結果のartifact保存、
-24 h soak testは未完了です。report schema・100 MiB fixture・release gateは実装済みです。
+24 h soak testは未完了です。report schema・100 MiB fixture・renderer固定・比較bundle・release
+gateは実装済みです。

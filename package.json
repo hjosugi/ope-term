@@ -18,6 +18,7 @@
     "build": "pnpm run typecheck && vite build",
     "performance:fixture": "node scripts/performance-fixture.mjs",
     "performance:gate": "node scripts/performance-gate.mjs",
+    "performance:bundle": "node scripts/performance-bundle.mjs",
     "reliability:gate": "node scripts/reliability-gate.mjs",
     "version:check": "node scripts/version-consistency.mjs",
     "security:policy": "node scripts/security-policy.mjs",

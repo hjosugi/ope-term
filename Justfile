@@ -80,6 +80,10 @@ performance-fixture bytes="104857600":
 performance-gate report:
     ./scripts/run-cached node scripts/performance-gate.mjs {{report}}
 
+performance-bundle webgl fallback output="artifacts/performance/bundle":
+    ./scripts/run-cached node scripts/performance-bundle.mjs \
+        --webgl {{webgl}} --fallback {{fallback}} --output {{output}}
+
 reliability-soak upstream upstream_port="22" listen_port="2222" duration="86400" fault_every="900" report="artifacts/reliability/soak.json":
     ./scripts/run-cached node scripts/fault-proxy.mjs \
         --upstream-host {{upstream}} \
