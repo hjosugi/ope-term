@@ -6,7 +6,7 @@ default:
     @just --list
 
 bootstrap:
-    ./scripts/run-cached pnpm install --frozen-lockfile
+    CI=true ./scripts/run-cached pnpm install --frozen-lockfile
 
 dev:
     ./scripts/run-cached pnpm run tauri dev
