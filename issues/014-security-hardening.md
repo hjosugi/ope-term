@@ -18,5 +18,5 @@ Labels: priority:P0, security, reliability
 脅威モデル、端末レビュー、Tauri policy監査、2つのcargo-fuzz target、
 RustSec/pnpm監査、CycloneDX SBOM、週次security workflowを追加した。
 private vulnerability reportingが有効であることも確認済み。
-IPC payload、session registry、SSH config、known_hosts、認証file、WebView storageの資源上限と
-失敗時degradeも自動テストで固定した。
+IPC payloadとcanonical ID、session / SFTP registry、SSH config、known_hosts、認証file、
+WebView storageの資源上限と失敗時degradeも自動テストで固定した。

@@ -63,6 +63,12 @@ pub struct SftpTransferRequest {
 }
 
 impl SftpTransferInput {
+    pub fn validate(&self) -> Result<()> {
+        validate_transfer_id(&self.transfer_id)?;
+        validate_remote_name(&self.remote_name)?;
+        validate_remote_path(&self.remote_directory)
+    }
+
     pub fn resolve(self, local_path: PathBuf) -> SftpTransferRequest {
         SftpTransferRequest {
             transfer_id: self.transfer_id,
@@ -137,6 +143,10 @@ pub async fn list(session: &SftpSession, path: &str) -> Result<SftpListing> {
         canonical_path,
         entries,
     })
+}
+
+pub(crate) fn validate_list_path(path: &str) -> Result<()> {
+    validate_remote_path(path)
 }
 
 pub async fn transfer(
@@ -583,6 +593,45 @@ mod tests {
         assert!(validate_transfer_id("a2d41d70-11c0-4ddb-a2d1-5d692fe5835d").is_ok());
         assert!(validate_transfer_id("../../escape").is_err());
         assert!(validate_transfer_id(&"x".repeat(MAX_TRANSFER_ID_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn validates_every_transfer_field_before_io() {
+        let valid = SftpTransferInput {
+            transfer_id: "transfer-1".to_owned(),
+            direction: TransferDirection::Upload,
+            local_token: "token".to_owned(),
+            local_relative_path: "file.txt".to_owned(),
+            remote_directory: "/tmp".to_owned(),
+            remote_name: "file.txt".to_owned(),
+            overwrite: false,
+            follow_symlink: false,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(
+            SftpTransferInput {
+                transfer_id: "../bad".to_owned(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            SftpTransferInput {
+                remote_name: "../bad".to_owned(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            SftpTransferInput {
+                remote_directory: "x".repeat(MAX_REMOTE_PATH_BYTES + 1),
+                ..valid
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

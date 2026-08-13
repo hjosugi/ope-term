@@ -12,6 +12,7 @@ use uuid::Uuid;
 const MAX_SCOPES: usize = 64;
 const MAX_LIST_ENTRIES: usize = 10_000;
 const MAX_RELATIVE_PATH_BYTES: usize = 32 * 1024;
+const SCOPE_TOKEN_BYTES: usize = 32;
 
 pub type LocalScopes = Arc<Mutex<VecDeque<(String, PathBuf)>>>;
 
@@ -144,6 +145,7 @@ pub async fn resolve(
 }
 
 pub async fn resolve_directory(scopes: &LocalScopes, token: &str) -> Result<PathBuf> {
+    validate_token(token)?;
     let root = scopes
         .lock()
         .await
@@ -166,6 +168,7 @@ async fn scoped_path(
     token: &str,
     raw_relative: &str,
 ) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    validate_token(token)?;
     let root = scopes
         .lock()
         .await
@@ -176,6 +179,17 @@ async fn scoped_path(
     let relative = safe_relative(raw_relative)?;
     let target = root.join(&relative);
     Ok((root, relative, target))
+}
+
+fn validate_token(token: &str) -> Result<()> {
+    if token.len() != SCOPE_TOKEN_BYTES
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        bail!("local directory token が不正です");
+    }
+    Ok(())
 }
 
 fn safe_relative(raw: &str) -> Result<PathBuf> {
@@ -233,6 +247,19 @@ mod tests {
         assert!(safe_relative("/etc/passwd").is_err());
         assert!(safe_relative(&"a".repeat(MAX_RELATIVE_PATH_BYTES + 1)).is_err());
         assert!(safe_relative("safe/child").is_ok());
+    }
+
+    #[test]
+    fn accepts_only_generated_scope_tokens() {
+        assert!(validate_token("a2d41d7011c04ddba2d15d692fe5835d").is_ok());
+        for invalid in [
+            "",
+            "A2D41D7011C04DDBA2D15D692FE5835D",
+            "a2d41d70-11c0-4ddb-a2d1-5d692fe5835d",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        ] {
+            assert!(validate_token(invalid).is_err(), "accepted {invalid:?}");
+        }
     }
 
     #[tokio::test]

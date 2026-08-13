@@ -26,6 +26,8 @@
   profile ID だけを起動します。working directory は native picker token で指定します。
 - SSH / local terminal のsession IDはfrontendが生成するcanonical UUIDだけを受理し、Rust registryは
   同時64件で停止します。壊れたUIやWebViewから無制限にtaskを生成できません。
+- host-key / auth promptのrequest IDとnative picker tokenもRustが発行するcanonical形式だけを
+  受理し、任意長の識別子をregistryやprompt queueへ渡しません。
 - Session log は既定無効かつ output-only です。保存・検索先は native picker token に限定し、
   viewer は `.log` と rotation 世代だけを bounded buffer で読みます。
 

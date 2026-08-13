@@ -30,7 +30,7 @@ Rust session task (one task per terminal)
 - `local_terminal.rs`: Windows ConPTY / Unix PTY、検出 shell profile、child kill + wait
 - `session_log.rs`: output-only bounded writer、世代 rotation、bounded streaming search
 - `transport.rs`: terminal 共通の input / resize / close と SSH 固有 capability の境界
-- `lib.rs`: 最小の Tauri command と transport 共通のセッション registry
+- `lib.rs`: 最小の Tauri command、canonical ID検証、transport共通のセッション registry
 
 各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。SSH config / known_hosts / key fileの同期I/Oと暗号化鍵KDFはblocking poolへ分離します。大量データ向けでない Tauri event bus は端末出力に使いません。
 
@@ -52,7 +52,8 @@ ProxyJump、SFTP は SSH 専用 capability です。候補 transport と安全�
 WebView はファイルシステム、ソケット、鍵へ直接アクセスできません。SFTP の local 操作は native
 folder picker が Rust core に登録した不透明 token と、その root 配下の相対 path だけを使います。
 local terminal も program / argument を WebView から受け取らず、Rust が列挙した profile ID と
-picker token だけを受け付けます。
+picker token だけを受け付けます。session UUID、prompt request ID、picker token、SFTP transfer IDは
+生成時のcanonical形式を各IPC入口で再検証します。
 
 タブは接続から独立したUI識別子を持ち、接続ごとの backend session id とは別に管理します。復元したタブと切断済みタブは `idle` / `closed` 状態のまま同じ端末バッファを保持し、操作者が接続を開始したときだけ新しい backend session id を割り当てます。古い接続から遅れて届いた event は id 不一致で破棄します。
 

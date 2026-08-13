@@ -80,6 +80,19 @@ mod application {
         Ok(canonical)
     }
 
+    fn validate_request_id(value: &str, prefix: &str) -> Result<(), String> {
+        let Some(counter) = value.strip_prefix(prefix) else {
+            return Err("request id が不正です".to_owned());
+        };
+        let parsed = counter
+            .parse::<u64>()
+            .map_err(|_| "request id が不正です".to_owned())?;
+        if parsed == 0 || parsed.to_string() != counter {
+            return Err("request id が不正です".to_owned());
+        }
+        Ok(())
+    }
+
     fn register_terminal(
         terminals: &mut HashMap<String, TerminalControl>,
         session_id: String,
@@ -163,20 +176,39 @@ mod application {
         Ok(())
     }
 
+    async fn terminal_control(
+        state: &State<'_, AppState>,
+        session_id: &str,
+    ) -> Result<TerminalControl, String> {
+        let session_id = validate_session_id(session_id)?;
+        state
+            .terminals
+            .lock()
+            .await
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "terminal session が見つかりません".to_owned())
+    }
+
+    async fn ssh_control(
+        state: &State<'_, AppState>,
+        session_id: &str,
+    ) -> Result<SessionControl, String> {
+        terminal_control(state, session_id)
+            .await?
+            .ssh()
+            .cloned()
+            .ok_or_else(|| "SSH session が見つかりません".to_owned())
+    }
+
     async fn send_ssh_command(
         state: State<'_, AppState>,
         session_id: &str,
         command: SessionCommand,
     ) -> Result<(), String> {
-        let sender = state
-            .terminals
-            .lock()
-            .await
-            .get(session_id)
-            .and_then(TerminalControl::ssh)
-            .map(|session| session.commands.clone())
-            .ok_or_else(|| "SSH session が見つかりません".to_owned())?;
-        sender
+        ssh_control(&state, session_id)
+            .await?
+            .commands
             .send(command)
             .await
             .map_err(|_| "セッションは終了しています".to_owned())
@@ -188,14 +220,10 @@ mod application {
         data: String,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
-        let control = state
-            .terminals
-            .lock()
+        terminal_control(&state, &session_id)
+            .await?
+            .send(TerminalRequest::Input(data))
             .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| "terminal session が見つかりません".to_owned())?;
-        control.send(TerminalRequest::Input(data)).await
     }
 
     #[tauri::command]
@@ -205,14 +233,10 @@ mod application {
         rows: u32,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
-        let control = state
-            .terminals
-            .lock()
+        terminal_control(&state, &session_id)
+            .await?
+            .send(TerminalRequest::Resize { cols, rows })
             .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| "terminal session が見つかりません".to_owned())?;
-        control.send(TerminalRequest::Resize { cols, rows }).await
     }
 
     #[tauri::command]
@@ -293,6 +317,7 @@ mod application {
         path: String,
         state: State<'_, AppState>,
     ) -> Result<SftpListing, String> {
+        crate::sftp::validate_list_path(&path).map_err(|error| format!("{error:#}"))?;
         let (reply, result) = oneshot::channel();
         send_ssh_command(state, &session_id, SessionCommand::SftpList { path, reply }).await?;
         result
@@ -307,6 +332,7 @@ mod application {
         on_progress: Channel<SftpProgress>,
         state: State<'_, AppState>,
     ) -> Result<SftpTransferResult, String> {
+        request.validate().map_err(|error| format!("{error:#}"))?;
         let local_path = crate::local_files::resolve(
             &state.local_scopes,
             &request.local_token,
@@ -338,6 +364,7 @@ mod application {
         transfer_id: String,
         state: State<'_, AppState>,
     ) -> Result<bool, String> {
+        crate::sftp::validate_transfer_id(&transfer_id).map_err(|error| format!("{error:#}"))?;
         let (reply, result) = oneshot::channel();
         send_ssh_command(
             state,
@@ -423,11 +450,7 @@ mod application {
 
     #[tauri::command]
     async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
-        let control = state.terminals.lock().await.get(&session_id).cloned();
-        control
-            .ok_or_else(|| "terminal session が見つかりません".to_owned())?
-            .close()
-            .await
+        terminal_control(&state, &session_id).await?.close().await
     }
 
     #[tauri::command]
@@ -437,16 +460,11 @@ mod application {
         decision: String,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        validate_request_id(&request_id, "host-key-")?;
         let decision = HostKeyDecision::parse(&decision)?;
-        let sender = state
-            .terminals
-            .lock()
-            .await
-            .get(&session_id)
-            .and_then(TerminalControl::ssh)
-            .map(|session| session.host_keys.clone())
-            .ok_or_else(|| "SSH session が見つかりません".to_owned())?;
-        sender
+        ssh_control(&state, &session_id)
+            .await?
+            .host_keys
             .send(HostKeyAnswer {
                 request_id: Some(request_id),
                 decision,
@@ -463,18 +481,17 @@ mod application {
         cancelled: bool,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        if let Err(error) = validate_request_id(&request_id, "auth-") {
+            responses.zeroize();
+            return Err(error);
+        }
         if let Err(error) = ssh::validate_auth_responses(None, &responses) {
             responses.zeroize();
             return Err(error.to_string());
         }
-        let sender = state
-            .terminals
-            .lock()
+        let sender = ssh_control(&state, &session_id)
             .await
-            .get(&session_id)
-            .and_then(TerminalControl::ssh)
-            .map(|session| session.authentication.clone())
-            .ok_or_else(|| "SSH session が見つかりません".to_owned());
+            .map(|session| session.authentication);
         let sender = match sender {
             Ok(sender) => sender,
             Err(error) => {
@@ -534,6 +551,15 @@ mod application {
             assert!(validate_session_id("not-a-uuid").is_err());
             assert!(validate_session_id("19B4F21C-233F-4A72-9E36-CAAC6F4E87CA").is_err());
             assert!(validate_session_id("19b4f21c233f4a729e36caac6f4e87ca").is_err());
+        }
+
+        #[test]
+        fn accepts_only_generated_prompt_request_ids() {
+            assert!(validate_request_id("host-key-1", "host-key-").is_ok());
+            assert!(validate_request_id("auth-18446744073709551615", "auth-").is_ok());
+            for invalid in ["", "auth-0", "auth-01", "auth--1", "host-key-1"] {
+                assert!(validate_request_id(invalid, "auth-").is_err());
+            }
         }
 
         #[test]
