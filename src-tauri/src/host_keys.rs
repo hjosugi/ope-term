@@ -1,11 +1,13 @@
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result, bail};
 use russh::keys::{Error as KeyError, ssh_key};
 
 const MAX_KNOWN_HOSTS_BYTES: u64 = 16 * 1024 * 1024;
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum KnownHostStatus {
@@ -26,8 +28,8 @@ pub fn check(
     port: u16,
     key: &ssh_key::PublicKey,
 ) -> Result<KnownHostStatus> {
-    match std::fs::metadata(path) {
-        Ok(metadata) if !metadata.is_file() => {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
             bail!("known_hosts は通常 file でなければなりません")
         }
         Ok(metadata) if metadata.len() > MAX_KNOWN_HOSTS_BYTES => {
@@ -46,6 +48,8 @@ pub fn check(
 }
 
 pub fn save(path: &Path, hostname: &str, port: u16, key: &ssh_key::PublicKey) -> Result<()> {
+    let _guard = SAVE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+
     match check(path, hostname, port, key)? {
         KnownHostStatus::Trusted => return Ok(()),
         KnownHostStatus::Changed { line } => {
@@ -64,11 +68,20 @@ pub fn save(path: &Path, hostname: &str, port: u16, key: &ssh_key::PublicKey) ->
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     let mut file = options
         .open(path)
         .with_context(|| format!("{} を開けません", path.display()))?;
+    let metadata = file.metadata().context("known_hosts を確認できません")?;
+    if !metadata.is_file() {
+        bail!("known_hosts は通常 file でなければなりません");
+    }
+    if metadata.len() > MAX_KNOWN_HOSTS_BYTES {
+        bail!("known_hosts は {MAX_KNOWN_HOSTS_BYTES} bytes 以下にしてください");
+    }
 
     let mut prefix = "";
     if file.seek(SeekFrom::End(-1)).is_ok() {
@@ -178,5 +191,52 @@ mod tests {
             .expect("sparse file");
         assert!(check(&oversized, "example.com", 22, &key).is_err());
         assert!(check(directory.path(), "example.com", 22, &key).is_err());
+    }
+
+    #[test]
+    fn serializes_concurrent_saves_without_losing_entries() {
+        use std::sync::{Arc, Barrier};
+
+        let directory = tempfile::tempdir().expect("directory");
+        let path = Arc::new(directory.path().join("known_hosts"));
+        let barrier = Arc::new(Barrier::new(16));
+        let handles = (0..16)
+            .map(|index| {
+                let path = Arc::clone(&path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let key = parse_public_key_base64(KEY_ONE).expect("key");
+                    barrier.wait();
+                    save(&path, &format!("server-{index}.internal"), 22, &key)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("thread").expect("save");
+        }
+
+        let contents = std::fs::read_to_string(path.as_ref()).expect("known_hosts");
+        assert_eq!(contents.lines().count(), 16);
+        for index in 0..16 {
+            assert!(contents.contains(&format!("server-{index}.internal ssh-ed25519 ")));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_known_hosts_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("directory");
+        let target = directory.path().join("target");
+        let link = directory.path().join("known_hosts");
+        std::fs::write(&target, "sentinel\n").expect("target");
+        symlink(&target, &link).expect("symlink");
+        let key = parse_public_key_base64(KEY_ONE).expect("key");
+
+        assert!(check(&link, "example.com", 22, &key).is_err());
+        assert!(save(&link, "example.com", 22, &key).is_err());
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "sentinel\n");
     }
 }

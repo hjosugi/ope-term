@@ -39,8 +39,9 @@
 - password、OTP、秘密鍵 passphrase は永続化・ログ出力せず、認証専用の使い捨て IPC でだけ
   渡します。
 - 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
-- `known_hosts` は通常fileかつ16 MiB以下、証明書・秘密鍵は通常fileかつ各1 MiB以下に制限し、
-  `IdentityFile` / `CertificateFile` 候補はhostごとに各64件で停止します。SSH config、trust store、
+- `known_hosts` はsymlinkを拒否する通常fileかつ16 MiB以下に制限し、同一processからの追記を
+  直列化します。証明書・秘密鍵は通常fileかつ各1 MiB以下、`IdentityFile` /
+  `CertificateFile` 候補はhostごとに各64件で停止します。SSH config、trust store、
   証明書・秘密鍵の同期I/Oと暗号化鍵KDFはasync connection taskを占有しないblocking poolで
   実行し、blocking taskへ渡したpassphraseもdrop時にzeroizeします。
 - ssh-agentが返したidentityも先頭64件までを認証候補にし、agent異常時に無制限の認証試行を

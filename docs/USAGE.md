@@ -121,6 +121,7 @@ exponential backoff で最大 5 回まで自動再接続します。hopbar に�
 初回接続では hostname、port、hop、algorithm、SHA256 fingerprint を確認画面に表示します。
 管理者や別の安全な経路で fingerprint を照合し、「今回のみ信頼」または「信頼して保存」を
 選びます。保存先は OpenSSH と共通の `~/.ssh/known_hosts` です。
+安全で予測可能な追記のため、保存先は16 MiB以下の通常fileに限定し、symlinkは拒否します。
 
 ope-term は未知のホスト鍵を自動承認しません。保存済みの鍵が変わった場合は接続を拒否し、
 既存行を UI から上書きしません。変更が正当だと確認できた場合のみ、OpenSSH の

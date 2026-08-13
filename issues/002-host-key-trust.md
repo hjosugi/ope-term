@@ -16,5 +16,6 @@ Labels: priority:P0, area:ssh, security
 
 - [x] fingerprint を別経路で確認できる情報量がある
 - [x] 保存時は `known_hosts` の権限と改行を壊さない
+- [x] 同時保存を直列化し、symlinkと16 MiB超の保存先を拒否する
 - [x] changed key をワンクリックで上書きできない
 - [x] hashed known_hosts と非標準 port をテストする
