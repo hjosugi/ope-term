@@ -54,6 +54,8 @@
   接続情報も認証情報も複製しません。
 - 保存内容は読み込み時に再検証し、件数・hop 数・名前長を上限で丸めます。破損したストレージは
   空のワークスペースに degrade し、起動を妨げません。
+- JSON parse前と保存前にUTF-8 byte上限を検査します。shortcutは64 KiB、session log policyは
+  256 KiB、workspaceは1 MiBを超える値を拒否します。
 - private mode、quota不足、WebView設定でストレージが利用できない場合も起動とterminal操作は
   継続します。変更は現在の起動中だけ保持し、保存できなかったことをUIで通知します。
 - 復元したタブは接続を自動で開始しません。

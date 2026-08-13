@@ -44,7 +44,7 @@ ProxyJump、SFTP は SSH 専用 capability です。候補 transport と安全�
 - `route.ts`: 明示ルートと ProxyJump preview の純粋関数
 - `workspaces.ts`: 保存ルートと復元タブの正規化・境界値・永続化（alias 参照のみ）
 - `keybindings.ts`: ショートカットの正規化と永続化
-- `storage.ts`: WebView storage の読み書き例外をoptional stateの失敗結果へ変換
+- `storage.ts`: WebView storage の読み書き例外とUTF-8 byte上限をoptional stateの失敗結果へ変換
 - `fuzzy.ts`: Host / command / shortcut の共通 fuzzy ranking
 - `auth-secrets.ts`: 認証入力欄と短命な応答配列の明示消去
 - `sftp-ui.ts`: 2 ペイン一覧と直列 transfer queue、進捗、cancel、retry

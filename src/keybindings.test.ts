@@ -69,6 +69,8 @@ describe('keybindings', () => {
     )).toBe(false);
     expect(loadKeybindings({ getItem: () => { throw new Error('disabled'); } }, 'linux'))
       .toEqual(DEFAULT_KEYBINDINGS);
+    expect(loadKeybindings({ getItem: () => 'x'.repeat(64 * 1024 + 1) }, 'linux'))
+      .toEqual(DEFAULT_KEYBINDINGS);
   });
 
   it('evaluates route, terminal, palette, and editor context keys', () => {

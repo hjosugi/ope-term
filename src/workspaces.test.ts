@@ -132,6 +132,8 @@ describe('workspace persistence', () => {
       },
     };
     expect(loadWorkspaces(storage)).toEqual({ saved: [], tabs: [], activeTab: -1, paneLayout: null });
+    expect(loadWorkspaces({ getItem: () => 'x'.repeat(1024 * 1024 + 1) }))
+      .toEqual({ saved: [], tabs: [], activeTab: -1, paneLayout: null });
   });
 
   it('reports unavailable storage without throwing', () => {

@@ -12,3 +12,5 @@ v0.1 は Command Palette と単一 chord のカスタマイズに対応した。
 - [x] shortcut 競合を editor 上で警告する（同時に成立しない context は競合扱いしない）
 - [x] JSON で export/import できる（version付き、64 KiB上限、未知commandは無視）
 - [x] OS 既定の Ctrl/Cmd 差を表示・移行する（macOSはCmd、Linux/WindowsはCtrl）
+
+export/importとlocalStorageの読込・保存はJSON parse / write前に64 KiBで停止する。

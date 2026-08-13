@@ -1,4 +1,4 @@
-import { readStorage, writeStorage } from './storage';
+import { readBoundedStorage, writeBoundedStorage } from './storage';
 
 export const COMMAND_IDS = [
   'workbench.action.showCommands',
@@ -212,10 +212,10 @@ export function loadKeybindings(
 ): Record<CommandId, string> {
   const defaults = defaultKeybindings(platform);
   try {
-    const current = readStorage(storage, STORAGE_KEY);
+    const current = readBoundedStorage(storage, STORAGE_KEY, MAX_IMPORT_BYTES);
     if (current) return parseExport(current, platform).bindings;
 
-    const legacy = readStorage(storage, LEGACY_STORAGE_KEY);
+    const legacy = readBoundedStorage(storage, LEGACY_STORAGE_KEY, MAX_IMPORT_BYTES);
     if (!legacy) return defaults;
     const parsed = JSON.parse(legacy) as unknown;
     const legacyBindings = mergeBindings(DEFAULT_KEYBINDINGS, parsed);
@@ -237,7 +237,12 @@ export function saveKeybindings(
   storage: Pick<Storage, 'setItem'> = localStorage,
   platform: OperatingSystem = detectOperatingSystem(),
 ): boolean {
-  return writeStorage(storage, STORAGE_KEY, exportKeybindings(bindings, platform));
+  return writeBoundedStorage(
+    storage,
+    STORAGE_KEY,
+    exportKeybindings(bindings, platform),
+    MAX_IMPORT_BYTES,
+  );
 }
 
 export function exportKeybindings(

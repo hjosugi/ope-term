@@ -21,3 +21,26 @@ export function writeStorage(storage: WritableStorage, key: string, value: strin
     return false;
   }
 }
+
+export function readBoundedStorage(
+  storage: ReadableStorage,
+  key: string,
+  maximumBytes: number,
+): string | null {
+  const value = readStorage(storage, key);
+  return value !== null && isWithinUtf8Limit(value, maximumBytes) ? value : null;
+}
+
+export function writeBoundedStorage(
+  storage: WritableStorage,
+  key: string,
+  value: string,
+  maximumBytes: number,
+): boolean {
+  return isWithinUtf8Limit(value, maximumBytes) && writeStorage(storage, key, value);
+}
+
+function isWithinUtf8Limit(value: string, maximumBytes: number): boolean {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || value.length > maximumBytes) return false;
+  return new TextEncoder().encode(value).byteLength <= maximumBytes;
+}

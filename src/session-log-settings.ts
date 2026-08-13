@@ -1,4 +1,4 @@
-import { readStorage, writeStorage } from './storage';
+import { readBoundedStorage, writeBoundedStorage } from './storage';
 
 export interface SessionLogPolicy {
   enabled: boolean;
@@ -10,6 +10,7 @@ export interface SessionLogPolicy {
 
 const STORAGE_KEY = 'ope-term.session-logs.v1';
 const MAX_POLICIES = 256;
+const MAX_STORAGE_BYTES = 256 * 1024;
 const MIB = 1024 * 1024;
 const MAX_TEMPLATE_BYTES = 160;
 const TEMPLATE_VARIABLES = ['{host}', '{user}', '{date}', '{time}'] as const;
@@ -40,7 +41,7 @@ export function defaultLogPolicy(): SessionLogPolicy {
 
 export function loadLogPolicies(storage: Pick<Storage, 'getItem'> = localStorage): Record<string, SessionLogPolicy> {
   try {
-    const parsed: unknown = JSON.parse(readStorage(storage, STORAGE_KEY) ?? '{}');
+    const parsed: unknown = JSON.parse(readBoundedStorage(storage, STORAGE_KEY, MAX_STORAGE_BYTES) ?? '{}');
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const policies: Record<string, SessionLogPolicy> = {};
     for (const [key, value] of Object.entries(parsed).slice(0, MAX_POLICIES)) {
@@ -58,10 +59,11 @@ export function saveLogPolicies(
   policies: Record<string, SessionLogPolicy>,
   storage: Pick<Storage, 'setItem'> = localStorage,
 ): boolean {
-  return writeStorage(
+  return writeBoundedStorage(
     storage,
     STORAGE_KEY,
     JSON.stringify(Object.fromEntries(Object.entries(policies).slice(0, MAX_POLICIES))),
+    MAX_STORAGE_BYTES,
   );
 }
 

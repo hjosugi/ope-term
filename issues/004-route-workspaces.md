@@ -12,3 +12,6 @@ Labels: priority:P1, area:ui, enhancement
 - [x] 起動時に前回のタブとレイアウトを復元できる（タブ順と選択タブまで。pane レイアウトは #5 の実装後に追加する）
 - [x] 接続は自動実行せず、復元後にユーザーが開始する
 - [x] config 変更で alias が消えた場合に安全な degraded state を表示する
+
+workspace storeはJSON parse / write前に1 MiBで停止し、破損・無効・quota不足のstorageは
+terminal操作を止めず現在の起動中だけのstateへdegradeする。

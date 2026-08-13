@@ -19,6 +19,7 @@ describe('session log settings', () => {
   it('keeps unavailable storage non-fatal', () => {
     expect(saveLogPolicies({}, { setItem: () => { throw new Error('quota'); } })).toBe(false);
     expect(loadLogPolicies({ getItem: () => { throw new Error('disabled'); } })).toEqual({});
+    expect(loadLogPolicies({ getItem: () => 'x'.repeat(256 * 1024 + 1) })).toEqual({});
   });
 
   it('rejects malformed values and clamps rotation limits', () => {

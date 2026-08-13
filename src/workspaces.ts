@@ -1,5 +1,5 @@
 import type { PaneLayout } from './pane-layout';
-import { readStorage, writeStorage } from './storage';
+import { readBoundedStorage, writeBoundedStorage } from './storage';
 
 /**
  * Route workspaces persist only `~/.ssh/config` alias references.
@@ -34,6 +34,7 @@ const MAX_ALIAS_LENGTH = 4096;
 const MAX_ID_LENGTH = 64;
 
 const STORAGE_KEY = 'ope-term.workspaces.v1';
+const MAX_STORAGE_BYTES = 1024 * 1024;
 
 export function emptyWorkspaces(): WorkspaceState {
   return { saved: [], tabs: [], activeTab: -1, paneLayout: null };
@@ -167,11 +168,11 @@ function sanitizeStoredPaneLayout(value: unknown, tabCount: number): StoredPaneL
 }
 
 export function loadWorkspaces(storage: Pick<Storage, 'getItem'> = localStorage): WorkspaceState {
-  return parseWorkspaces(readStorage(storage, STORAGE_KEY));
+  return parseWorkspaces(readBoundedStorage(storage, STORAGE_KEY, MAX_STORAGE_BYTES));
 }
 
 export function saveWorkspaces(state: WorkspaceState, storage: Pick<Storage, 'setItem'> = localStorage): boolean {
-  return writeStorage(storage, STORAGE_KEY, JSON.stringify(state));
+  return writeBoundedStorage(storage, STORAGE_KEY, JSON.stringify(state), MAX_STORAGE_BYTES);
 }
 
 function createId(): string {
