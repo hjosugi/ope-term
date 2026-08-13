@@ -27,6 +27,7 @@ const HOST_KEY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_AUTH_PROMPTS: usize = 32;
 const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
+const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -731,6 +732,7 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
     let certificates = tokio::task::spawn_blocking(move || {
         certificate_candidates
             .iter()
+            .filter(|path| is_bounded_auth_file(path))
             .filter_map(|path| ssh_key::Certificate::read_file(path).ok())
             .collect::<Vec<_>>()
     })
@@ -744,9 +746,7 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
         }
         let load_path = path.clone();
         let loaded = tokio::task::spawn_blocking(move || {
-            load_path
-                .is_file()
-                .then(|| russh::keys::load_secret_key(&load_path, None))
+            is_bounded_auth_file(&load_path).then(|| russh::keys::load_secret_key(&load_path, None))
         })
         .await
         .context("SSH private key load task が失敗しました")?;
@@ -779,11 +779,13 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
                     responses.zeroize();
                     let load_path = path.clone();
                     let loaded = tokio::task::spawn_blocking(move || {
-                        russh::keys::load_secret_key(&load_path, Some(passphrase.as_str()))
+                        is_bounded_auth_file(&load_path).then(|| {
+                            russh::keys::load_secret_key(&load_path, Some(passphrase.as_str()))
+                        })
                     })
                     .await
                     .context("encrypted SSH private key load task が失敗しました")?;
-                    if let Ok(key) = loaded {
+                    if let Some(Ok(key)) = loaded {
                         decrypted = Some(key);
                         break;
                     }
@@ -877,6 +879,11 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
         username,
         endpoint.alias
     )
+}
+
+fn is_bounded_auth_file(path: &std::path::Path) -> bool {
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_AUTH_FILE_BYTES)
 }
 
 async fn authenticate_keyboard_interactive<H: client::Handler, P: AuthPromptProvider>(
@@ -1231,6 +1238,20 @@ sJWR7W+cGvJ/vLsw==
         assert_eq!(prompts.len(), 1);
         assert_eq!(prompts[0].kind, "key_passphrase");
         server.abort();
+    }
+
+    #[test]
+    fn auth_files_must_be_regular_and_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("identity");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_AUTH_FILE_BYTES).unwrap();
+        assert!(is_bounded_auth_file(&path));
+
+        file.set_len(MAX_AUTH_FILE_BYTES + 1).unwrap();
+        assert!(!is_bounded_auth_file(&path));
+        assert!(!is_bounded_auth_file(directory.path()));
+        assert!(!is_bounded_auth_file(&directory.path().join("missing")));
     }
 
     #[test]

@@ -21,6 +21,7 @@ const MAX_CONFIG_FILES: usize = 1024;
 const MAX_INCLUDE_MATCHES: usize = 1024;
 const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
 const MAX_ROUTE_HOPS: usize = 32;
+const MAX_AUTH_FILES: usize = 64;
 
 #[derive(Debug, Clone, Default)]
 enum Selector {
@@ -490,20 +491,26 @@ pub fn resolve(alias: &str, blocks: &[Block]) -> Result<Endpoint> {
         remote_user: &remote_user,
         home: home.as_deref(),
     };
-    let identity_files = values
+    let identity_files: Vec<_> = values
         .remove("identityfile")
         .unwrap_or_default()
         .into_iter()
         .filter(|value| !value.eq_ignore_ascii_case("none"))
         .map(|value| expand_home(&expand_tokens(&value, &token_context), home.as_deref()))
         .collect();
-    let certificate_files = values
+    if identity_files.len() > MAX_AUTH_FILES {
+        bail!("IdentityFile が {MAX_AUTH_FILES} 件を超えています");
+    }
+    let certificate_files: Vec<_> = values
         .remove("certificatefile")
         .unwrap_or_default()
         .into_iter()
         .filter(|value| !value.eq_ignore_ascii_case("none"))
         .map(|value| expand_home(&expand_tokens(&value, &token_context), home.as_deref()))
         .collect();
+    if certificate_files.len() > MAX_AUTH_FILES {
+        bail!("CertificateFile が {MAX_AUTH_FILES} 件を超えています");
+    }
     let proxy_jump = first(&values, "proxyjump")
         .filter(|value| !value.eq_ignore_ascii_case("none"))
         .map(|value| expand_tokens(&value, &token_context));
@@ -767,6 +774,18 @@ Host * !secret-*
         let resolved = resolve("prod-db", &parse(CONFIG)).unwrap();
         assert_eq!(resolved.user.as_deref(), Some("admin"));
         assert_eq!(resolved.identity_files.len(), 2);
+    }
+
+    #[test]
+    fn bounds_identity_and_certificate_candidates() {
+        for directive in ["IdentityFile", "CertificateFile"] {
+            let mut config = String::from("Host crowded\n");
+            for index in 0..=MAX_AUTH_FILES {
+                config.push_str(&format!("  {directive} ~/.ssh/key-{index}\n"));
+            }
+            let error = resolve("crowded", &parse(&config)).unwrap_err();
+            assert!(error.to_string().contains(&MAX_AUTH_FILES.to_string()));
+        }
     }
 
     #[test]
