@@ -47,6 +47,22 @@ export function auditCheckoutCredentials(workflow, label) {
   ];
 }
 
+export function auditActionPins(workflow, label) {
+  const failures = [];
+  for (const line of workflow.split("\n")) {
+    const match = line.match(/^\s*(?:-\s*)?uses:\s*([^#\s]+)(?:\s+#.*)?$/u);
+    if (!match) continue;
+    const action = match[1];
+    if (action.startsWith("./") || action.startsWith("docker://")) continue;
+    const separator = action.lastIndexOf("@");
+    const reference = separator >= 0 ? action.slice(separator + 1) : "";
+    if (!/^[0-9a-f]{40}$/u.test(reference)) {
+      failures.push(`${label} action must use a full commit SHA: ${action}`);
+    }
+  }
+  return failures;
+}
+
 async function collectFrontendFiles(directory) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -153,6 +169,7 @@ export async function verifySecurityPolicy(root = defaultRoot) {
     if (!name.endsWith(".yml") && !name.endsWith(".yaml")) continue;
     const workflow = await readFile(join(root, ".github/workflows", name), "utf8");
     failures.push(...auditCheckoutCredentials(workflow, name));
+    failures.push(...auditActionPins(workflow, name));
   }
 
   return failures;

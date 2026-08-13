@@ -73,7 +73,7 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     ["ope-term.cdx.json", "CycloneDX SBOM generation"],
     ["node scripts/release-assets.mjs release-assets release-upload", "flat release staging"],
     ["generate SHA-256 checksums", "release checksums"],
-    ["uses: actions/attest@v4", "artifact provenance attestation"],
+    ["name: Attest release assets", "artifact provenance attestation"],
     ["subject-path: release-upload/*", "attestation of published asset paths"],
     ["name: Preserve staged release assets", "read-only release staging job"],
     ["name: Download staged release assets", "write-scoped publish job"],

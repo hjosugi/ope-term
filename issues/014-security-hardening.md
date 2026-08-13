@@ -20,3 +20,5 @@ RustSec/pnpm監査、CycloneDX SBOM、週次security workflowを追加した。
 private vulnerability reportingが有効であることも確認済み。
 IPC payloadとcanonical ID、session / SFTP registry、SSH config、known_hosts、認証file、
 WebView storageの資源上限と失敗時degradeも自動テストで固定した。
+CIの外部Actionはfull commit SHAへ固定し、checkout credential非永続化とrelease write権限分離を
+policy testで監査する。

@@ -19,7 +19,8 @@
 - リモート出力は Rust から Channel 経由で xterm に渡し、HTML として挿入しません。
 - リモートの OSC 8 リンクは開かず、window 操作と clipboard 連携を無効化しています。
 - CSP はローカル資産のみを許可し、`scripts/security-policy.mjs` が CI で逸脱を検出します。
-- Actions checkoutはGit資格情報を永続化せず、release用の書込tokenは公開stepだけに限定します。
+- Actionsは全てfull commit SHAへ固定し、checkoutはGit資格情報を永続化しません。release用の
+  書込tokenは公開stepだけに限定します。可読なversion注記はDependabot更新用に残します。
 - SFTP の local filesystem 操作は WebView へ一般権限を与えず、native picker で選択した root の
   不透明 token と相対 path を検証する Rust command に限定します。transfer IDはtask生成前に
   検証し、同時transferはSSH sessionごとに8件で停止します。

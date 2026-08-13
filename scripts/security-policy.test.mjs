@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditCheckoutCredentials, auditCsp, verifySecurityPolicy } from "./security-policy.mjs";
+import {
+  auditActionPins,
+  auditCheckoutCredentials,
+  auditCsp,
+  verifySecurityPolicy,
+} from "./security-policy.mjs";
 
 const expected = {
   "default-src": ["'self'"],
@@ -40,5 +45,17 @@ steps:
   assert.match(
     auditCheckoutCredentials("steps:\n  - uses: actions/checkout@v7\n", "unsafe.yml")[0],
     /0\/1/u,
+  );
+});
+
+test("requires third-party actions to use immutable commit SHAs", () => {
+  assert.deepEqual(auditActionPins(`
+steps:
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+  - uses: ./local-action
+`, "safe.yml"), []);
+  assert.match(
+    auditActionPins("steps:\n  - uses: actions/checkout@v7\n", "unsafe.yml")[0],
+    /full commit SHA/u,
   );
 });

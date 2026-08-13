@@ -68,6 +68,7 @@ tag build は署名情報が一つでも欠けていれば publish 前に失敗�
 全jobのcheckoutはGit資格情報をworktreeへ残しません。bundle buildにはGitHub tokenを渡さず、
 `stage-release`は`contents: read`でSBOM・checksum・attestationを作って短期artifactへ固定します。
 別の`publish` jobだけに`contents: write`を与え、検証済みartifactを取得してdraft Releaseを作ります。
+外部Actionは可変tagではなくfull commit SHAへ固定し、version注記をDependabotが更新します。
 
 macOS は次の Actions secrets を使用します。
 
