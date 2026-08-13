@@ -15,6 +15,8 @@ describe('UI size tokens', () => {
       '--font-sm:',
       '--font-md:',
       '--font-lg:',
+      '--terminal-font-size:',
+      '--terminal-line-height:',
       '--control-sm:',
       '--control-md:',
       '--control-lg:',

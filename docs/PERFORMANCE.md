@@ -21,6 +21,8 @@
 - resize は 80 ms debounce
 - セッションごとの bounded command queue（256）
 - xterm WebGL を優先し、context loss 時は標準 renderer へ戻す
+- performance harness は計測有効時だけ、WebGL addon は fallback 強制時以外だけ別 chunk から読む
+- production build の main chunk を 500 kB 未満に保ち、optional instrumentation / renderer を分離
 - Rust セッション task を terminal ごとに分離
 - SSH keepalive 15 s、3 回失敗で切断検出
 

@@ -29,6 +29,10 @@ responsive な `clamp()` を使います。
 shortcut、hostname、status などの機械的な情報には `--mono` を使います。説明文や
 見出しは system UI font のままにし、外部 font を読み込みません。
 
+xterm.js は canvas renderer のため CSS の `font` declaration を直接継承できません。
+`--terminal-font-size`、`--terminal-line-height`、`--mono` を `design-tokens.ts` で読み、xterm option
+へ渡します。terminal のサイズ感を変更するときも TypeScript に数値を追加しません。
+
 ## Controls と chrome
 
 | token | 役割 |

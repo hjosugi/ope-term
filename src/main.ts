@@ -1,10 +1,10 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import './style.css';
 
 import { clearAuthResponses, takeAndClearAuthResponses } from './auth-secrets';
+import { cssNumberToken, cssTextToken } from './design-tokens';
 import { fuzzyFilter } from './fuzzy';
 import {
   KEY_SEQUENCE_TIMEOUT_MS,
@@ -22,7 +22,8 @@ import {
   type CommandId,
 } from './keybindings';
 import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
-import { loadRendererPreference, type BrowserPerformanceHarness } from './performance';
+import type { BrowserPerformanceHarness } from './performance';
+import { loadRendererPreference } from './renderer-preference';
 import {
   containsPaneSession,
   focusPane,
@@ -284,6 +285,27 @@ const pendingHostKeyPrompts: HostKeyDialogItem[] = [];
 let activeAuthPrompt: AuthDialogItem | null = null;
 const pendingAuthPrompts: AuthDialogItem[] = [];
 const sessions = new Map<string, SessionUi>();
+const rootStyle = getComputedStyle(document.documentElement);
+const terminalFontFamily = cssTextToken(
+  rootStyle,
+  '--mono',
+  'JetBrains Mono, HackGen Console NF, Cascadia Code, monospace',
+);
+const terminalFontSize = cssNumberToken(rootStyle, '--terminal-font-size', 13);
+const terminalLineHeight = cssNumberToken(rootStyle, '--terminal-line-height', 1.16);
+const rendererPreference = loadRendererPreference();
+type WebglAddonConstructor = typeof import('@xterm/addon-webgl').WebglAddon;
+let WebglAddonClass: WebglAddonConstructor | undefined;
+let webglLoadError: unknown;
+const rendererAddonReady = rendererPreference === 'fallback'
+  ? Promise.resolve()
+  : import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        WebglAddonClass = WebglAddon;
+      })
+      .catch((error: unknown) => {
+        webglLoadError = error;
+      });
 let performanceHarness: BrowserPerformanceHarness | undefined;
 const performanceHarnessReady = localStorage.getItem('ope-term.performance.enabled') === 'true'
   ? import('./performance').then(({ BrowserPerformanceHarness: Harness }) => {
@@ -292,7 +314,6 @@ const performanceHarnessReady = localStorage.getItem('ope-term.performance.enabl
       window.__opeTermPerformance = performanceHarness;
     })
   : Promise.resolve();
-const rendererPreference = loadRendererPreference();
 
 const commands: CommandDefinition[] = [
   {
@@ -830,9 +851,9 @@ function createSession(sessionRoute: string[], local?: LocalSessionConfig): Sess
     allowTransparency: false,
     cursorBlink: true,
     cursorStyle: 'bar',
-    fontFamily: 'JetBrains Mono, HackGen Console NF, Cascadia Code, monospace',
-    fontSize: 13,
-    lineHeight: 1.16,
+    fontFamily: terminalFontFamily,
+    fontSize: terminalFontSize,
+    lineHeight: terminalLineHeight,
     linkHandler: {
       // Remote OSC 8 hyperlinks are rendered as text but never activated.
       activate: () => undefined,
@@ -859,11 +880,14 @@ function createSession(sessionRoute: string[], local?: LocalSessionConfig): Sess
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(terminalContainer);
-  if (rendererPreference === 'fallback') {
+  if (rendererPreference === 'fallback' || !WebglAddonClass) {
     performanceHarness?.setRenderer('fallback');
+    if (rendererPreference === 'webgl' && webglLoadError) {
+      toast(`WebGL renderer を読み込めません: ${String(webglLoadError)}`);
+    }
   } else {
     try {
-      const webgl = new WebglAddon();
+      const webgl = new WebglAddonClass();
       webgl.onContextLoss(() => {
         webgl.dispose();
         performanceHarness?.setRenderer('fallback');
@@ -2295,7 +2319,7 @@ window.addEventListener('resize', () => {
 });
 
 async function boot(): Promise<void> {
-  await performanceHarnessReady;
+  await Promise.all([performanceHarnessReady, rendererAddonReady]);
   syncKeybindingLabels();
   await loadHosts();
   void loadConfigPath();

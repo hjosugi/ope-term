@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { evaluatePerformance, loadRendererPreference, percentile, type PerformanceReport } from './performance';
+import { evaluatePerformance, percentile, type PerformanceReport } from './performance';
+import { loadRendererPreference } from './renderer-preference';
 
 function report(overrides: Partial<PerformanceReport> = {}): PerformanceReport {
   return {
