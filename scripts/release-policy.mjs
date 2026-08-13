@@ -21,6 +21,22 @@ function requireWorkflowFragment(workflow, fragment, description) {
   requireValue(workflow.includes(fragment), `release workflow is missing ${description}`);
 }
 
+function workflowStep(workflow, name) {
+  const lines = workflow.split("\n");
+  const marker = `- name: ${name}`;
+  const start = lines.findIndex((line) => line.trim() === marker);
+  requireValue(start >= 0, `release workflow is missing ${name} step`);
+  const indent = lines[start].search(/\S/);
+  let end = start + 1;
+  while (end < lines.length) {
+    const trimmed = lines[end].trim();
+    const nextIndent = lines[end].search(/\S/);
+    if (trimmed && nextIndent >= 0 && nextIndent <= indent) break;
+    end += 1;
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 export async function verifyReleasePolicy(root = process.cwd()) {
   const tauriRoot = resolve(root, "src-tauri");
   const [configText, workflow, justfile, packageText] = await Promise.all([
@@ -70,6 +86,9 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     ["target: x86_64-apple-darwin", "Intel macOS target"],
     ["WINDOWS_CERTIFICATE", "Windows signing secret gate"],
     ["APPLE_CERTIFICATE", "macOS signing secret gate"],
+    ["name: Build unsigned bundles", "secret-free workflow-dispatch bundle step"],
+    ["if: ${{ !startsWith(github.ref, 'refs/tags/v') }}", "unsigned bundle tag exclusion"],
+    ["name: Build signed bundles", "tag-only signed bundle step"],
     ["uploadWorkflowArtifacts: true", "workflow artifact upload"],
     ["-- --locked", "Cargo.lock-enforced bundle build"],
     ["ope-term.cdx.json", "CycloneDX SBOM generation"],
@@ -85,6 +104,25 @@ export async function verifyReleasePolicy(root = process.cwd()) {
   for (const [fragment, description] of workflowRequirements) {
     requireWorkflowFragment(workflow, fragment, description);
   }
+
+  const unsignedBundleStep = workflowStep(workflow, "Build unsigned bundles");
+  requireValue(
+    unsignedBundleStep.includes("if: ${{ !startsWith(github.ref, 'refs/tags/v') }}"),
+    "unsigned bundle step must run only outside tag builds",
+  );
+  requireValue(
+    !unsignedBundleStep.includes("APPLE_") && !unsignedBundleStep.includes("secrets."),
+    "unsigned bundle step must not receive signing secrets",
+  );
+  const signedBundleStep = workflowStep(workflow, "Build signed bundles");
+  requireValue(
+    signedBundleStep.includes("if: startsWith(github.ref, 'refs/tags/v')"),
+    "signed bundle step must run only for tags",
+  );
+  requireValue(
+    signedBundleStep.includes("APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}"),
+    "signed bundle step must receive the Apple certificate",
+  );
 
   for (const [fragment, description] of [
     ["require(\"./package.json\").version", "package-derived SBOM version"],

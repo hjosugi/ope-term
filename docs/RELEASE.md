@@ -65,6 +65,10 @@ acceptance の残作業にします。この環境差を回避するために sy
 tag build は署名情報が一つでも欠けていれば publish 前に失敗します。鍵や証明書をリポジトリへ
 保存してはいけません。
 
+`workflow_dispatch` のunsigned buildは署名用secretをstep環境へ渡しません。空文字の
+`APPLE_CERTIFICATE`もTauriからはimport対象に見えるため、signed/unsigned bundle stepを分離し、
+tag以外では変数そのものを設定しないことをrelease policyで検査します。
+
 全jobのcheckoutはGit資格情報をworktreeへ残しません。bundle buildにはGitHub tokenを渡さず、
 `stage-release`は`contents: read`でSBOM・checksum・attestationを作って短期artifactへ固定します。
 別の`publish` jobだけに`contents: write`を与え、検証済みartifactを取得してdraft Releaseを作ります。
