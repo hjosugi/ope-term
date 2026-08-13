@@ -23,12 +23,14 @@ function requireWorkflowFragment(workflow, fragment, description) {
 
 export async function verifyReleasePolicy(root = process.cwd()) {
   const tauriRoot = resolve(root, "src-tauri");
-  const [configText, workflow, justfile] = await Promise.all([
+  const [configText, workflow, justfile, packageText] = await Promise.all([
     readFile(resolve(tauriRoot, "tauri.conf.json"), "utf8"),
     readFile(resolve(root, ".github/workflows/release.yml"), "utf8"),
     readFile(resolve(root, "Justfile"), "utf8"),
+    readFile(resolve(root, "package.json"), "utf8"),
   ]);
   const config = JSON.parse(configText);
+  const packageJson = JSON.parse(packageText);
   const icons = config.bundle?.icon;
 
   requireValue(config.bundle?.active === true, "Tauri bundle.active must stay enabled");
@@ -92,6 +94,15 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     requireValue(justfile.includes(fragment), `SBOM recipe is missing ${description}`);
   }
 
+  requireValue(
+    config.build?.beforeBuildCommand === "pnpm run build",
+    "Tauri beforeBuildCommand must own the validated frontend build",
+  );
+  requireValue(packageJson.scripts?.bundle === "vite build", "package scripts must expose a Vite-only bundle");
+  requireValue(
+    packageJson.scripts?.build === "pnpm run typecheck && pnpm run bundle",
+    "package build must validate types before bundling",
+  );
   return { iconCount: icons.length, pngSizes: [...pngSizes].sort((left, right) => left - right) };
 }
 

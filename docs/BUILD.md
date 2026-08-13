@@ -32,7 +32,8 @@ package の wrapper が欠ける回帰を防ぐため、`nix flake check` は3�
 
 | コマンド | 用途 |
 |---|---|
-| `pnpm run build` | 日常の高速なフロントエンド build |
+| `pnpm run bundle` | 型検査済みの経路から呼ぶ Vite-only bundle |
+| `pnpm run build` | TypeScript型検査を含む standalone frontend build |
 | `cargo build --locked --manifest-path src-tauri/Cargo.toml` | Cargo.lock 固定の日常 Rust build |
 | `./scripts/run-bazel test //:check` | sandbox 内の Vitest と TypeScript 型検査 |
 | `./scripts/run-bazel build //:frontend` | hermetic Node toolchain による Vite build |
@@ -57,6 +58,12 @@ package の wrapper が欠ける回帰を防ぐため、`nix flake check` は3�
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。
+
+`just check` は lint phase で TypeScript型検査を1回実行し、build phaseでは
+`pnpm run bundle` だけを呼びます。standaloneの `just build` / `pnpm run build` は型検査を省略しません。
+NixのTauri packageは `tauri.conf.json` の `beforeBuildCommand` をfrontend buildの正本とし、
+derivationの `preBuild` から同じcommandを重複実行しません。この分離は
+release policyとNixの `build-path-policy` checkが回帰検査します。
 
 Nix build の source は、再現性と転送量を保つため `.venv*`、`graphify-out`、`site`、
 `dist`、`target` などの生成物を除外します。一方、frontend check が実行する
@@ -129,7 +136,8 @@ just benchmark-build
 
 Node、pnpm、Bazel はそれぞれ `flake.nix`、`packageManager`、`.bazelversion` で明示的に
 固定しています。更新時は CI とローカルの両方で同じ major が使われることを
-確認してください。
+確認してください。project versionはnpm、Cargo、Cargo.lock、Tauriに加えて、Nixの
+`build-path-policy` が `MODULE.bazel` と `flake.nix` の一致も検証します。
 Rust の MSRV は `src-tauri/Cargo.toml` の `rust-version` が正本です。依存更新時は
 `cargo metadata --locked` で transitive crate の要求 version が MSRV を超えていないことも
 確認し、`just msrv-check` を通します。CI / Nix の通常 toolchain は MSRV より新しい固定 versionを

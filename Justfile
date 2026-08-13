@@ -25,9 +25,16 @@ lint:
     ./scripts/run-cached cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
     ./scripts/run-cached cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-build:
+frontend-build:
     ./scripts/run-cached pnpm run build
+
+frontend-bundle:
+    ./scripts/run-cached pnpm run bundle
+
+rust-build:
     ./scripts/run-cached cargo build --locked --manifest-path src-tauri/Cargo.toml
+
+build: frontend-build rust-build
 
 version-check *args:
     ./scripts/run-cached node scripts/version-consistency.mjs {{args}}
@@ -35,7 +42,7 @@ version-check *args:
 release-policy:
     ./scripts/run-cached pnpm run release:policy
 
-check: lint test build
+check: lint test frontend-bundle rust-build
 
 security:
     ./scripts/run-cached pnpm run security:policy

@@ -117,10 +117,6 @@
 
             buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
 
-            preBuild = ''
-              pnpm run build
-            '';
-
             preFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               gappsWrapperArgs+=(
                 --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.mesa ]}"
@@ -166,6 +162,28 @@
         {
           inherit package;
           frontend = self.packages.${system}.frontend;
+          build-path-policy =
+            pkgs.runCommand "ope-term-build-path-policy"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+                flakeSource = ./flake.nix;
+                moduleSource = ./MODULE.bazel;
+                packageSource = ./package.json;
+                tauriSource = ./src-tauri/tauri.conf.json;
+              }
+              ''
+                test "$(jq -r '.scripts.bundle' "$packageSource")" = "vite build"
+                test "$(jq -r '.scripts.build' "$packageSource")" = "pnpm run typecheck && pnpm run bundle"
+                test "$(jq -r '.build.beforeBuildCommand' "$tauriSource")" = "pnpm run build"
+                version="$(jq -r '.version' "$packageSource")"
+                test "$(sed -n 's/^[[:space:]]*version = "\([^"]*\)",/\1/p' "$moduleSource")" = "$version"
+                test "$(sed -n 's/^[[:space:]]*version = "\([^"]*\)";/\1/p' "$flakeSource" | sort -u)" = "$version"
+                if grep 'pre[B]uild =' "$flakeSource"; then
+                  echo "Nix app must not duplicate Tauri's frontend build" >&2
+                  exit 1
+                fi
+                touch "$out"
+              '';
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           linux-runtime-wrapper =
