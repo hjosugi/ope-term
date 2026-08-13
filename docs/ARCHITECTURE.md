@@ -44,6 +44,7 @@ ProxyJump、SFTP は SSH 専用 capability です。候補 transport と安全�
 - `route.ts`: 明示ルートと ProxyJump preview の純粋関数
 - `workspaces.ts`: 保存ルートと復元タブの正規化・境界値・永続化（alias 参照のみ）
 - `keybindings.ts`: ショートカットの正規化と永続化
+- `storage.ts`: WebView storage の読み書き例外をoptional stateの失敗結果へ変換
 - `fuzzy.ts`: Host / command / shortcut の共通 fuzzy ranking
 - `auth-secrets.ts`: 認証入力欄と短命な応答配列の明示消去
 - `sftp-ui.ts`: 2 ペイン一覧と直列 transfer queue、進捗、cancel、retry
@@ -79,7 +80,8 @@ picker token だけを受け付けます。
 実装済み: `Host`, `Match`, `Include`, `HostName`, `User`, `Port`, `IdentityFile`,
 `CertificateFile`, `IdentitiesOnly`, `ProxyJump`, `HostKeyAlias`, token、`*`, `?`, `!`, `Key=Value`。
 Include は循環と 32 階層を検査し、全 config 8 MiB / 1024 file、1 glob 1024 match の
-budget 内で lexical order に読み込みます。
+budget 内で lexical order に読み込みます。解決後の `IdentityFile` / `CertificateFile` は各64件、
+認証層が読む各fileは1 MiBを上限にします。
 
 未実装: `CanonicalizeHostname` と OpenSSH config 全 directive / token の完全互換。互換範囲外は
 黙って安全性を弱めず、issue 単位で追加します。

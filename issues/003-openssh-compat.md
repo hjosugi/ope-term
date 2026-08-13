@@ -12,3 +12,8 @@ Labels: priority:P1, area:ssh, enhancement
 - [x] `%h`, `%n`, `%p`, `%r`, `%d` の token 展開を実装する
 - [x] `HostKeyAlias`, `CertificateFile`, `IdentitiesOnly` を認証層へ渡す
 - [x] `ssh -G <host>` と golden test で比較する
+
+## 実装メモ
+
+Includeは全体8 MiB / 1024 file、深さ32、globごと1024 matchで停止する。
+解決後の`IdentityFile` / `CertificateFile`はhostごとに各64件を上限とする。

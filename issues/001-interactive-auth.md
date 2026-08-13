@@ -21,4 +21,5 @@ v0.1 は Unix ssh-agent とパスフレーズなし秘密鍵だけを扱う。MF
 - [x] 多段接続のどの hop が要求しているか UI に表示する
 
 暗号化鍵の読込/KDFはTokio connection taskからblocking poolへ分離し、移動したpassphraseも
-drop時にzeroizeする。認証中のterminal入力はshellへ持ち越さない。
+drop時にzeroizeする。認証中のterminal入力はshellへ持ち越さない。秘密鍵・証明書は通常fileかつ
+各1 MiB以下、hostごとの設定候補は各64件までに制限する。

@@ -34,9 +34,10 @@
 - password、OTP、秘密鍵 passphrase は永続化・ログ出力せず、認証専用の使い捨て IPC でだけ
   渡します。
 - 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
-- `known_hosts` は通常fileかつ16 MiB以下に制限し、SSH config、trust store、証明書・秘密鍵の
-  同期I/Oと暗号化鍵KDFはasync connection taskを占有しないblocking poolで実行します。
-  blocking taskへ渡したpassphraseもdrop時にzeroizeします。
+- `known_hosts` は通常fileかつ16 MiB以下、証明書・秘密鍵は通常fileかつ各1 MiB以下に制限し、
+  `IdentityFile` / `CertificateFile` 候補はhostごとに各64件で停止します。SSH config、trust store、
+  証明書・秘密鍵の同期I/Oと暗号化鍵KDFはasync connection taskを占有しないblocking poolで
+  実行し、blocking taskへ渡したpassphraseもdrop時にzeroizeします。
 
 ## 永続化
 
@@ -44,6 +45,8 @@
   接続情報も認証情報も複製しません。
 - 保存内容は読み込み時に再検証し、件数・hop 数・名前長を上限で丸めます。破損したストレージは
   空のワークスペースに degrade し、起動を妨げません。
+- private mode、quota不足、WebView設定でストレージが利用できない場合も起動とterminal操作は
+  継続します。変更は現在の起動中だけ保持し、保存できなかったことをUIで通知します。
 - 復元したタブは接続を自動で開始しません。
 
 ## 報告

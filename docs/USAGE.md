@@ -51,6 +51,8 @@ config を編集したら `Ctrl+Shift+R`（一覧見出しの `↻`）で再読�
   scrollback とタブ位置は保持します。
 - config から alias が消えた場合は degraded 表示になります。該当ルートとピースを
   赤く示し、接続ボタンを無効にして、消えた Host 名を表示します。
+- private modeやquota不足でWebView storageへ保存できない場合も、terminal操作は中断しません。
+  UIに警告を表示し、workspaceやshortcutの変更は現在の起動中だけ保持します。
 
 ## Terminal pane
 
