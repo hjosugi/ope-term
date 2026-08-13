@@ -67,6 +67,7 @@ fuzz-smoke duration="30":
 
 docs:
     ./scripts/run-cached mkdocs build --strict
+    ./scripts/run-cached pnpm run docs:policy
 
 docs-serve:
     ./scripts/run-cached mkdocs serve

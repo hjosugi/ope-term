@@ -69,6 +69,10 @@
 
     Rust core と WebView の境界、接続シーケンス、故障分離。
 
+- **[Transport 境界](TRANSPORTS.md)**
+
+    SSH / local の共通 interface と、telnet / serial 候補の安全 gate・OS lifecycle。
+
 - **[UI サイズと CSS token](DESIGN_SYSTEM.md)**
 
     spacing、文字、control、layout の共通 scale と変更ルール。

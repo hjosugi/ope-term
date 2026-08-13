@@ -16,6 +16,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "pnpm run typecheck && vite build",
+    "docs:policy": "node scripts/docs-policy.mjs",
     "performance:fixture": "node scripts/performance-fixture.mjs",
     "performance:gate": "node scripts/performance-gate.mjs",
     "performance:bundle": "node scripts/performance-bundle.mjs",

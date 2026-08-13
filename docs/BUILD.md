@@ -31,7 +31,7 @@ just dev
 | `just fuzz-check` | 2つのfuzz targetをstable Rustでコンパイル |
 | `just fuzz-smoke 30` | nightly + ASanでparserとroute expansionを各30秒fuzz |
 | `just sbom` | CycloneDX JSONの依存SBOMを生成 |
-| `just docs` | MkDocs のドキュメントサイトを strict モードで `site/` へ生成 |
+| `just docs` | MkDocs を strict 生成し、生成 HTML と README の内部 URL / anchor を検証 |
 | `just docs-serve` | ドキュメントサイトのローカルプレビュー |
 | `just performance-fixture` | 100 MiBのterminal output fixtureをstdoutへstream |
 | `just performance-gate <report>` | 実機performance JSONをrelease閾値で検証 |
@@ -47,8 +47,9 @@ Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生�
 ## ドキュメントサイト
 
 `docs/` の Markdown を MkDocs（Material テーマ）で静的サイトへ変換し、`main` への push で
-GitHub Pages へ配信します。`mkdocs.yml` は `strict: true` のため、リンク切れや nav の
-記述漏れは build 失敗として検出されます。ツールチェーンは `requirements-docs.txt` に固定し、
+GitHub Pages へ配信します。`mkdocs.yml` の `strict: true` に加え、`docs-policy.mjs` が生成済み
+HTML を巡回し、同一 site 内の page / asset / anchor と README の公開 docs URL を検証します。
+リンク切れや nav の記述漏れは build 失敗になります。ツールチェーンは `requirements-docs.txt` に固定し、
 Nix dev shell にも同じ `mkdocs` / `mkdocs-material` を入れています。Nix を使わない場合は
 venv へ導入してください。
 
