@@ -29,6 +29,8 @@ const MAX_AUTH_PROMPTS: usize = 32;
 const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_ACTIVE_SFTP_TRANSFERS: usize = 8;
+#[cfg(unix)]
+const MAX_AGENT_IDENTITIES: usize = 64;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -979,7 +981,7 @@ async fn authenticate_with_agent<H: client::Handler>(
     let mut agent = AgentClient::connect_env().await?;
     let identities = agent.request_identities().await?;
     let hash = handle.best_supported_rsa_hash().await?.flatten();
-    for identity in identities {
+    for identity in bounded_agent_identities(identities) {
         if let AgentIdentity::PublicKey { key, .. } = identity {
             let result = handle
                 .authenticate_publickey_with(username, key, hash, &mut agent)
@@ -996,6 +998,11 @@ async fn authenticate_with_agent<H: client::Handler>(
         }
     }
     Ok(AuthProgress::Continue(methods))
+}
+
+#[cfg(unix)]
+fn bounded_agent_identities<T>(identities: Vec<T>) -> impl Iterator<Item = T> {
+    identities.into_iter().take(MAX_AGENT_IDENTITIES)
 }
 
 fn default_username() -> String {
@@ -1307,6 +1314,16 @@ sJWR7W+cGvJ/vLsw==
             )
             .unwrap_err()
             .contains(&MAX_ACTIVE_SFTP_TRANSFERS.to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounds_agent_authentication_attempts() {
+        let identities = (0..MAX_AGENT_IDENTITIES + 10).collect();
+        assert_eq!(
+            bounded_agent_identities(identities).count(),
+            MAX_AGENT_IDENTITIES
         );
     }
 

@@ -43,6 +43,8 @@
   `IdentityFile` / `CertificateFile` 候補はhostごとに各64件で停止します。SSH config、trust store、
   証明書・秘密鍵の同期I/Oと暗号化鍵KDFはasync connection taskを占有しないblocking poolで
   実行し、blocking taskへ渡したpassphraseもdrop時にzeroizeします。
+- ssh-agentが返したidentityも先頭64件までを認証候補にし、agent異常時に無制限の認証試行を
+  行いません。
 - SSH configからUIへ展開する具体Hostは2,048件で停止し、大量設定による二乗的なprofile解決を
   開始前に拒否します。
 
