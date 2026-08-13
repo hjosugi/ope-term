@@ -34,6 +34,8 @@
 - password、OTP、秘密鍵 passphrase は永続化・ログ出力せず、認証専用の使い捨て IPC でだけ
   渡します。
 - 未知のホスト鍵は SHA256 fingerprint を確認するまで接続せず、変更された鍵は常に拒否します。
+- `known_hosts` は通常fileかつ16 MiB以下に制限し、SSH configとtrust storeの同期I/Oはasync
+  connection taskを占有しないblocking poolで実行します。
 
 ## 永続化
 

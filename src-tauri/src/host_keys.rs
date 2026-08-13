@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use russh::keys::{Error as KeyError, ssh_key};
 
+const MAX_KNOWN_HOSTS_BYTES: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum KnownHostStatus {
     Trusted,
@@ -24,6 +26,17 @@ pub fn check(
     port: u16,
     key: &ssh_key::PublicKey,
 ) -> Result<KnownHostStatus> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            bail!("known_hosts は通常 file でなければなりません")
+        }
+        Ok(metadata) if metadata.len() > MAX_KNOWN_HOSTS_BYTES => {
+            bail!("known_hosts は {MAX_KNOWN_HOSTS_BYTES} bytes 以下にしてください")
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("known_hosts を確認できません"),
+    }
     match russh::keys::known_hosts::check_known_hosts_path(hostname, port, key, path) {
         Ok(true) => Ok(KnownHostStatus::Trusted),
         Ok(false) => Ok(KnownHostStatus::Unknown),
@@ -153,5 +166,17 @@ mod tests {
 
         let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn rejects_oversized_and_non_file_known_hosts() {
+        let directory = tempfile::tempdir().expect("directory");
+        let key = parse_public_key_base64(KEY_ONE).expect("key");
+        let oversized = directory.path().join("oversized");
+        let file = std::fs::File::create(&oversized).expect("file");
+        file.set_len(MAX_KNOWN_HOSTS_BYTES + 1)
+            .expect("sparse file");
+        assert!(check(&oversized, "example.com", 22, &key).is_err());
+        assert!(check(directory.path(), "example.com", 22, &key).is_err());
     }
 }

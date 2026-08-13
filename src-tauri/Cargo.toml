@@ -35,7 +35,7 @@ serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.11.5", features = [], optional = true }
 tauri-plugin-dialog = { version = "2.7.2", optional = true }
 time = { version = "0.3.47", features = ["formatting"], optional = true }
-tokio = { version = "1.48", features = ["fs", "io-util", "sync", "time"], optional = true }
+tokio = { version = "1.48", features = ["fs", "io-util", "rt", "sync", "time"], optional = true }
 uuid = { version = "1.18", features = ["v4"], optional = true }
 zeroize = { version = "1.8", optional = true }
 

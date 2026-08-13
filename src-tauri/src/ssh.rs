@@ -192,8 +192,13 @@ pub async fn run(
     host_key_answers: mpsc::Receiver<HostKeyAnswer>,
     auth_answers: mpsc::Receiver<AuthAnswer>,
 ) -> Result<CloseReason> {
-    let blocks = ssh_config::load_default()?;
-    let chain = ssh_config::chain_for_route(&request.route, &blocks)?;
+    let route = request.route.clone();
+    let chain = tokio::task::spawn_blocking(move || {
+        let blocks = ssh_config::load_default()?;
+        ssh_config::chain_for_route(&route, &blocks)
+    })
+    .await
+    .context("SSH config parse task が失敗しました")??;
     let log = match (request.log.clone(), log_directory) {
         (Some(input), Some(directory)) if input.enabled => {
             let target = chain
@@ -480,12 +485,15 @@ impl client::Handler for HostVerifier {
         &mut self,
         server_public_key: &ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        match host_keys::check(
-            &self.known_hosts_path,
-            &self.known_hosts_hostname,
-            self.port,
-            server_public_key,
-        )? {
+        let path = self.known_hosts_path.clone();
+        let hostname = self.known_hosts_hostname.clone();
+        let port = self.port;
+        let key = server_public_key.clone();
+        let status =
+            tokio::task::spawn_blocking(move || host_keys::check(&path, &hostname, port, &key))
+                .await
+                .context("known_hosts check task が失敗しました")??;
+        match status {
             KnownHostStatus::Trusted => Ok(true),
             KnownHostStatus::Changed { line } => {
                 self.prompt(server_public_key, "changed", Some(line));
@@ -506,12 +514,15 @@ impl client::Handler for HostVerifier {
                     ),
                     HostKeyDecision::TrustOnce => Ok(true),
                     HostKeyDecision::TrustAndSave => {
-                        host_keys::save(
-                            &self.known_hosts_path,
-                            &self.known_hosts_hostname,
-                            self.port,
-                            server_public_key,
-                        )?;
+                        let path = self.known_hosts_path.clone();
+                        let hostname = self.known_hosts_hostname.clone();
+                        let port = self.port;
+                        let key = server_public_key.clone();
+                        tokio::task::spawn_blocking(move || {
+                            host_keys::save(&path, &hostname, port, &key)
+                        })
+                        .await
+                        .context("known_hosts save task が失敗しました")??;
                         Ok(true)
                     }
                 }
