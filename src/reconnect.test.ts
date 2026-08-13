@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_AUTO_RETRIES,
+  canQueueTerminalInput,
   closeMessage,
   isCurrentConnection,
   retryDelayMs,
@@ -30,6 +31,13 @@ describe('reconnect policy', () => {
     expect(isCurrentConnection('new-id', 'new-id')).toBe(true);
     expect(isCurrentConnection('new-id', 'old-id')).toBe(false);
     expect(isCurrentConnection(null, 'closed-id')).toBe(false);
+  });
+
+  it('queues terminal input only for an established shell', () => {
+    expect(canQueueTerminalInput('connection', 'connected')).toBe(true);
+    expect(canQueueTerminalInput('connection', 'connecting')).toBe(false);
+    expect(canQueueTerminalInput('connection', 'closed')).toBe(false);
+    expect(canQueueTerminalInput(null, 'connected')).toBe(false);
   });
 
   it('explains every close reason', () => {

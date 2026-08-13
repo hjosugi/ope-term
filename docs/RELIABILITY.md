@@ -43,7 +43,9 @@ CachyOS lab machineのsystemd timerで行い、reportとjournalをrelease artifa
 
 frontendは再接続ごとに新しいconnection IDを発行し、eventとterminal dataの両方で一致するIDだけを
 受け入れます。tab close時はbackendの応答を待たずにIDを無効化するため、遅延frameが破棄済みxtermや
-次の接続へ混ざりません。切断時の未送信input bufferも同時に破棄します。
+次の接続へ混ざりません。terminal inputはshellがreadyになった `connected` 状態でだけbatchへ入れ、
+送信timerでもconnection IDと状態を再検証します。接続待ち・認証中・切断時の入力と未送信bufferは
+新しいshellへ持ち越しません。
 
 ## tmux / screenへ復帰するopt-in workflow
 

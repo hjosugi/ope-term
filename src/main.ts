@@ -23,10 +23,12 @@ import {
 } from './keybindings';
 import {
   MAX_AUTO_RETRIES,
+  canQueueTerminalInput,
   closeMessage,
   isCurrentConnection,
   retryDelayMs,
   shouldAutoRetry,
+  type SessionState,
 } from './reconnect';
 import type { BrowserPerformanceHarness } from './performance';
 import { loadRendererPreference } from './renderer-preference';
@@ -78,7 +80,6 @@ import {
   type WorkspaceState,
 } from './workspaces';
 
-type SessionState = 'idle' | 'connecting' | 'connected' | 'closed';
 type SessionKind = 'ssh' | 'local';
 
 interface ShellProfile {
@@ -1006,14 +1007,20 @@ function cancelRetry(session: SessionUi): void {
 
 function queueInput(session: SessionUi, data: string): void {
   const connectionId = session.connectionId;
-  if (!connectionId || session.state === 'closed' || session.state === 'idle') return;
+  if (!canQueueTerminalInput(connectionId, session.state) || !connectionId) return;
   session.inputBuffer += data;
   if (session.inputTimer !== undefined) return;
   session.inputTimer = window.setTimeout(() => {
     const input = session.inputBuffer;
     session.inputBuffer = '';
     session.inputTimer = undefined;
-    if (input) void invoke('session_input', { sessionId: connectionId, data: input }).catch(() => undefined);
+    if (
+      input
+      && isCurrentConnection(session.connectionId, connectionId)
+      && canQueueTerminalInput(session.connectionId, session.state)
+    ) {
+      void invoke('session_input', { sessionId: connectionId, data: input }).catch(() => undefined);
+    }
   }, 4);
 }
 

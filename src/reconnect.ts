@@ -1,5 +1,7 @@
 import type { CloseReason } from './types';
 
+export type SessionState = 'idle' | 'connecting' | 'connected' | 'closed';
+
 /**
  * Reconnect policy for a session that lost its transport.
  *
@@ -19,6 +21,11 @@ export function shouldAutoRetry(reason: CloseReason, attempt: number): boolean {
 /** Rejects delayed events or terminal data from a replaced/closed backend. */
 export function isCurrentConnection(current: string | null, incoming: string): boolean {
   return current === incoming;
+}
+
+/** Input typed outside an established shell must never be replayed after ready/reconnect. */
+export function canQueueTerminalInput(connectionId: string | null, state: SessionState): boolean {
+  return Boolean(connectionId) && state === 'connected';
 }
 
 /** Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s. */
