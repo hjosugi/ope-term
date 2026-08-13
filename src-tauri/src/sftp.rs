@@ -227,15 +227,10 @@ async fn upload(
     cancelled: &AtomicBool,
 ) -> Result<u64> {
     let local_path = request.local_path.clone();
-    let local_metadata = fs::symlink_metadata(&local_path)
-        .await
-        .context("upload 元を確認できません")?;
-    if local_metadata.file_type().is_symlink() {
-        bail!("symlink は upload できません。実体の file を選択してください");
-    }
-    if !local_metadata.is_file() {
-        bail!("upload 元は通常 file ではありません");
-    }
+    // Open and validate the exact file descriptor before creating any remote
+    // state. This closes a final-component symlink race and avoids orphaning a
+    // remote .part file when the local source cannot be opened.
+    let (mut local, total) = open_upload_source(&local_path).await?;
 
     let directory = canonical_remote_directory(session, &request.remote_directory).await?;
     let target = join_remote(&directory, &request.remote_name);
@@ -274,8 +269,6 @@ async fn upload(
         )
         .await
         .context("remote の一時 file を作成できません")?;
-    let mut local = fs::File::open(&local_path).await?;
-    let total = local_metadata.len();
     let mut transferred = 0_u64;
     let mut buffer = vec![0_u8; TRANSFER_CHUNK_BYTES];
     let copy_result: Result<()> = async {
@@ -313,6 +306,21 @@ async fn upload(
     )
     .await?;
     Ok(transferred)
+}
+
+async fn open_upload_source(path: &Path) -> Result<(fs::File, u64)> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).await.context("upload 元を開けません")?;
+    let metadata = file.metadata().await.context("upload 元を確認できません")?;
+    if !metadata.is_file() {
+        bail!("upload 元は通常 file ではありません");
+    }
+    Ok((file, metadata.len()))
 }
 
 async fn download(
@@ -754,5 +762,22 @@ mod tests {
         assert_eq!(fs::read(&target).await.expect("target"), b"original");
         assert_eq!(fs::read(&backup).await.expect("backup"), b"existing backup");
         assert!(local_lstat(&temporary).await.expect("temporary").is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upload_source_open_rejects_symlinks_and_non_files() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("directory");
+        let source = directory.path().join("source.txt");
+        let link = directory.path().join("source-link.txt");
+        fs::write(&source, b"payload").await.expect("source");
+        symlink(&source, &link).expect("symlink");
+
+        assert!(open_upload_source(&link).await.is_err());
+        assert!(open_upload_source(directory.path()).await.is_err());
+        let (_, size) = open_upload_source(&source).await.expect("regular file");
+        assert_eq!(size, 7);
     }
 }

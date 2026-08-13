@@ -24,8 +24,9 @@ permission 変更は行いません。
 - WebView から任意の local path は渡せません。native folder picker が Rust core に不透明な
   token を登録し、以後はその root 配下の相対 path だけを受け付けます。
 - `..`、absolute path、NUL、symlink 経由で選択 root の外へ出る操作を Rust 側で拒否します。
-- upload 元の local symlink と、既存 symlink への上書きを拒否します。remote symlink の
-  download は追加確認後に実体を解決します。
+- upload 元はremote一時fileを作る前に開き、実際に開いたfile descriptorが通常fileかを確認します。
+  Unixではopen時にもsymlinkを拒否します。既存symlinkへの上書きも拒否し、remote symlinkの
+  downloadは追加確認後に実体を解決します。
 - 転送先へ直接書かず、同じ directory の `.part` file へ stream した後に rename します。
   上書き時は既存 file を一時退避し、rename 失敗時は復元します。確定前の失敗では `.part` を
   削除し、まれに復元自体が失敗した場合は、残した backup path を error に明示します。
@@ -33,7 +34,8 @@ permission 変更は行いません。
   引き継ぎます。
 - file 全体を memory に載せず 256 KiB chunk で stream します。
 - UI queueは1件ずつ実行し、Rust coreも同一SSH sessionの同時transferを8件で拒否します。
-  transfer IDはtaskや一時fileを作る前に長さと文字種を検証します。
+  異なるIDでも同じlocalまたはremote fileを使う並行transferは拒否し、backup同士の競合を
+  防ぎます。transfer IDはtaskや一時fileを作る前に長さと文字種を検証します。
 - local / remote とも 1 directory の表示は 10,000 entries、相対 path は 32 KiB に制限します。
   remote一覧は高水準APIで全件を集めず、SFTP `READDIR` responseごとに処理して10,001件目で
   directory handleを閉じます。remote entry名も4 KiBで停止します。

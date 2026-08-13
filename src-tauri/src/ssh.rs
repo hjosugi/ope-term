@@ -33,6 +33,12 @@ const MAX_ACTIVE_SFTP_TRANSFERS: usize = 8;
 #[cfg(unix)]
 const MAX_AGENT_IDENTITIES: usize = 64;
 
+struct ActiveSftpTransfer {
+    cancelled: Arc<AtomicBool>,
+    local_path: PathBuf,
+    remote_target: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectRequest {
@@ -377,7 +383,7 @@ async fn session_loop(
     mut log: Option<LogSink>,
 ) -> Result<CloseReason> {
     let mut sftp_session: Option<Arc<SftpSession>> = None;
-    let transfers = Arc::new(Mutex::new(HashMap::<String, Arc<AtomicBool>>::new()));
+    let transfers = Arc::new(Mutex::new(HashMap::<String, ActiveSftpTransfer>::new()));
     loop {
         tokio::select! {
             command = commands.recv() => {
@@ -411,6 +417,7 @@ async fn session_loop(
                             register_transfer(
                                 &mut registry,
                                 transfer_id.clone(),
+                                &request,
                                 Arc::clone(&cancelled),
                             )
                         };
@@ -432,7 +439,11 @@ async fn session_loop(
                             let _ = reply.send(false);
                             continue;
                         }
-                        let cancelled = transfers.lock().await.get(&transfer_id).cloned();
+                        let cancelled = transfers
+                            .lock()
+                            .await
+                            .get(&transfer_id)
+                            .map(|transfer| Arc::clone(&transfer.cancelled));
                         let found = cancelled.is_some();
                         if let Some(cancelled) = cancelled {
                             cancelled.store(true, Ordering::Relaxed);
@@ -440,8 +451,8 @@ async fn session_loop(
                         let _ = reply.send(found);
                     }
                     Some(SessionCommand::Close) | None => {
-                        for cancelled in transfers.lock().await.values() {
-                            cancelled.store(true, Ordering::Relaxed);
+                        for transfer in transfers.lock().await.values() {
+                            transfer.cancelled.store(true, Ordering::Relaxed);
                         }
                         if let Some(session) = &sftp_session {
                             let _ = session.close().await;
@@ -500,8 +511,9 @@ async fn list_sftp(handle: &mut client::Handle<HostVerifier>, path: &str) -> Res
 }
 
 fn register_transfer(
-    registry: &mut HashMap<String, Arc<AtomicBool>>,
+    registry: &mut HashMap<String, ActiveSftpTransfer>,
     transfer_id: String,
+    request: &SftpTransferRequest,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     if registry.contains_key(&transfer_id) {
@@ -512,7 +524,28 @@ fn register_transfer(
             "同時 SFTP transfer 数は session ごとに {MAX_ACTIVE_SFTP_TRANSFERS} 件までです"
         ));
     }
-    registry.insert(transfer_id, cancelled);
+    let remote_target = if request.remote_directory == "/" {
+        format!("/{}", request.remote_name)
+    } else {
+        format!(
+            "{}/{}",
+            request.remote_directory.trim_end_matches('/'),
+            request.remote_name
+        )
+    };
+    if registry.values().any(|active| {
+        active.local_path == request.local_path || active.remote_target == remote_target
+    }) {
+        return Err("同じ local または remote file の transfer が既に実行中です".to_owned());
+    }
+    registry.insert(
+        transfer_id,
+        ActiveSftpTransfer {
+            cancelled,
+            local_path: request.local_path.clone(),
+            remote_target,
+        },
+    );
     Ok(())
 }
 
@@ -1338,17 +1371,21 @@ sJWR7W+cGvJ/vLsw==
     fn bounds_active_sftp_transfers_and_rejects_duplicates() {
         let mut registry = HashMap::new();
         for index in 0..MAX_ACTIVE_SFTP_TRANSFERS {
+            let request = transfer_request(index, &format!("remote-{index}"));
             register_transfer(
                 &mut registry,
                 format!("transfer-{index}"),
+                &request,
                 Arc::new(AtomicBool::new(false)),
             )
             .expect("transfer slot");
         }
+        let duplicate_id = transfer_request(100, "other-remote");
         assert!(
             register_transfer(
                 &mut registry,
                 "transfer-0".to_owned(),
+                &duplicate_id,
                 Arc::new(AtomicBool::new(false)),
             )
             .unwrap_err()
@@ -1358,11 +1395,60 @@ sJWR7W+cGvJ/vLsw==
             register_transfer(
                 &mut registry,
                 "overflow".to_owned(),
+                &transfer_request(101, "overflow"),
                 Arc::new(AtomicBool::new(false)),
             )
             .unwrap_err()
             .contains(&MAX_ACTIVE_SFTP_TRANSFERS.to_string())
         );
+    }
+
+    #[test]
+    fn rejects_concurrent_transfers_that_share_a_local_or_remote_file() {
+        let mut registry = HashMap::new();
+        let first = transfer_request(1, "shared-remote");
+        register_transfer(
+            &mut registry,
+            "first".to_owned(),
+            &first,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("first transfer");
+
+        let same_local = transfer_request(1, "other-remote");
+        assert!(
+            register_transfer(
+                &mut registry,
+                "same-local".to_owned(),
+                &same_local,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap_err()
+            .contains("既に実行中")
+        );
+        let same_remote = transfer_request(2, "shared-remote");
+        assert!(
+            register_transfer(
+                &mut registry,
+                "same-remote".to_owned(),
+                &same_remote,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap_err()
+            .contains("既に実行中")
+        );
+    }
+
+    fn transfer_request(local_index: usize, remote_name: &str) -> SftpTransferRequest {
+        SftpTransferRequest {
+            transfer_id: format!("request-{local_index}-{remote_name}"),
+            direction: crate::sftp::TransferDirection::Upload,
+            local_path: PathBuf::from(format!("/tmp/local-{local_index}")),
+            remote_directory: "/remote".to_owned(),
+            remote_name: remote_name.to_owned(),
+            overwrite: false,
+            follow_symlink: false,
+        }
     }
 
     #[cfg(unix)]
