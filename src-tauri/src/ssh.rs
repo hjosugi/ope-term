@@ -326,7 +326,7 @@ pub async fn run(
     channel.request_shell(true).await?;
     send(&events, SessionEvent::Ready);
 
-    let outcome = session_loop(&mut channel, final_handle, commands, &data, log).await;
+    let outcome = session_loop(&mut channel, final_handle, commands, &events, &data, log).await;
     for handle in handles.iter_mut().rev() {
         let _ = handle
             .disconnect(Disconnect::ByApplication, "ope-term closed", "en")
@@ -347,8 +347,9 @@ async fn session_loop(
     channel: &mut russh::Channel<client::Msg>,
     handle: &mut client::Handle<HostVerifier>,
     mut commands: mpsc::Receiver<SessionCommand>,
+    events: &Channel<SessionEvent>,
     data_channel: &Channel<Response>,
-    log: Option<LogSink>,
+    mut log: Option<LogSink>,
 ) -> Result<CloseReason> {
     let mut sftp_session: Option<Arc<SftpSession>> = None;
     let transfers = Arc::new(Mutex::new(HashMap::<String, Arc<AtomicBool>>::new()));
@@ -432,8 +433,14 @@ async fn session_loop(
             message = channel.wait() => {
                 match message {
                     Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        if let Some(log) = &log {
-                            let _ = log.write(&data).await;
+                        if let Some(sink) = &log
+                            && let Err(error) = sink.write(&data).await
+                        {
+                            event_error(
+                                events,
+                                &error.context("session logへの書き込みを停止しました"),
+                            );
+                            log = None;
                         }
                         let _ = data_channel.send(Response::new(data.to_vec()));
                     }

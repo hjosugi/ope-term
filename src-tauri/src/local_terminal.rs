@@ -153,7 +153,8 @@ pub async fn run(
         return Err(error).context("local PTY writer thread を開始できません");
     }
     let output = data.clone();
-    let output_log = log.clone();
+    let output_events = events.clone();
+    let mut output_log = log.clone();
     if let Err(error) = std::thread::Builder::new()
         .name("ope-term-local-pty-reader".to_owned())
         .spawn(move || {
@@ -162,8 +163,14 @@ pub async fn run(
                 match reader.read(&mut buffer) {
                     Ok(0) | Err(_) => break,
                     Ok(read) => {
-                        if let Some(log) = &output_log {
-                            let _ = log.blocking_write(&buffer[..read]);
+                        if let Some(sink) = &output_log
+                            && let Err(error) = sink.blocking_write(&buffer[..read])
+                        {
+                            crate::ssh::event_error(
+                                &output_events,
+                                &error.context("session logへの書き込みを停止しました"),
+                            );
+                            output_log = None;
                         }
                         let _ = output.send(Response::new(buffer[..read].to_vec()));
                     }

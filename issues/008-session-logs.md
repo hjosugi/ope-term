@@ -17,6 +17,7 @@ Labels: priority:P2, area:terminal, enhancement
 
 - host / local profile ごとの policy だけを localStorage に保存し、directory token は永続化しない。
 - terminal output だけを bounded queue から専用 writer thread へ送り、input と認証 IPC は渡さない。
+- writerのI/O停止はterminal / toastへ一度通知し、loggerだけを切り離してsession本体は継続する。
 - 1–1024 MiB、1–20 世代の rotation。file template は固定4変数と `.log` suffix に制限する。
 - viewer は `.log` / `.log.N` のみ、64 KiB reader / 4 KiB line / 500 results の上限で逐次走査。
 - 100 MiB sparse fixture の末尾 exact search、巨大1行、fuzzy、regex、rotation を Rust test で検証。
