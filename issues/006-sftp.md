@@ -24,5 +24,6 @@ Labels: priority:P1, area:files, area:ssh, enhancement
   古い応答を破棄する。
 - UI queueは100件、完了履歴は20件に制限し、長時間sessionでもDOMとmemoryをboundedに保つ。
 - remote一覧は`READDIR` response単位で処理し、10,000件または4 KiB超のentry名でhandleを閉じる。
+- 一覧channel開始は30秒timeout、`READDIR` taskはterminal loopから分離し、同時一覧を4件に制限する。
 - `just check`（frontend / Rust tests、clippy、production build）と`pnpm run security:policy`、
   `just docs` を通過。

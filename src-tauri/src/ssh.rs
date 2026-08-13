@@ -13,7 +13,7 @@ use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
 use russh_sftp::client::{RawSftpSession, SftpSession};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::host_keys::{self, KnownHostStatus};
@@ -30,6 +30,7 @@ const MAX_AUTH_PROMPTS: usize = 32;
 const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_ACTIVE_SFTP_TRANSFERS: usize = 8;
+const MAX_ACTIVE_SFTP_LISTINGS: usize = 4;
 #[cfg(unix)]
 const MAX_AGENT_IDENTITIES: usize = 64;
 
@@ -384,6 +385,7 @@ async fn session_loop(
 ) -> Result<CloseReason> {
     let mut sftp_session: Option<Arc<SftpSession>> = None;
     let transfers = Arc::new(Mutex::new(HashMap::<String, ActiveSftpTransfer>::new()));
+    let listing_slots = Arc::new(Semaphore::new(MAX_ACTIVE_SFTP_LISTINGS));
     loop {
         tokio::select! {
             command = commands.recv() => {
@@ -393,10 +395,37 @@ async fn session_loop(
                         channel.window_change(cols.max(1), rows.max(1), 0, 0).await?;
                     }
                     Some(SessionCommand::SftpList { path, reply }) => {
-                        let result = list_sftp(handle, &path)
-                            .await
-                            .map_err(|error| format!("{error:#}"));
-                        let _ = reply.send(result);
+                        let permit = match acquire_listing_slot(&listing_slots) {
+                            Ok(permit) => permit,
+                            Err(error) => {
+                                let _ = reply.send(Err(error));
+                                continue;
+                            }
+                        };
+                        let session = match tokio::time::timeout(
+                            CONNECTION_SETUP_TIMEOUT,
+                            open_sftp_listing(handle),
+                        )
+                        .await
+                        {
+                            Ok(Ok(session)) => session,
+                            Ok(Err(error)) => {
+                                let _ = reply.send(Err(format!("{error:#}")));
+                                continue;
+                            }
+                            Err(_) => {
+                                let _ = reply.send(Err("SFTP一覧channelの開始が30秒でtimeoutしました".to_owned()));
+                                continue;
+                            }
+                        };
+                        tokio::spawn(async move {
+                            let _permit = permit;
+                            let result = crate::sftp::list(&session, &path)
+                                .await
+                                .map_err(|error| format!("{error:#}"));
+                            let _ = session.close_session();
+                            let _ = reply.send(result);
+                        });
                     }
                     Some(SessionCommand::SftpTransfer { request, progress, reply }) => {
                         let transfer_id = request.transfer_id.clone();
@@ -491,7 +520,13 @@ async fn session_loop(
     }
 }
 
-async fn list_sftp(handle: &mut client::Handle<HostVerifier>, path: &str) -> Result<SftpListing> {
+fn acquire_listing_slot(slots: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, String> {
+    Arc::clone(slots).try_acquire_owned().map_err(|_| {
+        format!("同時 SFTP directory 一覧は session ごとに {MAX_ACTIVE_SFTP_LISTINGS} 件までです")
+    })
+}
+
+async fn open_sftp_listing(handle: &mut client::Handle<HostVerifier>) -> Result<RawSftpSession> {
     let channel = handle
         .channel_open_session()
         .await
@@ -505,9 +540,7 @@ async fn list_sftp(handle: &mut client::Handle<HostVerifier>, path: &str) -> Res
         .init()
         .await
         .context("SFTP一覧protocolを初期化できません")?;
-    let result = crate::sftp::list(&session, path).await;
-    let _ = session.close_session();
-    result
+    Ok(session)
 }
 
 fn register_transfer(
@@ -1437,6 +1470,22 @@ sJWR7W+cGvJ/vLsw==
             .unwrap_err()
             .contains("既に実行中")
         );
+    }
+
+    #[test]
+    fn bounds_concurrent_sftp_directory_listings() {
+        let slots = Arc::new(Semaphore::new(MAX_ACTIVE_SFTP_LISTINGS));
+        let permits = (0..MAX_ACTIVE_SFTP_LISTINGS)
+            .map(|_| acquire_listing_slot(&slots).expect("listing slot"))
+            .collect::<Vec<_>>();
+
+        assert!(
+            acquire_listing_slot(&slots)
+                .unwrap_err()
+                .contains(&MAX_ACTIVE_SFTP_LISTINGS.to_string())
+        );
+        drop(permits);
+        assert!(acquire_listing_slot(&slots).is_ok());
     }
 
     fn transfer_request(local_index: usize, remote_name: &str) -> SftpTransferRequest {

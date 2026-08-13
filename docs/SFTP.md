@@ -41,7 +41,8 @@ permission 変更は行いません。
   防ぎます。transfer IDはtaskや一時fileを作る前に長さと文字種を検証します。
 - local / remote とも 1 directory の表示は 10,000 entries、相対 path は 32 KiB に制限します。
   remote一覧は高水準APIで全件を集めず、SFTP `READDIR` responseごとに処理して10,001件目で
-  directory handleを閉じます。remote entry名も4 KiBで停止します。
+  directory handleを閉じます。remote entry名も4 KiBで停止します。一覧channelの開始は30秒で
+  timeoutし、`READDIR` はterminal loopから分離したtaskで処理します。同時一覧は4件までです。
 
 !!! warning "切断と再接続"
 

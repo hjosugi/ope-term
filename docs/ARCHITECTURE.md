@@ -25,7 +25,7 @@ Rust session task (one task per terminal)
 
 - `ssh_config.rs`: OpenSSH config の読み込み、first-match-wins 解決、ProxyJump 展開、循環検出
 - `ssh.rs`: known_hosts 検証、認証、多段トンネル、PTY、入出力、keepalive
-- `sftp.rs`: packet単位のbounded SFTP一覧、chunk転送、一時fileとrollback、symlink検証
+- `sftp.rs`: terminal loopから分離したpacket単位のbounded SFTP一覧、chunk転送、一時fileとrollback、symlink検証
 - `local_files.rs`: native picker が許可した local root と相対 path の境界検証
 - `local_terminal.rs`: Windows ConPTY / Unix PTY、検出 shell profile、child kill + wait
 - `session_log.rs`: output-only bounded writer、世代 rotation、bounded streaming search
