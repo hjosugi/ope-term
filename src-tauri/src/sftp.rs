@@ -488,7 +488,7 @@ fn validate_remote_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_transfer_id(id: &str) -> Result<()> {
+pub(crate) fn validate_transfer_id(id: &str) -> Result<()> {
     if id.is_empty()
         || id.len() > MAX_TRANSFER_ID_BYTES
         || !id

@@ -28,6 +28,7 @@ const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_AUTH_PROMPTS: usize = 32;
 const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_ACTIVE_SFTP_TRANSFERS: usize = 8;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -368,6 +369,10 @@ async fn session_loop(
                     }
                     Some(SessionCommand::SftpTransfer { request, progress, reply }) => {
                         let transfer_id = request.transfer_id.clone();
+                        if let Err(error) = crate::sftp::validate_transfer_id(&transfer_id) {
+                            let _ = reply.send(Err(format!("{error:#}")));
+                            continue;
+                        }
                         let session = match open_sftp(handle, &mut sftp_session).await {
                             Ok(session) => session,
                             Err(error) => {
@@ -376,17 +381,16 @@ async fn session_loop(
                             }
                         };
                         let cancelled = Arc::new(AtomicBool::new(false));
-                        let duplicate = {
+                        let registered = {
                             let mut registry = transfers.lock().await;
-                            if registry.contains_key(&transfer_id) {
-                                true
-                            } else {
-                                registry.insert(transfer_id.clone(), Arc::clone(&cancelled));
-                                false
-                            }
+                            register_transfer(
+                                &mut registry,
+                                transfer_id.clone(),
+                                Arc::clone(&cancelled),
+                            )
                         };
-                        if duplicate {
-                            let _ = reply.send(Err("同じ transfer id が既に存在します".to_owned()));
+                        if let Err(error) = registered {
+                            let _ = reply.send(Err(error));
                             continue;
                         }
                         let registry = Arc::clone(&transfers);
@@ -399,6 +403,10 @@ async fn session_loop(
                         });
                     }
                     Some(SessionCommand::SftpCancel { transfer_id, reply }) => {
+                        if crate::sftp::validate_transfer_id(&transfer_id).is_err() {
+                            let _ = reply.send(false);
+                            continue;
+                        }
                         let cancelled = transfers.lock().await.get(&transfer_id).cloned();
                         let found = cancelled.is_some();
                         if let Some(cancelled) = cancelled {
@@ -439,6 +447,23 @@ async fn session_loop(
             }
         }
     }
+}
+
+fn register_transfer(
+    registry: &mut HashMap<String, Arc<AtomicBool>>,
+    transfer_id: String,
+    cancelled: Arc<AtomicBool>,
+) -> Result<(), String> {
+    if registry.contains_key(&transfer_id) {
+        return Err("同じ transfer id が既に存在します".to_owned());
+    }
+    if registry.len() >= MAX_ACTIVE_SFTP_TRANSFERS {
+        return Err(format!(
+            "同時 SFTP transfer 数は session ごとに {MAX_ACTIVE_SFTP_TRANSFERS} 件までです"
+        ));
+    }
+    registry.insert(transfer_id, cancelled);
+    Ok(())
 }
 
 async fn open_sftp(
@@ -1252,6 +1277,37 @@ sJWR7W+cGvJ/vLsw==
         assert!(!is_bounded_auth_file(&path));
         assert!(!is_bounded_auth_file(directory.path()));
         assert!(!is_bounded_auth_file(&directory.path().join("missing")));
+    }
+
+    #[test]
+    fn bounds_active_sftp_transfers_and_rejects_duplicates() {
+        let mut registry = HashMap::new();
+        for index in 0..MAX_ACTIVE_SFTP_TRANSFERS {
+            register_transfer(
+                &mut registry,
+                format!("transfer-{index}"),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("transfer slot");
+        }
+        assert!(
+            register_transfer(
+                &mut registry,
+                "transfer-0".to_owned(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap_err()
+            .contains("既に存在")
+        );
+        assert!(
+            register_transfer(
+                &mut registry,
+                "overflow".to_owned(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap_err()
+            .contains(&MAX_ACTIVE_SFTP_TRANSFERS.to_string())
+        );
     }
 
     #[test]

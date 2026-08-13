@@ -20,7 +20,8 @@
 - リモートの OSC 8 リンクは開かず、window 操作と clipboard 連携を無効化しています。
 - CSP はローカル資産のみを許可し、`scripts/security-policy.mjs` が CI で逸脱を検出します。
 - SFTP の local filesystem 操作は WebView へ一般権限を与えず、native picker で選択した root の
-  不透明 token と相対 path を検証する Rust command に限定します。
+  不透明 token と相対 path を検証する Rust command に限定します。transfer IDはtask生成前に
+  検証し、同時transferはSSH sessionごとに8件で停止します。
 - Local terminal は任意 executable / argument を IPC で受け付けず、Rust が検出した固定 shell
   profile ID だけを起動します。working directory は native picker token で指定します。
 - SSH / local terminal のsession IDはfrontendが生成するcanonical UUIDだけを受理し、Rust registryは
