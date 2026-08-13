@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import mainSource from './main.ts?raw';
+import sftpSource from './sftp-ui.ts?raw';
 import css from './style.css?inline';
 
 const appCss = css.slice(css.indexOf('/* 4 px spacing scale.'));
+const appRootCss = css.slice(css.indexOf(':root {'));
 
 describe('UI size tokens', () => {
   it('defines the shared spacing, type, control, and layout scales', () => {
@@ -36,5 +39,15 @@ describe('UI size tokens', () => {
       .replace('@media (max-width: 850px)', '@media (max-width: compact)');
 
     expect(componentCss).not.toMatch(/(?<![\w-])\d+(?:\.\d+)?(?:px|rem)/);
+    expect(`${mainSource}\n${sftpSource}`).not.toMatch(/\d+(?:\.\d+)?(?:px|rem)/);
+  });
+
+  it('defines every referenced token exactly once', () => {
+    const definitions = [...appRootCss.matchAll(/^\s*(--[\w-]+)\s*:/gm)].map((match) => match[1]);
+    expect(new Set(definitions).size).toBe(definitions.length);
+
+    const defined = new Set(definitions);
+    const references = [...appRootCss.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]);
+    expect([...new Set(references)].filter((token) => !defined.has(token))).toEqual([]);
   });
 });
