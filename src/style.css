@@ -319,6 +319,30 @@ h1 { margin: 0; font-size: clamp(1.75rem, 3vw, 2.75rem); letter-spacing: -.045em
 .local-terminal-box > p { margin: 0 var(--dialog-gutter) var(--space-5); color: var(--muted); font: var(--font-xs)/1.6 var(--mono); }
 .local-terminal-box > footer { min-height: var(--dialog-footer); display: flex; align-items: center; padding: 0 var(--dialog-gutter); border-top: var(--border-width) solid var(--line); }
 
+.log-box { width: min(62rem, calc(100vw - var(--space-8))); height: min(48rem, calc(100vh - var(--space-8))); margin: var(--space-4) auto; display: grid; grid-template-rows: auto auto minmax(0, 1fr); border: var(--border-width) solid #384452; background: #10151b; box-shadow: 0 var(--space-6) 5rem rgba(0,0,0,.62); }
+.log-box > header { display: flex; justify-content: space-between; align-items: start; padding: var(--space-5) var(--dialog-gutter) var(--space-3); border-bottom: var(--border-width) solid var(--line); }
+.log-box h2 { margin: 0; font-size: var(--font-title); }
+.log-box header small { color: var(--muted); font: var(--font-xs) var(--mono); }
+.log-settings { display: grid; gap: var(--space-3); padding: var(--space-4) var(--dialog-gutter); border-bottom: var(--border-width) solid var(--line); }
+.log-enable, .log-timestamps { display: flex; align-items: center; gap: var(--space-2); color: var(--text); font-size: var(--font-sm); }
+.log-settings > label:not(.log-enable), .log-settings-grid label { display: grid; grid-template-columns: 9rem minmax(0, 1fr); align-items: center; gap: var(--space-2); }
+.log-settings label > span, .log-directory > span { color: var(--muted); font: var(--font-2xs) var(--mono); letter-spacing: .1em; }
+.log-settings input[type='text'], .log-settings input[type='number'], .log-viewer input, .log-viewer select { min-width: 0; height: var(--control-md); border: var(--border-width) solid var(--line); background: var(--panel); color: var(--text); padding: 0 var(--space-2); font: var(--font-sm) var(--mono); }
+.log-variables { margin: 0 0 0 calc(9rem + var(--space-2)); color: var(--muted); font: var(--font-xs) var(--mono); }
+.log-variables code { color: var(--amber); }
+.log-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.log-settings-grid label { grid-template-columns: auto minmax(0, 1fr); }
+.log-directory { display: grid; grid-template-columns: 9rem minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); }
+.log-directory code { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); font: var(--font-xs) var(--mono); white-space: nowrap; }
+.log-directory button, .log-viewer button { min-height: var(--control-md); padding: 0 var(--space-3); }
+.log-viewer { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+.log-viewer-toolbar { display: grid; grid-template-columns: minmax(10rem, 1fr) 6rem minmax(10rem, 2fr) auto auto; gap: var(--space-2); padding: var(--space-3) var(--dialog-gutter) var(--space-2); }
+.log-viewer-note { margin: 0; padding: 0 var(--dialog-gutter) var(--space-2); color: var(--muted); font: var(--font-2xs) var(--mono); }
+.log-results { min-height: 0; overflow: auto; border-top: var(--border-width) solid var(--line-soft); font: var(--font-xs)/1.5 var(--mono); }
+.log-result { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: var(--space-3); padding: var(--space-1) var(--dialog-gutter); border-bottom: var(--border-width) solid var(--line-soft); }
+.log-result span { color: var(--muted); text-align: right; }
+.log-result code { overflow-wrap: anywhere; color: #cbd2da; white-space: pre-wrap; }
+
 .host-key-overlay { z-index: 40; display: grid; place-items: center; padding: var(--space-5); background: rgba(0, 0, 0, .72); }
 .host-key-box { width: min(41rem, 100%); border: var(--border-width) solid #4b5663; background: #10151b; box-shadow: 0 var(--space-7) 5.5rem rgba(0,0,0,.68); }
 .host-key-box > header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-5); padding: var(--space-6) var(--dialog-gutter) var(--space-4); border-bottom: var(--border-width) solid var(--line); }

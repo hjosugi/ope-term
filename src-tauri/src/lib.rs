@@ -7,6 +7,8 @@ mod local_files;
 #[cfg(feature = "app")]
 mod local_terminal;
 #[cfg(feature = "app")]
+mod session_log;
+#[cfg(feature = "app")]
 mod sftp;
 #[cfg(feature = "app")]
 mod ssh;
@@ -84,6 +86,7 @@ mod application {
         on_data: Channel<Response>,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        let log_directory = resolve_log_directory(&request.log, &state.local_scopes).await?;
         let session_id = request.session_id.clone();
         let (command_sender, command_receiver) = mpsc::channel(256);
         let (host_key_sender, host_key_receiver) = mpsc::channel(8);
@@ -107,6 +110,7 @@ mod application {
         tauri::async_runtime::spawn(async move {
             let reason = match ssh::run(
                 request,
+                log_directory,
                 on_event.clone(),
                 on_data,
                 command_receiver,
@@ -192,6 +196,7 @@ mod application {
         on_data: Channel<Response>,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        let log_directory = resolve_log_directory(&request.log, &state.local_scopes).await?;
         let session_id = request.session_id.clone();
         if state.sessions.lock().await.contains_key(&session_id)
             || state.local_sessions.lock().await.contains_key(&session_id)
@@ -217,6 +222,7 @@ mod application {
             let reason = match crate::local_terminal::run(
                 request,
                 working_directory,
+                log_directory,
                 on_event.clone(),
                 on_data,
                 receiver,
@@ -233,6 +239,23 @@ mod application {
             registry.lock().await.remove(&session_id);
         });
         Ok(())
+    }
+
+    async fn resolve_log_directory(
+        input: &Option<crate::session_log::LogInput>,
+        scopes: &LocalScopes,
+    ) -> Result<Option<std::path::PathBuf>, String> {
+        let Some(input) = input.as_ref().filter(|input| input.enabled) else {
+            return Ok(None);
+        };
+        let token = input
+            .directory_token
+            .as_deref()
+            .ok_or_else(|| "session log の保存先を選択してください".to_owned())?;
+        crate::local_files::resolve_directory(scopes, token)
+            .await
+            .map(Some)
+            .map_err(|error| format!("{error:#}"))
     }
 
     #[tauri::command]
@@ -329,6 +352,39 @@ mod application {
         crate::local_files::list(&state.local_scopes, &token, &relative_path)
             .await
             .map_err(|error| format!("{error:#}"))
+    }
+
+    #[tauri::command]
+    async fn log_list(
+        token: String,
+        state: State<'_, AppState>,
+    ) -> Result<Vec<crate::session_log::LogFile>, String> {
+        let directory = crate::local_files::resolve_directory(&state.local_scopes, &token)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        tauri::async_runtime::spawn_blocking(move || crate::session_log::list(&directory))
+            .await
+            .map_err(|error| format!("log list task が失敗しました: {error}"))?
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    #[tauri::command]
+    async fn log_search(
+        token: String,
+        name: String,
+        query: String,
+        mode: crate::session_log::SearchMode,
+        state: State<'_, AppState>,
+    ) -> Result<Vec<crate::session_log::LogMatch>, String> {
+        let directory = crate::local_files::resolve_directory(&state.local_scopes, &token)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::session_log::search(&directory, &name, &query, mode)
+        })
+        .await
+        .map_err(|error| format!("log search task が失敗しました: {error}"))?
+        .map_err(|error| format!("{error:#}"))
     }
 
     #[tauri::command]
@@ -450,6 +506,8 @@ mod application {
                 sftp_cancel,
                 pick_local_directory,
                 local_list,
+                log_list,
+                log_search,
                 close_session,
                 answer_host_key,
                 answer_auth,

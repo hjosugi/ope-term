@@ -17,6 +17,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use zeroize::Zeroize;
 
 use crate::host_keys::{self, KnownHostStatus};
+use crate::session_log::{LogInput, LogSink};
 use crate::sftp::{SftpListing, SftpProgress, SftpTransferRequest, SftpTransferResult};
 use crate::ssh_config::{self, Endpoint};
 
@@ -34,6 +35,7 @@ pub struct ConnectRequest {
     pub route: Vec<String>,
     pub cols: u32,
     pub rows: u32,
+    pub log: Option<LogInput>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +187,7 @@ pub type SessionMap = Arc<Mutex<HashMap<String, SessionControl>>>;
 
 pub async fn run(
     request: ConnectRequest,
+    log_directory: Option<PathBuf>,
     events: Channel<SessionEvent>,
     data: Channel<Response>,
     commands: mpsc::Receiver<SessionCommand>,
@@ -193,6 +196,20 @@ pub async fn run(
 ) -> Result<CloseReason> {
     let blocks = ssh_config::load_default()?;
     let chain = ssh_config::chain_for_route(&request.route, &blocks)?;
+    let log = match (request.log.clone(), log_directory) {
+        (Some(input), Some(directory)) if input.enabled => {
+            let target = chain
+                .last()
+                .ok_or_else(|| anyhow!("SSH hop がありません"))?;
+            Some(crate::session_log::start(crate::session_log::configure(
+                input,
+                directory,
+                &target.alias,
+                target.user.as_deref().unwrap_or("unknown"),
+            )?)?)
+        }
+        _ => None,
+    };
     send(
         &events,
         SessionEvent::Chain {
@@ -302,7 +319,7 @@ pub async fn run(
     channel.request_shell(true).await?;
     send(&events, SessionEvent::Ready);
 
-    let outcome = session_loop(&mut channel, final_handle, commands, &data).await;
+    let outcome = session_loop(&mut channel, final_handle, commands, &data, log).await;
     for handle in handles.iter_mut().rev() {
         let _ = handle
             .disconnect(Disconnect::ByApplication, "ope-term closed", "en")
@@ -324,6 +341,7 @@ async fn session_loop(
     handle: &mut client::Handle<HostVerifier>,
     mut commands: mpsc::Receiver<SessionCommand>,
     data_channel: &Channel<Response>,
+    log: Option<LogSink>,
 ) -> Result<CloseReason> {
     let mut sftp_session: Option<Arc<SftpSession>> = None;
     let transfers = Arc::new(Mutex::new(HashMap::<String, Arc<AtomicBool>>::new()));
@@ -400,6 +418,9 @@ async fn session_loop(
             message = channel.wait() => {
                 match message {
                     Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if let Some(log) = &log {
+                            let _ = log.write(&data).await;
+                        }
                         let _ = data_channel.send(Response::new(data.to_vec()));
                     }
                     // The peer closed the shell: an exit, a kill, or a logout.

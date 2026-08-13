@@ -205,6 +205,44 @@
         </footer>
       </section>
     </div>
+    <div id="log-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="log-dialog-title">
+      <section class="log-box">
+        <header>
+          <div>
+            <div class="eyebrow">SESSION LOGS</div>
+            <h2 id="log-dialog-title">記録と検索</h2>
+            <small id="log-target"></small>
+          </div>
+          <button id="log-close" class="icon-button" type="button" aria-label="閉じる">×</button>
+        </header>
+        <div class="log-settings">
+          <label class="log-enable"><input id="log-enabled" type="checkbox" /> この host / profile の出力を記録</label>
+          <label><span>FILE TEMPLATE</span><input id="log-template" type="text" value="{host}-{user}-{date}-{time}.log" maxlength="160" /></label>
+          <p class="log-variables"><code>{host}</code> target / profile · <code>{user}</code> user · <code>{date}</code> UTC date · <code>{time}</code> UTC time</p>
+          <div class="log-settings-grid">
+            <label><span>ROTATE (MiB)</span><input id="log-rotation" type="number" min="1" max="1024" value="25" /></label>
+            <label><span>GENERATIONS</span><input id="log-retained" type="number" min="1" max="20" value="5" /></label>
+            <label class="log-timestamps"><input id="log-timestamps" type="checkbox" checked /> UTC timestamp</label>
+          </div>
+          <div class="log-directory">
+            <span>SAVE DIRECTORY</span><code id="log-directory-label">未選択</code>
+            <button id="log-directory-pick" class="secondary-button" type="button">選択</button>
+            <button id="log-save" class="primary-button" type="button">設定を保存</button>
+          </div>
+        </div>
+        <section class="log-viewer">
+          <div class="log-viewer-toolbar">
+            <select id="log-file" aria-label="log file"></select>
+            <select id="log-search-mode" aria-label="search mode"><option value="fuzzy">fuzzy</option><option value="exact">exact</option><option value="regex">regex</option></select>
+            <input id="log-query" type="search" placeholder="log を検索" maxlength="256" />
+            <button id="log-search" class="primary-button" type="button">検索</button>
+            <button id="log-refresh" class="secondary-button" type="button">↻</button>
+          </div>
+          <p class="log-viewer-note">最大 500 件。file 全体を memory へ読み込みません。</p>
+          <div id="log-results" class="log-results"></div>
+        </section>
+      </section>
+    </div>
     <div id="host-key-dialog" class="overlay host-key-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="host-key-title" aria-describedby="host-key-message">
       <section class="host-key-box">
         <header>

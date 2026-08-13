@@ -23,6 +23,7 @@
 - xterm / SSH 接続を維持したまま移動できる、左右・上下の terminal pane
 - 認証済み多段 SSH session を共有する、安全な local / remote 2 ペイン SFTP file manager
 - Windows / Linux / macOS native PTY の local shell、検出 profile、選択 working directory
+- host / profile 別に明示有効化する session log、rotation、streaming fuzzy/exact/regex viewer
 - 切断理由の分類と、transport 断だけを対象にした exponential backoff 自動再接続
 - 再起動なしの SSH config 再読み込みと、消えた Host の degraded 表示
 - `Ctrl+Shift+P` の fuzzy コマンドパレットと、multi-chord・context・JSON移行に対応するショートカット
@@ -75,6 +76,7 @@ Host prod-db
 | [使い方](https://hjosugi.github.io/ope-term/USAGE/) | ルート、保存と復元、認証、ショートカット |
 | [SFTP file manager](https://hjosugi.github.io/ope-term/SFTP/) | 2 ペイン操作、転送 queue、安全境界 |
 | [Local terminal](https://hjosugi.github.io/ope-term/LOCAL_TERMINAL/) | native PTY、shell profile、working directory、process lifecycle |
+| [Session logs](https://hjosugi.github.io/ope-term/SESSION_LOGS/) | 固定変数、rotation、100 MiB 超の streaming 検索、安全境界 |
 | [アーキテクチャ](https://hjosugi.github.io/ope-term/ARCHITECTURE/) | Rust core と WebView の境界、接続シーケンス |
 | [長時間接続と再接続](https://hjosugi.github.io/ope-term/RELIABILITY/) | 24h soak、fault injection、tmux/screen復帰方針 |
 | [UI サイズと CSS token](https://hjosugi.github.io/ope-term/DESIGN_SYSTEM/) | spacing、文字、control、layout の共通 scale |

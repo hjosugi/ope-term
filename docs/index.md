@@ -39,6 +39,7 @@
 - Tauri IPC Channel を使った端末出力ストリーミング
 - 認証済み SSH session 上の SFTP と、local root を native picker に限定した 2 ペイン転送
 - native PTY の local shell と、opt-in の OSC 133 command boundary 受信
+- host / profile 別 session log、世代 rotation、bounded streaming viewer
 
 ## どこから読むか
 
@@ -59,6 +60,10 @@
 - **[Local terminal](LOCAL_TERMINAL.md)**
 
     OS native PTY、検出済み shell profile、working directory、child process の終了保証。
+
+- **[Session logs](SESSION_LOGS.md)**
+
+    明示 enable、固定 file 変数、rotation、fuzzy / exact / regex の streaming 検索。
 
 - **[アーキテクチャ](ARCHITECTURE.md)**
 

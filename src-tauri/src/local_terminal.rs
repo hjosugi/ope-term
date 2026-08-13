@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::session_log::LogInput;
 use crate::ssh::{CloseReason, SessionEvent};
 
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
@@ -31,6 +32,7 @@ pub struct LocalConnectRequest {
     pub shell_integration: bool,
     pub cols: u32,
     pub rows: u32,
+    pub log: Option<LogInput>,
 }
 
 pub enum LocalCommand {
@@ -93,6 +95,7 @@ pub fn profiles() -> Vec<ShellProfile> {
 pub async fn run(
     request: LocalConnectRequest,
     working_directory: Option<PathBuf>,
+    log_directory: Option<PathBuf>,
     events: Channel<SessionEvent>,
     data: Channel<Response>,
     mut commands: mpsc::Receiver<LocalCommand>,
@@ -102,6 +105,12 @@ pub async fn run(
         .find(|profile| profile.id == request.profile_id)
         .ok_or_else(|| anyhow!("shell profile が見つかりません"))?;
     let size = pty_size(request.cols, request.rows);
+    let log = match (request.log.clone(), log_directory) {
+        (Some(input), Some(directory)) if input.enabled => Some(crate::session_log::start(
+            crate::session_log::configure(input, directory, "local", &local_user())?,
+        )?),
+        _ => None,
+    };
     let pair = native_pty_system()
         .openpty(size)
         .context("local PTY を作成できません")?;
@@ -144,6 +153,7 @@ pub async fn run(
         return Err(error).context("local PTY writer thread を開始できません");
     }
     let output = data.clone();
+    let output_log = log.clone();
     if let Err(error) = std::thread::Builder::new()
         .name("ope-term-local-pty-reader".to_owned())
         .spawn(move || {
@@ -152,6 +162,9 @@ pub async fn run(
                 match reader.read(&mut buffer) {
                     Ok(0) | Err(_) => break,
                     Ok(read) => {
+                        if let Some(log) = &output_log {
+                            let _ = log.blocking_write(&buffer[..read]);
+                        }
                         let _ = output.send(Response::new(buffer[..read].to_vec()));
                     }
                 }
@@ -220,6 +233,14 @@ fn default_shell() -> PathBuf {
         .map(PathBuf::from)
         .filter(|path| path.is_absolute() && path.is_file())
         .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+}
+
+fn local_user() -> String {
+    #[cfg(unix)]
+    let value = env::var("USER");
+    #[cfg(windows)]
+    let value = env::var("USERNAME");
+    value.unwrap_or_else(|_| "unknown".to_owned())
 }
 
 #[cfg(windows)]

@@ -28,6 +28,7 @@ Rust session task (one task per terminal)
 - `sftp.rs`: SFTP 一覧、chunk 転送、一時 file と rollback、symlink 検証
 - `local_files.rs`: native picker が許可した local root と相対 path の境界検証
 - `local_terminal.rs`: Windows ConPTY / Unix PTY、検出 shell profile、child kill + wait
+- `session_log.rs`: output-only bounded writer、世代 rotation、bounded streaming search
 - `lib.rs`: 最小の Tauri command とセッション registry
 
 各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。大量データ向けでない Tauri event bus は端末出力に使いません。

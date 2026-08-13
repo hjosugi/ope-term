@@ -66,4 +66,14 @@ export interface ConnectRequest {
   route: string[];
   cols: number;
   rows: number;
+  log?: SessionLogInput;
+}
+
+export interface SessionLogInput {
+  enabled: boolean;
+  directoryToken?: string;
+  fileNameTemplate: string;
+  timestamps: boolean;
+  rotationBytes: number;
+  retainedFiles: number;
 }

@@ -72,6 +72,7 @@ containable. Such an attacker can read the same keys and memory as ope-term.
 | Tampered or corrupt workspace storage | Stored entries are alias references only, re-validated and bounded on load, resolved through `~/.ssh/config` at connect time; a corrupt store degrades to an empty workspace instead of blocking startup | A local attacker who can already write WebView storage can rename a workspace to mislead an operator into connecting to a different, config-defined alias |
 | SFTP path traversal or unsafe overwrite | Native picker scopes local roots; Rust rejects absolute/parent/NUL paths and symlink escape; remote names are single components; temporary-file rename and backup rollback protect existing files | A malicious server may misreport metadata or fail operations; recursive directory transfer and resume are intentionally unavailable |
 | Local terminal command injection or orphan child | IPC accepts a Rust-enumerated profile ID, not a command line; cwd uses a picker token; close and setup failures kill and wait for the child | The selected shell and its startup files execute with the user's normal local authority; OSC 133 markers are advisory and spoofable by child output |
+| Session log secret leakage or viewer memory exhaustion | Logging is per-target opt-in and output-only; auth prompts bypass it; path is picker-scoped; rotation is bounded; viewer streams with line/result limits | Remote/child output and normal PTY echo can still contain secrets; filesystem permissions and retention remain the operator's responsibility |
 
 ## Security invariants
 
@@ -88,3 +89,4 @@ containable. Such an attacker can read the same keys and memory as ope-term.
    native-picker scope held only by Rust.
 8. Local terminal IPC cannot supply an executable or argument vector, and every spawned child has
    an owned kill-and-wait lifecycle.
+9. Authentication responses and normal terminal input are never sent to the session log writer.

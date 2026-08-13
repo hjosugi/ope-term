@@ -39,6 +39,12 @@ import {
   type PaneSplit,
 } from './pane-layout';
 import { appendUnique, moveRouteItem, routePreview } from './route';
+import {
+  defaultLogPolicy,
+  loadLogPolicies,
+  saveLogPolicies,
+  type SessionLogPolicy,
+} from './session-log-settings';
 import { createSftpPanel, type SftpPanel } from './sftp-ui';
 import type {
   AuthPrompt,
@@ -48,6 +54,7 @@ import type {
   HostKeyPrompt,
   HostProfile,
   SessionEvent,
+  SessionLogInput,
 } from './types';
 import {
   loadWorkspaces,
@@ -84,6 +91,17 @@ interface LocalSessionConfig {
   workingDirectory: LocalDirectory | null;
   shellIntegration: boolean;
   commandBoundaries: number;
+}
+
+interface LogFile {
+  name: string;
+  size: number;
+  modifiedUnix?: number;
+}
+
+interface LogMatch {
+  line: number;
+  text: string;
 }
 
 interface SessionUi {
@@ -198,6 +216,23 @@ const ui = {
   localDirectoryPick: element<HTMLButtonElement>('local-directory-pick'),
   localDirectoryClear: element<HTMLButtonElement>('local-directory-clear'),
   localShellIntegration: element<HTMLInputElement>('local-shell-integration'),
+  logDialog: element<HTMLElement>('log-dialog'),
+  logClose: element<HTMLButtonElement>('log-close'),
+  logTarget: element<HTMLElement>('log-target'),
+  logEnabled: element<HTMLInputElement>('log-enabled'),
+  logTemplate: element<HTMLInputElement>('log-template'),
+  logRotation: element<HTMLInputElement>('log-rotation'),
+  logRetained: element<HTMLInputElement>('log-retained'),
+  logTimestamps: element<HTMLInputElement>('log-timestamps'),
+  logDirectoryLabel: element<HTMLElement>('log-directory-label'),
+  logDirectoryPick: element<HTMLButtonElement>('log-directory-pick'),
+  logSave: element<HTMLButtonElement>('log-save'),
+  logFile: element<HTMLSelectElement>('log-file'),
+  logSearchMode: element<HTMLSelectElement>('log-search-mode'),
+  logQuery: element<HTMLInputElement>('log-query'),
+  logSearch: element<HTMLButtonElement>('log-search'),
+  logRefresh: element<HTMLButtonElement>('log-refresh'),
+  logResults: element<HTMLElement>('log-results'),
   hostKeyDialog: element<HTMLElement>('host-key-dialog'),
   hostKeyTitle: element<HTMLElement>('host-key-title'),
   hostKeyStatus: element<HTMLElement>('host-key-status'),
@@ -229,6 +264,10 @@ let paneLayout: PaneLayout | null = null;
 let pendingPaneSplit: PendingPaneSplit | null = null;
 let localProfiles: ShellProfile[] = [];
 let selectedLocalDirectory: LocalDirectory | null = null;
+const logDirectories = new Map<string, LocalDirectory>();
+let logViewerDirectory: LocalDirectory | null = null;
+let logPolicies = loadLogPolicies();
+let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
 let selectedCommand = 0;
 let paletteItems: PaletteItem[] = [];
@@ -296,6 +335,20 @@ const commands: CommandDefinition[] = [
     label: '新しい local terminal を開く',
     when: '!paletteOpen && !shortcutEditorOpen',
     run: () => void openLocalTerminalDialog(),
+  },
+  {
+    id: 'session.configureLogs',
+    category: 'Logs',
+    label: '現在の host / profile の session log を設定',
+    when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
+    run: () => void openLogDialog(true),
+  },
+  {
+    id: 'workbench.openLogs',
+    category: 'Logs',
+    label: 'Session log viewer を開く',
+    when: '!paletteOpen && !shortcutEditorOpen',
+    run: () => void openLogDialog(false),
   },
   { id: 'pane.splitRight', category: 'Pane', label: '右に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('horizontal') },
   { id: 'pane.splitDown', category: 'Pane', label: '下に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('vertical') },
@@ -673,6 +726,12 @@ async function connectRoute(): Promise<void> {
  */
 async function startSession(session: SessionUi, resetRetries = true): Promise<void> {
   if (session.state === 'connecting' || session.state === 'connected') return;
+  const log = sessionLogInput(session);
+  if (log?.enabled && !log.directoryToken) {
+    toast('session log の保存先を選択してください。');
+    await openLogDialog(true);
+    return;
+  }
   clearRetryTimers(session);
   if (resetRetries) session.retryAttempt = 0;
   const missing = session.kind === 'ssh' ? missingAliases(session.route, hostAliases()) : [];
@@ -713,6 +772,7 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
           shellIntegration: session.local.shellIntegration,
           cols: session.terminal.cols,
           rows: session.terminal.rows,
+          log,
         },
         onEvent,
         onData,
@@ -723,6 +783,7 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
         route: [...session.route],
         cols: session.terminal.cols,
         rows: session.terminal.rows,
+        log,
       };
       session.terminal.writeln(
         `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${routePreview(session.route, hosts).join(' → ')} へ接続中…`,
@@ -1902,6 +1963,145 @@ async function createLocalTerminal(): Promise<void> {
   await startSession(session);
 }
 
+function logTargetKey(session: SessionUi): string {
+  return session.kind === 'local'
+    ? `local:${session.local?.profileId ?? 'default'}`
+    : `ssh:${session.route.at(-1) ?? 'unknown'}`;
+}
+
+function sessionLogInput(session: SessionUi): SessionLogInput | undefined {
+  const key = logTargetKey(session);
+  const policy = logPolicies[key];
+  if (!policy?.enabled) return undefined;
+  return {
+    ...policy,
+    directoryToken: logDirectories.get(key)?.token,
+  };
+}
+
+async function openLogDialog(configure: boolean): Promise<void> {
+  closeCommandPalette();
+  const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
+  if (configure && !session) {
+    toast('設定対象の terminal tab を選択してください。');
+    return;
+  }
+  editingLogTarget = session ? logTargetKey(session) : null;
+  const policy = editingLogTarget ? logPolicies[editingLogTarget] ?? defaultLogPolicy() : defaultLogPolicy();
+  ui.logTarget.textContent = editingLogTarget ?? 'viewer only';
+  ui.logEnabled.checked = policy.enabled;
+  ui.logTemplate.value = policy.fileNameTemplate;
+  ui.logTimestamps.checked = policy.timestamps;
+  ui.logRotation.value = String(policy.rotationBytes / (1024 * 1024));
+  ui.logRetained.value = String(policy.retainedFiles);
+  const directory = editingLogTarget ? logDirectories.get(editingLogTarget) ?? null : logViewerDirectory;
+  ui.logDirectoryLabel.textContent = directory?.displayPath ?? '未選択';
+  ui.logDirectoryLabel.title = directory?.displayPath ?? '未選択';
+  ui.logDialog.classList.remove('hidden');
+  await refreshLogFiles(directory);
+  window.requestAnimationFrame(() => (configure ? ui.logEnabled : ui.logQuery).focus());
+}
+
+function closeLogDialog(): void {
+  ui.logDialog.classList.add('hidden');
+}
+
+async function pickLogDirectory(): Promise<void> {
+  const selected = await invoke<LocalDirectory | null>('pick_local_directory');
+  if (!selected) return;
+  logViewerDirectory = selected;
+  if (editingLogTarget) logDirectories.set(editingLogTarget, selected);
+  ui.logDirectoryLabel.textContent = selected.displayPath;
+  ui.logDirectoryLabel.title = selected.displayPath;
+  await refreshLogFiles(selected);
+}
+
+function saveLogPolicy(): void {
+  if (!editingLogTarget) {
+    toast('設定対象の terminal tab を選択してください。');
+    return;
+  }
+  const template = ui.logTemplate.value.trim();
+  const unknown = template.replaceAll('{host}', '').replaceAll('{user}', '').replaceAll('{date}', '').replaceAll('{time}', '');
+  if (!template.endsWith('.log') || template.length > 160 || /[\\/\0{}]/u.test(unknown)) {
+    toast('file template は固定変数だけを使い、separator を含めず .log で終えてください。');
+    return;
+  }
+  if (ui.logEnabled.checked && !logDirectories.has(editingLogTarget)) {
+    toast('有効化する前に保存先 directory を選択してください。');
+    return;
+  }
+  const rotationMiB = Math.min(1024, Math.max(1, Number(ui.logRotation.value) || 25));
+  const retained = Math.min(20, Math.max(1, Number(ui.logRetained.value) || 5));
+  const policy: SessionLogPolicy = {
+    enabled: ui.logEnabled.checked,
+    fileNameTemplate: template,
+    timestamps: ui.logTimestamps.checked,
+    rotationBytes: Math.floor(rotationMiB * 1024 * 1024),
+    retainedFiles: Math.floor(retained),
+  };
+  logPolicies[editingLogTarget] = policy;
+  saveLogPolicies(logPolicies);
+  toast(`${editingLogTarget} の session log 設定を保存しました。次回接続から反映します。`);
+}
+
+async function refreshLogFiles(directory?: LocalDirectory | null): Promise<void> {
+  const selected = directory ?? (editingLogTarget ? logDirectories.get(editingLogTarget) : logViewerDirectory);
+  ui.logFile.replaceChildren();
+  ui.logResults.replaceChildren();
+  if (!selected) return;
+  try {
+    const files = await invoke<LogFile[]>('log_list', { token: selected.token });
+    for (const file of files) {
+      const option = document.createElement('option');
+      option.value = file.name;
+      option.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB`;
+      ui.logFile.append(option);
+    }
+  } catch (error) {
+    toast(`log 一覧を取得できません: ${String(error)}`);
+  }
+}
+
+async function searchLogs(): Promise<void> {
+  const directory = editingLogTarget ? logDirectories.get(editingLogTarget) : logViewerDirectory;
+  const name = ui.logFile.value;
+  if (!directory || !name) {
+    toast('検索する directory と log file を選択してください。');
+    return;
+  }
+  ui.logSearch.disabled = true;
+  try {
+    const results = await invoke<LogMatch[]>('log_search', {
+      token: directory.token,
+      name,
+      query: ui.logQuery.value,
+      mode: ui.logSearchMode.value,
+    });
+    ui.logResults.replaceChildren();
+    for (const match of results) {
+      const row = document.createElement('div');
+      row.className = 'log-result';
+      const line = document.createElement('span');
+      line.textContent = String(match.line);
+      const text = document.createElement('code');
+      text.textContent = match.text;
+      row.append(line, text);
+      ui.logResults.append(row);
+    }
+    if (results.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'command-empty';
+      empty.textContent = '一致する行はありません';
+      ui.logResults.append(empty);
+    }
+  } catch (error) {
+    toast(`log 検索に失敗しました: ${String(error)}`);
+  } finally {
+    ui.logSearch.disabled = false;
+  }
+}
+
 ui.hostSearch.addEventListener('input', renderHosts);
 ui.connect.addEventListener('click', () => void connectRoute());
 ui.newRoute.addEventListener('click', () => showBuilder());
@@ -2001,6 +2201,17 @@ ui.localDirectoryClear.addEventListener('click', () => {
 ui.localTerminalDialog.addEventListener('mousedown', (event) => {
   if (event.target === ui.localTerminalDialog) closeLocalTerminalDialog();
 });
+ui.logClose.addEventListener('click', closeLogDialog);
+ui.logDirectoryPick.addEventListener('click', () => void pickLogDirectory());
+ui.logSave.addEventListener('click', saveLogPolicy);
+ui.logSearch.addEventListener('click', () => void searchLogs());
+ui.logRefresh.addEventListener('click', () => void refreshLogFiles());
+ui.logQuery.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') void searchLogs();
+});
+ui.logDialog.addEventListener('mousedown', (event) => {
+  if (event.target === ui.logDialog) closeLogDialog();
+});
 
 window.addEventListener(
   'keydown',
@@ -2033,6 +2244,13 @@ window.addEventListener(
       if (event.key === 'Escape') {
         event.preventDefault();
         closeLocalTerminalDialog();
+      }
+      return;
+    }
+    if (!ui.logDialog.classList.contains('hidden')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeLogDialog();
       }
       return;
     }

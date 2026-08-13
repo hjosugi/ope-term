@@ -79,6 +79,7 @@ nav:
   - 使い方: USAGE.md
   - SFTP file manager: SFTP.md
   - Local terminal: LOCAL_TERMINAL.md
+  - Session logs: SESSION_LOGS.md
   - 設計:
       - アーキテクチャ: ARCHITECTURE.md
       - 長時間接続と再接続: RELIABILITY.md

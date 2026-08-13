@@ -81,6 +81,13 @@ queue、進捗、cancel、retry と安全上の制約は [SFTP file manager](SFT
 OSC 133 marker の受信だけを opt-in にできます。詳細は [Local terminal](LOCAL_TERMINAL.md) を
 参照してください。
 
+## Session logs
+
+`Ctrl+Shift+G` で現在の host / local profile の記録を明示的に有効化し、native picker で保存先、
+file template、timestamp、rotation を設定します。`Ctrl+Alt+G` で viewer を開き、fuzzy / exact /
+regex を切り替えて逐次検索できます。固定変数と秘密情報の境界は [Session logs](SESSION_LOGS.md)
+を参照してください。
+
 ## 切断と再接続
 
 セッションが終わった理由を 4 つに分けて表示し、再接続の扱いを変えます。
@@ -143,6 +150,8 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
 | `Ctrl+Shift+F` | SFTP file manager を開く / 閉じる |
 | `Ctrl+Shift+L` | 新しい local terminal を開く |
+| `Ctrl+Shift+G` | 現在の host / profile の session log を設定 |
+| `Ctrl+Alt+G` | Session log viewer |
 | `Ctrl+K Ctrl+ArrowRight` | 右に分割 |
 | `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
 | `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |
