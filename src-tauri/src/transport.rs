@@ -56,28 +56,27 @@ impl TerminalControl {
                 .await
                 .map_err(|_| "local session は終了しています".to_owned()),
             Self::Ssh(control) => {
-                // Unblock any pending SSH-only prompts before closing the
-                // command channel. No equivalent exists for local terminals.
-                let _ = control
-                    .host_keys
-                    .send(HostKeyAnswer {
-                        request_id: None,
-                        decision: HostKeyDecision::Reject,
-                    })
-                    .await;
-                let _ = control
-                    .authentication
-                    .send(AuthAnswer {
-                        request_id: None,
-                        responses: Vec::new(),
-                        cancelled: true,
-                    })
-                    .await;
-                control
-                    .commands
-                    .send(SessionCommand::Close)
-                    .await
-                    .map_err(|_| "SSH session は終了しています".to_owned())
+                // A session can currently be waiting on host-key input, auth
+                // input, or shell commands. Send all three shutdown signals
+                // concurrently so a full inactive channel cannot block the
+                // signal that the session is actually polling.
+                let host_key = control.host_keys.send(HostKeyAnswer {
+                    request_id: None,
+                    decision: HostKeyDecision::Reject,
+                });
+                let authentication = control.authentication.send(AuthAnswer {
+                    request_id: None,
+                    responses: Vec::new(),
+                    cancelled: true,
+                });
+                let command = control.commands.send(SessionCommand::Close);
+                let (host_key, authentication, command) =
+                    tokio::join!(host_key, authentication, command);
+                if host_key.is_ok() || authentication.is_ok() || command.is_ok() {
+                    Ok(())
+                } else {
+                    Err("SSH session は終了しています".to_owned())
+                }
             }
         }
     }
@@ -163,5 +162,42 @@ mod tests {
         assert!(auth_answer.request_id.is_none());
         assert!(auth_answer.responses.is_empty());
         assert!(auth_answer.cancelled);
+    }
+
+    #[tokio::test]
+    async fn ssh_close_reaches_the_command_channel_when_an_inactive_prompt_queue_is_full() {
+        let (commands, mut command_receiver) = mpsc::channel(1);
+        let (host_keys, host_key_receiver) = mpsc::channel(1);
+        let (authentication, authentication_receiver) = mpsc::channel(1);
+        host_keys
+            .send(HostKeyAnswer {
+                request_id: Some("stale".to_owned()),
+                decision: HostKeyDecision::TrustOnce,
+            })
+            .await
+            .unwrap();
+        let control = TerminalControl::Ssh(SessionControl {
+            commands,
+            host_keys,
+            authentication,
+        });
+
+        let driver = async move {
+            assert!(matches!(
+                command_receiver.recv().await,
+                Some(SessionCommand::Close)
+            ));
+            // The real SSH task drops every remaining receiver after it sees
+            // Close, releasing sends to inactive/full prompt queues.
+            drop(host_key_receiver);
+            drop(authentication_receiver);
+        };
+        let (close_result, ()) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(control.close(), driver)
+        })
+        .await
+        .expect("close should not wait on the full host-key queue");
+
+        close_result.unwrap();
     }
 }

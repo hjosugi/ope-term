@@ -20,6 +20,10 @@ Rust core の `transport.rs` は interactive terminal に共通する操作だ�
 SFTP は `SessionControl` に残します。これらを将来の telnet / serial implementation に
 見せたり、存在しない安全性を UI で示したりしてはいけません。
 
+SSHの`close`はhost-key待ち、auth待ち、shell command待ちのどこからでも停止できるよう、3つの
+shutdown signalを同時に送ります。inactiveなbounded channelが満杯でも、有効な停止経路を
+塞がないことを飽和channel testで確認します。
+
 新 transport は次の順序で追加します。
 
 1. 共通の data / input / resize / close / close-reason contract に adapter を追加する。
