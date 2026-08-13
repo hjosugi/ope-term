@@ -4,6 +4,8 @@
 
 Nix shell が Node.js、pnpm、Rust、Tauri の system library、Bazelisk、just、
 cargo-nextest、cargo-fuzz、cargo-audit、Syft、sccache、mold（Linux）を揃えます。
+Linux では WebKitGTK と同じ Nix closure の Mesa、GBM backend、DRI driver path も設定するため、
+NixOS 以外の Wayland host でも host と Nix の EGL library を混在させずに起動できます。
 
 ```bash
 ./scripts/nix-local develop
@@ -14,6 +16,11 @@ just dev
 
 `direnv allow` 済みなら同じ環境が自動化されます。`just --list` で利用可能な recipe を
 確認してください。
+
+`EGL_BAD_PARAMETER` で起動前に終了する場合は、まず `just dev` を通常 shell から直接実行して
+いないか確認し、`./scripts/nix-local develop --command just dev` で同じ問題が再現するかを
+切り分けてください。`LD_LIBRARY_PATH` だけを host Mesa へ差し替えると GTK/WebKitGTK と
+renderer の ABI が分かれるため、恒久対応にはしません。
 
 ## ビルドの役割
 

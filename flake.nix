@@ -166,6 +166,7 @@
             pkgs.libayatana-appindicator
             pkgs.libsoup_3
             pkgs.librsvg
+            pkgs.mesa
             pkgs.pango
             pkgs.webkitgtk_4_1
             pkgs.xdotool
@@ -214,6 +215,8 @@
               GIO_MODULE_DIR = pkgs.lib.optionalString pkgs.stdenv.isLinux (
                 "${pkgs.glib-networking}/lib/gio/modules"
               );
+              GBM_BACKENDS_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux ("${pkgs.mesa}/lib/gbm");
+              LIBGL_DRIVERS_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux ("${pkgs.mesa}/lib/dri");
               LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux (
                 pkgs.lib.makeLibraryPath linuxLibraries
               );

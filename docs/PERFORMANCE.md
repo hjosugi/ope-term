@@ -45,6 +45,20 @@ location.reload();
 
 通常利用時はlistenerもobserverも作らないため、計測自体が製品のlatencyへ影響しません。
 
+### CachyOS Wayland の runtime preflight
+
+2026-08-13 に CachyOS Linux、GNOME Wayland、kernel 7.1.6、WebKitGTK 2.52.5、AMD Barcelo で
+Nix dev shell から debug app を起動し、次を確認しました。
+
+- Nix closure の Mesa、GBM backend、DRI driver を使って EGL display を作成できる
+- Tauri の `freezePrototype: true` を維持したまま xterm 6.0.0 を読み込める
+- WebKit の accessibility tree に host search、route builder、CONNECT、local terminal の
+  controls が構築され、初期画面が操作可能になる
+
+これは計測前提の smoke test であり、release gate の performance artifact ではありません。
+WebGL / fallback の100入力、100 MiB出力、idle / 1 session memory は、以下の手順で別々の
+reportとして採取します。
+
 ### Renderer を固定する
 
 同じ環境で比較できるよう、測定前に renderer を明示します。`webgl` は初期化に失敗した場合

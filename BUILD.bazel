@@ -34,9 +34,17 @@ tsc_bin.tsc_test(
 )
 
 js_library(
+    name = "xterm_freeze_compat",
+    srcs = ["scripts/xterm-freeze-compat.mjs"],
+)
+
+js_library(
     name = "vite_config",
     srcs = ["vite.config.ts"],
-    deps = [":node_modules/vite"],
+    deps = [
+        ":node_modules/vite",
+        ":xterm_freeze_compat",
+    ],
 )
 
 vite_bin.vite(
