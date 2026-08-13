@@ -53,4 +53,11 @@ describe('UI size tokens', () => {
     const references = [...appRootCss.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]);
     expect([...new Set(references)].filter((token) => !defined.has(token))).toEqual([]);
   });
+
+  it('keeps shared buttons on the control scale with a visible keyboard focus', () => {
+    expect(appCss).toMatch(/\.rail-reload\s*\{[^}]*min-height:\s*var\(--control-sm\)/s);
+    expect(appCss).toMatch(/\.icon-button\s*\{[^}]*min-height:\s*var\(--control-md\)/s);
+    expect(appCss).toMatch(/\.secondary-button,\s*\.primary-button\s*\{[^}]*min-height:\s*var\(--control-md\)/s);
+    expect(appCss).toMatch(/button:focus-visible[^}]*outline:\s*var\(--focus-ring-width\) solid var\(--amber\)/s);
+  });
 });

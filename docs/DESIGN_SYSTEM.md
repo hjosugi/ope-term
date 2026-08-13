@@ -51,6 +51,8 @@ letter spacing は `--tracking-brand` / `--tracking-display` と、UI label用�
 
 同じ行に並ぶ control は同じ高さ token を使います。border は `--border-width`、focus ring は
 `--focus-ring-width` に統一し、状態色は既存の semantic color token を参照します。
+iconだけの補助操作も `--control-sm` 以上、標準buttonは `--control-md` 以上の操作領域を確保し、
+keyboard focus は共通の focus ring で判別できるようにします。
 
 ## Layout
 

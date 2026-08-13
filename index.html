@@ -16,7 +16,7 @@
 
         <label class="host-search">
           <span aria-hidden="true">⌕</span>
-          <input id="host-search" type="search" placeholder="HOST を検索" autocomplete="off" />
+          <input id="host-search" type="search" placeholder="HOST を検索" autocomplete="off" aria-label="SSH Host を検索" />
           <kbd data-keybinding="workbench.action.quickOpenHost"></kbd>
         </label>
 
@@ -40,7 +40,7 @@
       <main class="workspace">
         <header class="topbar">
           <div id="session-tabs" class="session-tabs" role="tablist"></div>
-          <button id="new-route" class="icon-button" type="button" title="新しいルート">＋</button>
+          <button id="new-route" class="icon-button" type="button" title="新しいルート" aria-label="新しいルート">＋</button>
           <button id="split-right" class="icon-button pane-button" type="button" title="右に分割" aria-label="右に分割">▥</button>
           <button id="split-down" class="icon-button pane-button" type="button" title="下に分割" aria-label="下に分割">⬒</button>
           <div class="topbar-spacer"></div>
@@ -236,7 +236,7 @@
             <select id="log-search-mode" aria-label="search mode"><option value="fuzzy">fuzzy</option><option value="exact">exact</option><option value="regex">regex</option></select>
             <input id="log-query" type="search" placeholder="log を検索" maxlength="256" />
             <button id="log-search" class="primary-button" type="button">検索</button>
-            <button id="log-refresh" class="secondary-button" type="button">↻</button>
+            <button id="log-refresh" class="secondary-button" type="button" aria-label="log file 一覧を更新">↻</button>
           </div>
           <p class="log-viewer-note">最大 500 件。file 全体を memory へ読み込みません。</p>
           <div id="log-results" class="log-results"></div>

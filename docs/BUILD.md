@@ -5,7 +5,8 @@
 Nix shell が Node.js、pnpm、Rust、Tauri の system library、Bazelisk、just、
 cargo-nextest、cargo-fuzz、cargo-audit、Syft、sccache、mold（Linux）を揃えます。
 Linux では WebKitGTK と同じ Nix closure の Mesa、GBM backend、DRI driver path も設定するため、
-NixOS 以外の Wayland host でも host と Nix の EGL library を混在させずに起動できます。
+NixOS 以外の Wayland host でも host と Nix の EGL library を混在させずに起動できます。Tauri の
+asset protocol が使う GStreamer `appsink` plugin も dev shell と package の両方へ含めます。
 
 ```bash
 ./scripts/nix-local develop

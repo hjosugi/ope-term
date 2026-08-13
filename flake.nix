@@ -195,6 +195,7 @@
             pkgs.gdk-pixbuf
             pkgs.glib
             pkgs.glib-networking
+            pkgs.gst_all_1.gst-plugins-base
             pkgs.gtk3
             pkgs.libayatana-appindicator
             pkgs.libsoup_3

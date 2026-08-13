@@ -112,6 +112,10 @@
 html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 button, input { font: inherit; }
 button { color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: var(--focus-ring-width) solid var(--amber);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
 .hidden { display: none !important; }
 
 #app { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); background: var(--bg); }
@@ -129,7 +133,7 @@ button { color: inherit; }
 kbd { border: var(--border-width) solid var(--line); background: var(--panel-2); color: var(--muted); padding: var(--border-width) var(--space-1); font: var(--font-xs) var(--mono); white-space: nowrap; }
 .rail-heading { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4) var(--space-2); color: var(--muted); font: var(--font-xs) var(--mono); letter-spacing: var(--tracking-wide); }
 .rail-heading-actions { display: flex; align-items: center; gap: var(--space-2); }
-.rail-reload { border: var(--border-width) solid var(--line); background: transparent; color: var(--muted); cursor: pointer; padding: var(--border-width) var(--space-1); font: var(--font-sm) var(--mono); line-height: 1.3; }
+.rail-reload { display: grid; min-width: var(--control-sm); min-height: var(--control-sm); place-items: center; border: var(--border-width) solid var(--line); background: transparent; color: var(--muted); cursor: pointer; padding: 0; font: var(--font-sm) var(--mono); line-height: 1.3; }
 .rail-reload:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
 .rail-reload:disabled { cursor: wait; opacity: .5; }
 .config-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -160,7 +164,7 @@ kbd { border: var(--border-width) solid var(--line); background: var(--panel-2);
 .session-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-close { color: var(--muted); padding: var(--focus-ring-width); }
 .tab-close:hover { color: var(--red); }
-.icon-button { width: var(--chrome-top); border: 0; border-right: var(--border-width) solid var(--line); background: transparent; color: var(--muted); cursor: pointer; font-size: var(--font-icon); }
+.icon-button { width: var(--chrome-top); min-height: var(--control-md); border: 0; border-right: var(--border-width) solid var(--line); background: transparent; color: var(--muted); cursor: pointer; font-size: var(--font-icon); }
 .icon-button:hover { color: var(--amber); background: var(--amber-soft); }
 .topbar-spacer, .status-spacer { flex: 1; }
 .connection-state { align-self: center; margin: 0 var(--space-4); color: var(--green); font: var(--font-xs) var(--mono); letter-spacing: var(--tracking-label); }
@@ -410,6 +414,7 @@ h1 { margin: 0; font-size: var(--font-display); letter-spacing: var(--tracking-d
 .dialog-spacer { flex: 1; }
 .host-key-box button { padding: var(--space-2) var(--space-3); cursor: pointer; font: var(--font-xs) var(--mono); }
 .host-key-box button:disabled { cursor: wait; opacity: .5; }
+.secondary-button, .primary-button { min-height: var(--control-md); }
 .secondary-button { border: var(--border-width) solid var(--line); background: var(--panel); color: var(--text); }
 .secondary-button:hover:not(:disabled) { border-color: #596675; }
 .primary-button { border: var(--border-width) solid var(--amber); background: var(--amber); color: #17110a; font-weight: 700 !important; }
