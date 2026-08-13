@@ -78,6 +78,7 @@ Host prod-db
 | [Local terminal](https://hjosugi.github.io/ope-term/LOCAL_TERMINAL/) | native PTY、shell profile、working directory、process lifecycle |
 | [Session logs](https://hjosugi.github.io/ope-term/SESSION_LOGS/) | 固定変数、rotation、100 MiB 超の streaming 検索、安全境界 |
 | [アーキテクチャ](https://hjosugi.github.io/ope-term/ARCHITECTURE/) | Rust core と WebView の境界、接続シーケンス |
+| [Transport 境界](https://hjosugi.github.io/ope-term/TRANSPORTS/) | telnet / serial の需要検証、option、平文警告、OS lifecycle |
 | [長時間接続と再接続](https://hjosugi.github.io/ope-term/RELIABILITY/) | 24h soak、fault injection、tmux/screen復帰方針 |
 | [UI サイズと CSS token](https://hjosugi.github.io/ope-term/DESIGN_SYSTEM/) | spacing、文字、control、layout の共通 scale |
 | [ビルド・開発環境](https://hjosugi.github.io/ope-term/BUILD/) | Nix / Bazel / キャッシュ構成 |

@@ -13,6 +13,8 @@ mod sftp;
 #[cfg(feature = "app")]
 mod ssh;
 mod ssh_config;
+#[cfg(feature = "app")]
+mod transport;
 
 /// Exercises the in-memory OpenSSH config parser without touching the filesystem.
 ///
@@ -48,20 +50,22 @@ mod application {
     use zeroize::Zeroize;
 
     use crate::local_files::{LocalListing, LocalScopes, SelectedDirectory};
-    use crate::local_terminal::{LocalCommand, LocalConnectRequest, ShellProfile};
+    use crate::local_terminal::{LocalConnectRequest, ShellProfile};
     use crate::sftp::{
         SftpListing, SftpProgress, SftpTransferInput, SftpTransferResult, TransferDirection,
     };
     use crate::ssh::{
         self, AuthAnswer, CloseReason, ConnectRequest, HostKeyAnswer, HostKeyDecision,
-        SessionCommand, SessionControl, SessionEvent, SessionMap,
+        SessionCommand, SessionControl, SessionEvent,
     };
     use crate::ssh_config::{self, HostProfile};
+    use crate::transport::{TerminalControl, TerminalRequest};
+
+    type TerminalMap = Arc<tokio::sync::Mutex<HashMap<String, TerminalControl>>>;
 
     #[derive(Default)]
     struct AppState {
-        sessions: SessionMap,
-        local_sessions: Arc<tokio::sync::Mutex<HashMap<String, mpsc::Sender<LocalCommand>>>>,
+        terminals: TerminalMap,
         local_scopes: LocalScopes,
     }
 
@@ -92,21 +96,21 @@ mod application {
         let (host_key_sender, host_key_receiver) = mpsc::channel(8);
         let (auth_sender, auth_receiver) = mpsc::channel(8);
         {
-            let mut sessions = state.sessions.lock().await;
-            if sessions.contains_key(&session_id) {
+            let mut terminals = state.terminals.lock().await;
+            if terminals.contains_key(&session_id) {
                 return Err("同じ session id が既に存在します".into());
             }
-            sessions.insert(
+            terminals.insert(
                 session_id.clone(),
-                SessionControl {
+                TerminalControl::Ssh(SessionControl {
                     commands: command_sender,
                     host_keys: host_key_sender,
                     authentication: auth_sender,
-                },
+                }),
             );
         }
 
-        let registry = Arc::clone(&state.sessions);
+        let registry = Arc::clone(&state.terminals);
         tauri::async_runtime::spawn(async move {
             let reason = match ssh::run(
                 request,
@@ -133,18 +137,19 @@ mod application {
         Ok(())
     }
 
-    async fn send_command(
+    async fn send_ssh_command(
         state: State<'_, AppState>,
         session_id: &str,
         command: SessionCommand,
     ) -> Result<(), String> {
         let sender = state
-            .sessions
+            .terminals
             .lock()
             .await
             .get(session_id)
+            .and_then(TerminalControl::ssh)
             .map(|session| session.commands.clone())
-            .ok_or_else(|| "セッションが見つかりません".to_owned())?;
+            .ok_or_else(|| "SSH session が見つかりません".to_owned())?;
         sender
             .send(command)
             .await
@@ -157,14 +162,14 @@ mod application {
         data: String,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
-        let local = state.local_sessions.lock().await.get(&session_id).cloned();
-        if let Some(sender) = local {
-            return sender
-                .send(LocalCommand::Input(data))
-                .await
-                .map_err(|_| "local session は終了しています".to_owned());
-        }
-        send_command(state, &session_id, SessionCommand::Input(data)).await
+        let control = state
+            .terminals
+            .lock()
+            .await
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "terminal session が見つかりません".to_owned())?;
+        control.send(TerminalRequest::Input(data)).await
     }
 
     #[tauri::command]
@@ -174,14 +179,14 @@ mod application {
         rows: u32,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
-        let local = state.local_sessions.lock().await.get(&session_id).cloned();
-        if let Some(sender) = local {
-            return sender
-                .send(LocalCommand::Resize { cols, rows })
-                .await
-                .map_err(|_| "local session は終了しています".to_owned());
-        }
-        send_command(state, &session_id, SessionCommand::Resize { cols, rows }).await
+        let control = state
+            .terminals
+            .lock()
+            .await
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "terminal session が見つかりません".to_owned())?;
+        control.send(TerminalRequest::Resize { cols, rows }).await
     }
 
     #[tauri::command]
@@ -198,11 +203,6 @@ mod application {
     ) -> Result<(), String> {
         let log_directory = resolve_log_directory(&request.log, &state.local_scopes).await?;
         let session_id = request.session_id.clone();
-        if state.sessions.lock().await.contains_key(&session_id)
-            || state.local_sessions.lock().await.contains_key(&session_id)
-        {
-            return Err("同じ session id が既に存在します".to_owned());
-        }
         let working_directory = match &request.working_directory_token {
             Some(token) => Some(
                 crate::local_files::resolve_directory(&state.local_scopes, token)
@@ -212,12 +212,14 @@ mod application {
             None => None,
         };
         let (sender, receiver) = mpsc::channel(256);
-        state
-            .local_sessions
-            .lock()
-            .await
-            .insert(session_id.clone(), sender);
-        let registry = Arc::clone(&state.local_sessions);
+        {
+            let mut terminals = state.terminals.lock().await;
+            if terminals.contains_key(&session_id) {
+                return Err("同じ session id が既に存在します".to_owned());
+            }
+            terminals.insert(session_id.clone(), TerminalControl::Local(sender));
+        }
+        let registry = Arc::clone(&state.terminals);
         tauri::async_runtime::spawn(async move {
             let reason = match crate::local_terminal::run(
                 request,
@@ -265,7 +267,7 @@ mod application {
         state: State<'_, AppState>,
     ) -> Result<SftpListing, String> {
         let (reply, result) = oneshot::channel();
-        send_command(state, &session_id, SessionCommand::SftpList { path, reply }).await?;
+        send_ssh_command(state, &session_id, SessionCommand::SftpList { path, reply }).await?;
         result
             .await
             .map_err(|_| "SFTP session は終了しています".to_owned())?
@@ -288,7 +290,7 @@ mod application {
         .map_err(|error| format!("{error:#}"))?;
         let request = request.resolve(local_path);
         let (reply, result) = oneshot::channel();
-        send_command(
+        send_ssh_command(
             state,
             &session_id,
             SessionCommand::SftpTransfer {
@@ -310,7 +312,7 @@ mod application {
         state: State<'_, AppState>,
     ) -> Result<bool, String> {
         let (reply, result) = oneshot::channel();
-        send_command(
+        send_ssh_command(
             state,
             &session_id,
             SessionCommand::SftpCancel { transfer_id, reply },
@@ -389,40 +391,11 @@ mod application {
 
     #[tauri::command]
     async fn close_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
-        let local = state.local_sessions.lock().await.get(&session_id).cloned();
-        if let Some(sender) = local {
-            return sender
-                .send(LocalCommand::Close)
-                .await
-                .map_err(|_| "local session は終了しています".to_owned());
-        }
-        let control = state
-            .sessions
-            .lock()
-            .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| "セッションが見つかりません".to_owned())?;
-        let _ = control
-            .host_keys
-            .send(HostKeyAnswer {
-                request_id: None,
-                decision: HostKeyDecision::Reject,
-            })
-            .await;
-        let _ = control
-            .authentication
-            .send(AuthAnswer {
-                request_id: None,
-                responses: Vec::new(),
-                cancelled: true,
-            })
-            .await;
+        let control = state.terminals.lock().await.get(&session_id).cloned();
         control
-            .commands
-            .send(SessionCommand::Close)
+            .ok_or_else(|| "terminal session が見つかりません".to_owned())?
+            .close()
             .await
-            .map_err(|_| "セッションは終了しています".to_owned())
     }
 
     #[tauri::command]
@@ -434,12 +407,13 @@ mod application {
     ) -> Result<(), String> {
         let decision = HostKeyDecision::parse(&decision)?;
         let sender = state
-            .sessions
+            .terminals
             .lock()
             .await
             .get(&session_id)
+            .and_then(TerminalControl::ssh)
             .map(|session| session.host_keys.clone())
-            .ok_or_else(|| "セッションが見つかりません".to_owned())?;
+            .ok_or_else(|| "SSH session が見つかりません".to_owned())?;
         sender
             .send(HostKeyAnswer {
                 request_id: Some(request_id),
@@ -462,12 +436,13 @@ mod application {
             return Err(error.to_string());
         }
         let sender = state
-            .sessions
+            .terminals
             .lock()
             .await
             .get(&session_id)
+            .and_then(TerminalControl::ssh)
             .map(|session| session.authentication.clone())
-            .ok_or_else(|| "セッションが見つかりません".to_owned());
+            .ok_or_else(|| "SSH session が見つかりません".to_owned());
         let sender = match sender {
             Ok(sender) => sender,
             Err(error) => {

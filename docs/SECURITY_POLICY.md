@@ -7,8 +7,9 @@
 ## プロトコル
 
 - 対応プロトコルは SSH2 のみです。SSH1 / rlogin は実装しません。
-- telnet / serial は運用上の需要を確認し、平文警告や権限制御を設計してから
-  別 transport として検討します。
+- telnet / serial は未実装です。需要確認と安全 gate は
+  [Transport boundary](TRANSPORTS.md) に固定し、平文警告・credential 非永続化・macro 無効化を
+  同時実装できるまで接続入口を追加しません。
 - `russh` の未修正 RSA 依存を出荷しないため、RSA 秘密鍵認証と RSA のみの host key を
   無効化しています。
 

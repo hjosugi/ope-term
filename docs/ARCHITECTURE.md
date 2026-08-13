@@ -29,9 +29,14 @@ Rust session task (one task per terminal)
 - `local_files.rs`: native picker が許可した local root と相対 path の境界検証
 - `local_terminal.rs`: Windows ConPTY / Unix PTY、検出 shell profile、child kill + wait
 - `session_log.rs`: output-only bounded writer、世代 rotation、bounded streaming search
-- `lib.rs`: 最小の Tauri command とセッション registry
+- `transport.rs`: terminal 共通の input / resize / close と SSH 固有 capability の境界
+- `lib.rs`: 最小の Tauri command と transport 共通のセッション registry
 
 各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。大量データ向けでない Tauri event bus は端末出力に使いません。
+
+interactive terminal の input / resize / close は transport 共通 command ですが、host-key、認証、
+ProxyJump、SFTP は SSH 専用 capability です。候補 transport と安全境界は
+[Transport boundary](TRANSPORTS.md) に記録しています。
 
 ### WebView
 

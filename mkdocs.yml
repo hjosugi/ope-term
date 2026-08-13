@@ -82,6 +82,7 @@ nav:
   - Session logs: SESSION_LOGS.md
   - 設計:
       - アーキテクチャ: ARCHITECTURE.md
+      - Transport 境界: TRANSPORTS.md
       - 長時間接続と再接続: RELIABILITY.md
       - UI サイズと CSS token: DESIGN_SYSTEM.md
       - ビルド・開発環境: BUILD.md

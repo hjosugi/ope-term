@@ -183,8 +183,6 @@ pub struct SessionControl {
     pub authentication: mpsc::Sender<AuthAnswer>,
 }
 
-pub type SessionMap = Arc<Mutex<HashMap<String, SessionControl>>>;
-
 pub async fn run(
     request: ConnectRequest,
     log_directory: Option<PathBuf>,
