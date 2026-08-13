@@ -32,7 +32,7 @@ Rust session task (one task per terminal)
 - `transport.rs`: terminal 共通の input / resize / close と SSH 固有 capability の境界
 - `lib.rs`: 最小の Tauri command、canonical ID検証、transport共通のセッション registry
 
-各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。SSH config / known_hosts / key fileの同期I/Oと暗号化鍵KDFはblocking poolへ分離します。大量データ向けでない Tauri event bus は端末出力に使いません。
+各セッションは独立した Tokio task です。端末操作、ホスト鍵応答、認証応答は用途別の bounded `mpsc`、出力とhop状態・確認promptは Tauri IPC Channel で運びます。terminal inputは256 KiB chunk、frontendの未送信backlogは4 MiB、backendのcommand queueは64件に制限します。認証値を通常のterminal input channelへ混ぜず、セッション終了時は待機中の確認もcancelします。SSH config / known_hosts / key fileの同期I/Oと暗号化鍵KDFはblocking poolへ分離します。大量データ向けでない Tauri event bus は端末出力に使いません。
 
 interactive terminal の input / resize / close は transport 共通 command ですが、host-key、認証、
 ProxyJump、SFTP は SSH 専用 capability です。候補 transport と安全境界は

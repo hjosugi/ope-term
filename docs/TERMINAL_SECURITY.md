@@ -33,7 +33,9 @@ therefore has no path to the system clipboard. xterm's normal DOM copy/paste
 events remain user-initiated: selected text may be copied and explicitly pasted
 text is sent as terminal input. Bracketed-paste mode remains enabled when the
 remote application requests it, which lets terminal programs distinguish a paste
-from typing.
+from typing. Input is split into 256 KiB UTF-8-safe IPC chunks, while the aggregate
+unsent backlog is capped at 4 MiB per session; excess pasted input is discarded
+with an application-chrome warning.
 
 Adding automatic copy, paste, selection export, or OSC 52 support requires a
 separate threat-model update and explicit capability review.

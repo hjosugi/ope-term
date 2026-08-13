@@ -57,7 +57,7 @@ import {
 } from './session-log-settings';
 import { createSftpPanel, type SftpPanel } from './sftp-ui';
 import { readStorage } from './storage';
-import { chunkTerminalInput } from './terminal-input';
+import { boundedTerminalInputBytes, chunkTerminalInput } from './terminal-input';
 import type {
   AuthPrompt,
   CloseReason,
@@ -131,6 +131,9 @@ interface SessionUi {
   hopbar: HTMLElement;
   sftp: SftpPanel;
   inputBuffer: string;
+  inputBufferedBytes: number;
+  inputPendingBytes: number;
+  inputOverflowWarned: boolean;
   inputChain: Promise<void>;
   inputTimer?: number;
   resizeTimer?: number;
@@ -948,6 +951,9 @@ function createSession(sessionRoute: string[], local?: LocalSessionConfig): Sess
     hopbar,
     sftp,
     inputBuffer: '',
+    inputBufferedBytes: 0,
+    inputPendingBytes: 0,
+    inputOverflowWarned: false,
     inputChain: Promise.resolve(),
     state: 'idle',
     retryAttempt: 0,
@@ -984,6 +990,8 @@ function discardPendingInput(session: SessionUi): void {
   if (session.inputTimer !== undefined) window.clearTimeout(session.inputTimer);
   session.inputTimer = undefined;
   session.inputBuffer = '';
+  session.inputBufferedBytes = 0;
+  if (session.inputPendingBytes === 0) session.inputOverflowWarned = false;
 }
 
 function clearRetryTimers(session: SessionUi): void {
@@ -1025,13 +1033,28 @@ function cancelRetry(session: SessionUi): void {
 function queueInput(session: SessionUi, data: string): void {
   const connectionId = session.connectionId;
   if (!canQueueTerminalInput(connectionId, session.state) || !connectionId) return;
+  const bytes = boundedTerminalInputBytes(
+    data,
+    session.inputBufferedBytes + session.inputPendingBytes,
+  );
+  if (bytes === null) {
+    if (!session.inputOverflowWarned) {
+      session.inputOverflowWarned = true;
+      toast('terminal input の未送信量が4 MiBに達したため、追加の入力を破棄しました。');
+    }
+    return;
+  }
   session.inputBuffer += data;
+  session.inputBufferedBytes += bytes;
   if (session.inputTimer !== undefined) return;
   session.inputTimer = window.setTimeout(() => {
     const input = session.inputBuffer;
     session.inputBuffer = '';
+    session.inputBufferedBytes = 0;
     session.inputTimer = undefined;
     for (const chunk of chunkTerminalInput(input)) {
+      const chunkBytes = new TextEncoder().encode(chunk).byteLength;
+      session.inputPendingBytes += chunkBytes;
       session.inputChain = session.inputChain.then(async () => {
         if (
           isCurrentConnection(session.connectionId, connectionId)
@@ -1039,7 +1062,12 @@ function queueInput(session: SessionUi, data: string): void {
         ) {
           await invoke('session_input', { sessionId: connectionId, data: chunk });
         }
-      }).catch(() => undefined);
+      }).catch(() => undefined).finally(() => {
+        session.inputPendingBytes = Math.max(0, session.inputPendingBytes - chunkBytes);
+        if (session.inputBufferedBytes + session.inputPendingBytes === 0) {
+          session.inputOverflowWarned = false;
+        }
+      });
     }
   }, 4);
 }

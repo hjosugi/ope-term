@@ -64,6 +64,7 @@ mod application {
 
     type TerminalMap = Arc<tokio::sync::Mutex<HashMap<String, TerminalControl>>>;
     const MAX_ACTIVE_TERMINALS: usize = 64;
+    const TERMINAL_COMMAND_QUEUE_CAPACITY: usize = 64;
 
     #[derive(Default)]
     struct AppState {
@@ -133,7 +134,7 @@ mod application {
     ) -> Result<(), String> {
         let session_id = validate_session_id(&request.session_id)?;
         let log_directory = resolve_log_directory(&request.log, &state.local_scopes).await?;
-        let (command_sender, command_receiver) = mpsc::channel(256);
+        let (command_sender, command_receiver) = mpsc::channel(TERMINAL_COMMAND_QUEUE_CAPACITY);
         let (host_key_sender, host_key_receiver) = mpsc::channel(8);
         let (auth_sender, auth_receiver) = mpsc::channel(8);
         {
@@ -261,7 +262,7 @@ mod application {
             ),
             None => None,
         };
-        let (sender, receiver) = mpsc::channel(256);
+        let (sender, receiver) = mpsc::channel(TERMINAL_COMMAND_QUEUE_CAPACITY);
         {
             let mut terminals = state.terminals.lock().await;
             register_terminal(
