@@ -56,6 +56,7 @@ import {
   saveLogPolicies,
 } from './session-log-settings';
 import { createSftpPanel, type SftpPanel } from './sftp-ui';
+import { chunkTerminalInput } from './terminal-input';
 import type {
   AuthPrompt,
   CloseReason,
@@ -129,6 +130,7 @@ interface SessionUi {
   hopbar: HTMLElement;
   sftp: SftpPanel;
   inputBuffer: string;
+  inputChain: Promise<void>;
   inputTimer?: number;
   resizeTimer?: number;
   state: SessionState;
@@ -932,6 +934,7 @@ function createSession(sessionRoute: string[], local?: LocalSessionConfig): Sess
     hopbar,
     sftp,
     inputBuffer: '',
+    inputChain: Promise.resolve(),
     state: 'idle',
     retryAttempt: 0,
   };
@@ -1014,12 +1017,15 @@ function queueInput(session: SessionUi, data: string): void {
     const input = session.inputBuffer;
     session.inputBuffer = '';
     session.inputTimer = undefined;
-    if (
-      input
-      && isCurrentConnection(session.connectionId, connectionId)
-      && canQueueTerminalInput(session.connectionId, session.state)
-    ) {
-      void invoke('session_input', { sessionId: connectionId, data: input }).catch(() => undefined);
+    for (const chunk of chunkTerminalInput(input)) {
+      session.inputChain = session.inputChain.then(async () => {
+        if (
+          isCurrentConnection(session.connectionId, connectionId)
+          && canQueueTerminalInput(session.connectionId, session.state)
+        ) {
+          await invoke('session_input', { sessionId: connectionId, data: chunk });
+        }
+      }).catch(() => undefined);
     }
   }, 4);
 }
