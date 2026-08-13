@@ -47,6 +47,7 @@ mod application {
     use tauri::{AppHandle, State};
     use tauri_plugin_dialog::DialogExt;
     use tokio::sync::{mpsc, oneshot};
+    use uuid::Uuid;
     use zeroize::Zeroize;
 
     use crate::local_files::{LocalListing, LocalScopes, SelectedDirectory};
@@ -62,11 +63,38 @@ mod application {
     use crate::transport::{TerminalControl, TerminalRequest};
 
     type TerminalMap = Arc<tokio::sync::Mutex<HashMap<String, TerminalControl>>>;
+    const MAX_ACTIVE_TERMINALS: usize = 64;
 
     #[derive(Default)]
     struct AppState {
         terminals: TerminalMap,
         local_scopes: LocalScopes,
+    }
+
+    fn validate_session_id(value: &str) -> Result<String, String> {
+        let parsed = Uuid::parse_str(value).map_err(|_| "session id が不正です".to_owned())?;
+        let canonical = parsed.hyphenated().to_string();
+        if canonical != value {
+            return Err("session id は canonical UUID でなければなりません".to_owned());
+        }
+        Ok(canonical)
+    }
+
+    fn register_terminal(
+        terminals: &mut HashMap<String, TerminalControl>,
+        session_id: String,
+        control: TerminalControl,
+    ) -> Result<(), String> {
+        if terminals.contains_key(&session_id) {
+            return Err("同じ session id が既に存在します".to_owned());
+        }
+        if terminals.len() >= MAX_ACTIVE_TERMINALS {
+            return Err(format!(
+                "同時 terminal 数は {MAX_ACTIVE_TERMINALS} 件までです"
+            ));
+        }
+        terminals.insert(session_id, control);
+        Ok(())
     }
 
     #[tauri::command]
@@ -90,24 +118,22 @@ mod application {
         on_data: Channel<Response>,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        let session_id = validate_session_id(&request.session_id)?;
         let log_directory = resolve_log_directory(&request.log, &state.local_scopes).await?;
-        let session_id = request.session_id.clone();
         let (command_sender, command_receiver) = mpsc::channel(256);
         let (host_key_sender, host_key_receiver) = mpsc::channel(8);
         let (auth_sender, auth_receiver) = mpsc::channel(8);
         {
             let mut terminals = state.terminals.lock().await;
-            if terminals.contains_key(&session_id) {
-                return Err("同じ session id が既に存在します".into());
-            }
-            terminals.insert(
+            register_terminal(
+                &mut terminals,
                 session_id.clone(),
                 TerminalControl::Ssh(SessionControl {
                     commands: command_sender,
                     host_keys: host_key_sender,
                     authentication: auth_sender,
                 }),
-            );
+            )?;
         }
 
         let registry = Arc::clone(&state.terminals);
@@ -201,8 +227,8 @@ mod application {
         on_data: Channel<Response>,
         state: State<'_, AppState>,
     ) -> Result<(), String> {
+        let session_id = validate_session_id(&request.session_id)?;
         let log_directory = resolve_log_directory(&request.log, &state.local_scopes).await?;
-        let session_id = request.session_id.clone();
         let working_directory = match &request.working_directory_token {
             Some(token) => Some(
                 crate::local_files::resolve_directory(&state.local_scopes, token)
@@ -214,10 +240,11 @@ mod application {
         let (sender, receiver) = mpsc::channel(256);
         {
             let mut terminals = state.terminals.lock().await;
-            if terminals.contains_key(&session_id) {
-                return Err("同じ session id が既に存在します".to_owned());
-            }
-            terminals.insert(session_id.clone(), TerminalControl::Local(sender));
+            register_terminal(
+                &mut terminals,
+                session_id.clone(),
+                TerminalControl::Local(sender),
+            )?;
         }
         let registry = Arc::clone(&state.terminals);
         tauri::async_runtime::spawn(async move {
@@ -494,6 +521,52 @@ mod application {
             ])
             .run(tauri::generate_context!())
             .expect("failed to run ope-term");
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn accepts_only_canonical_session_uuids() {
+            let canonical = "19b4f21c-233f-4a72-9e36-caac6f4e87ca";
+            assert_eq!(validate_session_id(canonical).as_deref(), Ok(canonical));
+            assert!(validate_session_id("not-a-uuid").is_err());
+            assert!(validate_session_id("19B4F21C-233F-4A72-9E36-CAAC6F4E87CA").is_err());
+            assert!(validate_session_id("19b4f21c233f4a729e36caac6f4e87ca").is_err());
+        }
+
+        #[test]
+        fn bounds_the_terminal_registry_and_rejects_duplicates() {
+            let mut terminals = HashMap::new();
+            for _ in 0..MAX_ACTIVE_TERMINALS {
+                let (sender, _receiver) = mpsc::channel(1);
+                register_terminal(
+                    &mut terminals,
+                    Uuid::new_v4().hyphenated().to_string(),
+                    TerminalControl::Local(sender),
+                )
+                .expect("terminal slot");
+            }
+            let duplicate = terminals.keys().next().expect("session id").clone();
+            let (sender, _receiver) = mpsc::channel(1);
+            assert!(
+                register_terminal(&mut terminals, duplicate, TerminalControl::Local(sender))
+                    .unwrap_err()
+                    .contains("既に存在")
+            );
+
+            let (sender, _receiver) = mpsc::channel(1);
+            assert!(
+                register_terminal(
+                    &mut terminals,
+                    Uuid::new_v4().hyphenated().to_string(),
+                    TerminalControl::Local(sender)
+                )
+                .unwrap_err()
+                .contains(&MAX_ACTIVE_TERMINALS.to_string())
+            );
+        }
     }
 }
 
