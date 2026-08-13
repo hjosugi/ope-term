@@ -40,7 +40,8 @@ directory 一覧は 10,000 entries で停止します。
 
 file は全読み込みせず 64 KiB の reader buffer で先頭から走査します。1行の保持は 4 KiB、結果は
 500 件に制限するため、100 MiB 以上でも file size に比例した memory を確保しません。100 MiB の
-sparse fixture を最後まで検索する regression test があります。
+sparse fixture を最後まで検索する regression test があります。readerもopen時にsymlinkと
+通常file以外を拒否し、同時検索は4件までに制限します。
 
 ## 秘密情報の境界
 

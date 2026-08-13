@@ -229,6 +229,23 @@ fn open_log(path: &Path) -> Result<File> {
     Ok(file)
 }
 
+fn open_log_for_read(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("{} を開けません", path.display()))?;
+    if !file.metadata()?.is_file() {
+        bail!("通常 file 以外は検索できません");
+    }
+    Ok(file)
+}
+
 fn rotate(path: &Path, retained: u8) -> Result<()> {
     let oldest = rotated_path(path, retained);
     match fs::remove_file(&oldest) {
@@ -306,7 +323,7 @@ pub fn search(
         SearchMode::Regex => Some(Regex::new(query).context("正規表現が不正です")?),
         _ => None,
     };
-    let mut reader = BufReader::with_capacity(64 * 1024, File::open(path)?);
+    let mut reader = BufReader::with_capacity(64 * 1024, open_log_for_read(&path)?);
     let mut results = Vec::new();
     let mut line_number = 0_u64;
     while let Some(bytes) = read_bounded_line(&mut reader)? {
@@ -557,6 +574,7 @@ mod tests {
         let link = directory.path().join("link.log");
         symlink(&target, &link).expect("symlink");
         assert!(open_log(&link).is_err());
+        assert!(search(directory.path(), "link.log", "sentinel", SearchMode::Exact).is_err());
         assert_eq!(fs::read(&target).expect("target"), b"unchanged");
     }
 

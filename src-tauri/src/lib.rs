@@ -46,7 +46,7 @@ mod application {
     use tauri::ipc::{Channel, Response};
     use tauri::{AppHandle, State};
     use tauri_plugin_dialog::DialogExt;
-    use tokio::sync::{mpsc, oneshot};
+    use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
     use uuid::Uuid;
     use zeroize::Zeroize;
 
@@ -65,11 +65,22 @@ mod application {
     type TerminalMap = Arc<tokio::sync::Mutex<HashMap<String, TerminalControl>>>;
     const MAX_ACTIVE_TERMINALS: usize = 64;
     const TERMINAL_COMMAND_QUEUE_CAPACITY: usize = 64;
+    const MAX_ACTIVE_LOG_SEARCHES: usize = 4;
 
-    #[derive(Default)]
     struct AppState {
         terminals: TerminalMap,
         local_scopes: LocalScopes,
+        log_search_slots: Arc<Semaphore>,
+    }
+
+    impl Default for AppState {
+        fn default() -> Self {
+            Self {
+                terminals: TerminalMap::default(),
+                local_scopes: LocalScopes::default(),
+                log_search_slots: Arc::new(Semaphore::new(MAX_ACTIVE_LOG_SEARCHES)),
+            }
+        }
     }
 
     fn validate_session_id(value: &str) -> Result<String, String> {
@@ -92,6 +103,12 @@ mod application {
             return Err("request id が不正です".to_owned());
         }
         Ok(())
+    }
+
+    fn acquire_log_search_slot(slots: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, String> {
+        Arc::clone(slots)
+            .try_acquire_owned()
+            .map_err(|_| format!("同時 log 検索は {MAX_ACTIVE_LOG_SEARCHES} 件までです"))
     }
 
     fn register_terminal(
@@ -438,10 +455,12 @@ mod application {
         mode: crate::session_log::SearchMode,
         state: State<'_, AppState>,
     ) -> Result<Vec<crate::session_log::LogMatch>, String> {
+        let permit = acquire_log_search_slot(&state.log_search_slots)?;
         let directory = crate::local_files::resolve_directory(&state.local_scopes, &token)
             .await
             .map_err(|error| format!("{error:#}"))?;
         tauri::async_runtime::spawn_blocking(move || {
+            let _permit = permit;
             crate::session_log::search(&directory, &name, &query, mode)
         })
         .await
@@ -593,6 +612,22 @@ mod application {
                 .unwrap_err()
                 .contains(&MAX_ACTIVE_TERMINALS.to_string())
             );
+        }
+
+        #[test]
+        fn bounds_concurrent_log_searches() {
+            let slots = Arc::new(Semaphore::new(MAX_ACTIVE_LOG_SEARCHES));
+            let permits = (0..MAX_ACTIVE_LOG_SEARCHES)
+                .map(|_| acquire_log_search_slot(&slots).expect("search slot"))
+                .collect::<Vec<_>>();
+
+            assert!(
+                acquire_log_search_slot(&slots)
+                    .unwrap_err()
+                    .contains(&MAX_ACTIVE_LOG_SEARCHES.to_string())
+            );
+            drop(permits);
+            assert!(acquire_log_search_slot(&slots).is_ok());
         }
     }
 }

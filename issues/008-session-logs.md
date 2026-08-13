@@ -21,4 +21,5 @@ Labels: priority:P2, area:terminal, enhancement
 - 1–1024 MiB、1–20 世代の rotation。file template は固定4変数と `.log` suffix に制限する。
 - policy storeはJSON parse / write前に256 KiBで停止する。
 - viewer は `.log` / `.log.N` のみ、64 KiB reader / 4 KiB line / 500 results の上限で逐次走査。
+- readerはopen時にもsymlink / 非通常fileを拒否し、同時検索は4件で停止する。
 - 100 MiB sparse fixture の末尾 exact search、巨大1行、fuzzy、regex、rotation を Rust test で検証。
