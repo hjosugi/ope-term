@@ -37,5 +37,7 @@ permission 変更は行いません。
 !!! warning "切断と再接続"
 
     転送中に session を閉じた場合は cancel されます。transport 断後の自動再接続では新しい
-    SSH/SFTP session になるため、失敗した項目は接続完了後に `RETRY` してください。途中 byte
-    からの resume はまだ対応していません。
+    SSH/SFTP session になるため、queue済み項目も古いconnection IDのまま暗黙実行しません。
+    失敗した項目は接続完了後に内容を確認して `RETRY` してください。途中 byteからのresumeは
+    まだ対応していません。directory一覧も最後に要求した画面だけを反映し、遅い古い応答で移動先を
+    巻き戻しません。

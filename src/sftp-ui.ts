@@ -1,5 +1,13 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 
+import {
+  LatestRequest,
+  formatFileSize,
+  joinBrowserPath,
+  parentBrowserPath,
+  transferPercent,
+} from './sftp-paths';
+
 interface SftpEntry {
   name: string;
   kind: 'directory' | 'file' | 'symlink' | 'other';
@@ -44,6 +52,7 @@ type TransferStatus = 'queued' | 'running' | 'completed' | 'cancelled' | 'failed
 
 interface TransferItem {
   id: string;
+  connectionId: string;
   direction: TransferDirection;
   localToken: string;
   localRelativePath: string;
@@ -75,27 +84,6 @@ function button(label: string, title = label): HTMLButtonElement {
   node.textContent = label;
   node.title = title;
   return node;
-}
-
-function joinPath(parent: string, name: string, separator = '/'): string {
-  if (parent === '.' || parent === '') return name;
-  return `${parent.replace(/[\\/]$/u, '')}${separator}${name}`;
-}
-
-function parentPath(path: string, remote: boolean): string {
-  if (remote && path === '/') return '/';
-  const separator = remote ? '/' : path.includes('\\') ? '\\' : '/';
-  const parts = path.split(/[\\/]/u).filter(Boolean);
-  parts.pop();
-  if (remote && path.startsWith('/')) return `/${parts.join('/')}` || '/';
-  return parts.join(separator) || '.';
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
-  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
-  return `${(value / 1024 ** 3).toFixed(1)} GiB`;
 }
 
 export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
@@ -177,6 +165,8 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
   let selectedRemote: SftpEntry | null = null;
   const queue: TransferItem[] = [];
   let processing = false;
+  const localRequests = new LatestRequest();
+  const remoteRequests = new LatestRequest();
 
   function connectionId(): string | null {
     const id = options.getConnectionId();
@@ -215,7 +205,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       name.textContent = entry.name;
       const detail = document.createElement('small');
       const permissions = remote ? (entry as SftpEntry).permissions : '';
-      detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatBytes(entry.size)}`;
+      detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatFileSize(entry.size)}`;
       row.append(kind, name, detail);
       row.addEventListener('click', () => onSelect(entry));
       row.addEventListener('dblclick', () => onOpen(entry));
@@ -231,7 +221,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       renderLocal();
       updateActions();
     }, (entry) => {
-      if (entry.kind === 'directory') void loadLocal(joinPath(localCurrent, entry.name));
+      if (entry.kind === 'directory') void loadLocal(joinBrowserPath(localCurrent, entry.name));
     }, false);
   }
 
@@ -243,36 +233,45 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       renderRemote();
       updateActions();
     }, (entry) => {
-      if (entry.kind === 'directory') void loadRemote(joinPath(remoteCurrent, entry.name));
+      if (entry.kind === 'directory') void loadRemote(joinBrowserPath(remoteCurrent, entry.name));
     }, true);
   }
 
   async function loadLocal(path = localCurrent): Promise<void> {
     if (!scope) return;
+    const generation = localRequests.begin();
+    const selectedScope = scope;
     try {
-      const listing = await invoke<LocalListing>('local_list', { token: scope.token, relativePath: path });
+      const listing = await invoke<LocalListing>('local_list', { token: selectedScope.token, relativePath: path });
+      if (!localRequests.isCurrent(generation) || scope?.token !== selectedScope.token) return;
       localCurrent = listing.relativePath;
       localEntries = listing.entries;
       selectedLocal = null;
       renderLocal();
       updateActions();
     } catch (error) {
-      options.notify(`local 一覧を取得できません: ${String(error)}`);
+      if (localRequests.isCurrent(generation) && scope?.token === selectedScope.token) {
+        options.notify(`local 一覧を取得できません: ${String(error)}`);
+      }
     }
   }
 
   async function loadRemote(path = remoteCurrent): Promise<void> {
     const id = connectionId();
     if (!id) return;
+    const generation = remoteRequests.begin();
     try {
       const listing = await invoke<RemoteListing>('sftp_list', { sessionId: id, path });
+      if (!remoteRequests.isCurrent(generation) || options.getConnectionId() !== id) return;
       remoteCurrent = listing.canonicalPath;
       remoteEntries = listing.entries;
       selectedRemote = null;
       renderRemote();
       updateActions();
     } catch (error) {
-      options.notify(`remote 一覧を取得できません: ${String(error)}`);
+      if (remoteRequests.isCurrent(generation) && options.getConnectionId() === id) {
+        options.notify(`remote 一覧を取得できません: ${String(error)}`);
+      }
     }
   }
 
@@ -288,17 +287,22 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       const name = document.createElement('strong');
       name.textContent = item.remoteName;
       const state = document.createElement('small');
-      const percent = item.total > 0 ? Math.floor((item.transferred / item.total) * 100) : 0;
-      state.textContent = item.status === 'running' ? `${percent}% · ${formatBytes(item.transferred)}` : item.status;
+      const percent = transferPercent(item.transferred, item.total);
+      state.textContent = item.status === 'running' ? `${percent}% · ${formatFileSize(item.transferred)}` : item.status;
       summary.append(direction, name, state);
       const action = item.status === 'running' ? button('CANCEL') : item.status === 'failed' || item.status === 'cancelled' ? button('RETRY') : null;
       if (action) {
         action.addEventListener('click', () => {
           if (item.status === 'running') {
             const id = options.getConnectionId();
-            if (id) void invoke('sftp_cancel', { sessionId: id, transferId: item.id });
+            if (id === item.connectionId) {
+              void invoke('sftp_cancel', { sessionId: id, transferId: item.id });
+            }
           } else {
+            const id = connectionId();
+            if (!id) return;
             item.id = crypto.randomUUID();
+            item.connectionId = id;
             item.status = 'queued';
             item.transferred = 0;
             item.total = 0;
@@ -323,8 +327,21 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     if (processing) return;
     const item = queue.find((candidate) => candidate.status === 'queued');
     if (!item) return;
-    const id = connectionId();
-    if (!id) return;
+    const id = options.getConnectionId();
+    if (!id) {
+      item.status = 'failed';
+      item.error = '接続が終了したため転送を開始しませんでした。接続後に RETRY してください。';
+      renderQueue();
+      void processQueue();
+      return;
+    }
+    if (id !== item.connectionId) {
+      item.status = 'failed';
+      item.error = '接続が変わったため転送を開始しませんでした。内容を確認して RETRY してください。';
+      renderQueue();
+      void processQueue();
+      return;
+    }
     processing = true;
     item.status = 'running';
     renderQueue();
@@ -363,22 +380,31 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     }
   }
 
-  function enqueue(item: Omit<TransferItem, 'id' | 'status' | 'transferred' | 'total'>): void {
-    queue.push({ ...item, id: crypto.randomUUID(), status: 'queued', transferred: 0, total: 0 });
+  function enqueue(item: Omit<TransferItem, 'id' | 'connectionId' | 'status' | 'transferred' | 'total'>): void {
+    const id = connectionId();
+    if (!id) return;
+    queue.push({ ...item, id: crypto.randomUUID(), connectionId: id, status: 'queued', transferred: 0, total: 0 });
     renderQueue();
     void processQueue();
   }
 
   selectLocal.addEventListener('click', async () => {
-    const selected = await invoke<LocalScope | null>('pick_local_directory');
-    if (!selected) return;
-    scope = selected;
-    localCurrent = '.';
-    await loadLocal();
+    selectLocal.disabled = true;
+    try {
+      const selected = await invoke<LocalScope | null>('pick_local_directory');
+      if (!selected) return;
+      scope = selected;
+      localCurrent = '.';
+      await loadLocal();
+    } catch (error) {
+      options.notify(`local directory を選択できません: ${String(error)}`);
+    } finally {
+      selectLocal.disabled = false;
+    }
   });
-  localUp.addEventListener('click', () => void loadLocal(parentPath(localCurrent, false)));
+  localUp.addEventListener('click', () => void loadLocal(parentBrowserPath(localCurrent, false)));
   localRefresh.addEventListener('click', () => void loadLocal());
-  remoteUp.addEventListener('click', () => void loadRemote(parentPath(remoteCurrent, true)));
+  remoteUp.addEventListener('click', () => void loadRemote(parentBrowserPath(remoteCurrent, true)));
   remoteRefresh.addEventListener('click', () => void loadRemote());
   uploadButton.addEventListener('click', () => {
     if (!scope || selectedLocal?.kind !== 'file') return;
@@ -386,7 +412,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     if (overwrite && !window.confirm(`${selectedLocal.name} は remote に存在します。上書きしますか？`)) return;
     enqueue({
       direction: 'upload', localToken: scope.token,
-      localRelativePath: joinPath(localCurrent, selectedLocal.name),
+      localRelativePath: joinBrowserPath(localCurrent, selectedLocal.name),
       remoteDirectory: remoteCurrent, remoteName: selectedLocal.name,
       overwrite, followSymlink: false,
     });
@@ -399,7 +425,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     if (followSymlink && !window.confirm('この symlink の実体を download しますか？')) return;
     enqueue({
       direction: 'download', localToken: scope.token,
-      localRelativePath: joinPath(localCurrent, selectedRemote.name),
+      localRelativePath: joinBrowserPath(localCurrent, selectedRemote.name),
       remoteDirectory: remoteCurrent, remoteName: selectedRemote.name,
       overwrite, followSymlink,
     });
