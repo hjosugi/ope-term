@@ -34,6 +34,10 @@ xterm.js は canvas renderer のため CSS の `font` declaration を直接継�
 `--terminal-font-size`、`--terminal-line-height`、`--mono` を `design-tokens.ts` で読み、xterm option
 へ渡します。terminal のサイズ感を変更するときも TypeScript に数値を追加しません。
 
+letter spacing は `--tracking-brand` / `--tracking-display` と、UI label用の
+`--tracking-micro` / `--tracking-subtle` / `--tracking-label` / `--tracking-wide` /
+`--tracking-overline` に集約します。似た用途のlabelごとに微妙に異なる `em` 値を追加しません。
+
 ## Controls と chrome
 
 | token | 役割 |
@@ -70,4 +74,4 @@ rg -n --pcre2 '(?<![\\w-])\\d+(?:\\.\\d+)?px' src/style.css
 pnpm run build
 ```
 
-検索結果として残してよい裸の `px` / `rem` は token の定義と media query の breakpoint だけです。
+検索結果として残してよい裸の `px` / `rem` / `em` は token の定義と media query の breakpointだけです。

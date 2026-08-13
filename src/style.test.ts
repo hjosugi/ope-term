@@ -18,6 +18,9 @@ describe('UI size tokens', () => {
       '--font-sm:',
       '--font-md:',
       '--font-lg:',
+      '--tracking-micro:',
+      '--tracking-label:',
+      '--tracking-wide:',
       '--terminal-font-size:',
       '--terminal-line-height:',
       '--control-sm:',
@@ -33,12 +36,12 @@ describe('UI size tokens', () => {
     }
   });
 
-  it('keeps raw fixed lengths in token definitions or the responsive breakpoint', () => {
+  it('keeps raw fixed lengths and tracking in token definitions or the responsive breakpoint', () => {
     const componentCss = appCss
       .replace(/^\s*--[\w-]+:\s*[^;]+;/gm, '')
       .replace('@media (max-width: 850px)', '@media (max-width: compact)');
 
-    expect(componentCss).not.toMatch(/(?<![\w-])\d+(?:\.\d+)?(?:px|rem)/);
+    expect(componentCss).not.toMatch(/(?<![\w-])\d+(?:\.\d+)?(?:px|rem|em)/);
     expect(`${mainSource}\n${sftpSource}`).not.toMatch(/\d+(?:\.\d+)?(?:px|rem)/);
   });
 
