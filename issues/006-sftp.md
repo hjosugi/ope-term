@@ -21,5 +21,6 @@ Labels: priority:P1, area:files, area:ssh, enhancement
   同時transferをsessionごとに8件で拒否する。一時 file + rename と backup rollback を使う。
 - queue itemをconnection IDへ固定し、再接続後の暗黙転送を拒否。directory一覧は世代番号で
   古い応答を破棄する。
+- remote一覧は`READDIR` response単位で処理し、10,000件または4 KiB超のentry名でhandleを閉じる。
 - `just check`（frontend / Rust tests、clippy、production build）と`pnpm run security:policy`、
   `just docs` を通過。

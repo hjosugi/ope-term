@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result, anyhow, bail};
-use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
-use russh_sftp::protocol::{FileAttributes, FileType, OpenFlags, StatusCode};
+use russh_sftp::client::{RawSftpSession, SftpSession};
+use russh_sftp::protocol::{File, FileAttributes, FileType, OpenFlags, StatusCode};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::fs::{self, OpenOptions};
@@ -105,35 +105,39 @@ pub struct SftpTransferResult {
     pub transferred: u64,
 }
 
-pub async fn list(session: &SftpSession, path: &str) -> Result<SftpListing> {
+pub async fn list(session: &RawSftpSession, path: &str) -> Result<SftpListing> {
     validate_remote_path(path)?;
     let canonical_path = session
-        .canonicalize(if path.trim().is_empty() { "." } else { path })
+        .realpath(if path.trim().is_empty() { "." } else { path })
         .await
-        .context("remote path を解決できません")?;
-    let directory_entries = session
-        .read_dir(canonical_path.clone())
+        .context("remote path を解決できません")?
+        .files
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("remote path の解決結果が空です"))?
+        .filename;
+    let handle = session
+        .opendir(canonical_path.clone())
         .await
-        .context("remote directory を一覧できません")?;
+        .context("remote directory を開けません")?
+        .handle;
     let mut entries = Vec::new();
-    for entry in directory_entries {
-        if entries.len() >= MAX_LIST_ENTRIES {
-            bail!("remote directory は {MAX_LIST_ENTRIES} entries を超えているため表示できません");
+    let read_result: Result<()> = async {
+        loop {
+            match session.readdir(handle.clone()).await {
+                Ok(batch) => {
+                    append_directory_batch(&mut entries, batch.files)?;
+                }
+                Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => break,
+                Err(error) => return Err(error).context("remote directory を一覧できません"),
+            }
         }
-        let metadata = entry.metadata();
-        let file_type = metadata.file_type();
-        entries.push(SftpEntry {
-            name: entry.file_name(),
-            kind: file_type_name(file_type),
-            size: metadata.len(),
-            permissions: metadata.permissions().to_string(),
-            modified_unix: metadata
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_secs()),
-        });
+        Ok(())
     }
+    .await;
+    let close_result = session.close(handle).await;
+    read_result?;
+    close_result.context("remote directory handleを閉じられません")?;
     entries.sort_by(|left, right| {
         entry_rank(left.kind)
             .cmp(&entry_rank(right.kind))
@@ -143,6 +147,34 @@ pub async fn list(session: &SftpSession, path: &str) -> Result<SftpListing> {
         canonical_path,
         entries,
     })
+}
+
+fn append_directory_batch(entries: &mut Vec<SftpEntry>, files: Vec<File>) -> Result<()> {
+    for file in files {
+        if file.filename == "." || file.filename == ".." {
+            continue;
+        }
+        if entries.len() >= MAX_LIST_ENTRIES {
+            bail!("remote directory は {MAX_LIST_ENTRIES} entries を超えているため表示できません");
+        }
+        if file.filename.len() > MAX_REMOTE_NAME_BYTES || file.filename.contains('\0') {
+            bail!("remote directory entryの名前が安全上限を超えています");
+        }
+        let file_type = file.attrs.file_type();
+        entries.push(SftpEntry {
+            name: file.filename,
+            kind: file_type_name(file_type),
+            size: file.attrs.len(),
+            permissions: file.attrs.permissions().to_string(),
+            modified_unix: file
+                .attrs
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs()),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_list_path(path: &str) -> Result<()> {
@@ -593,6 +625,46 @@ mod tests {
         assert!(validate_transfer_id("a2d41d70-11c0-4ddb-a2d1-5d692fe5835d").is_ok());
         assert!(validate_transfer_id("../../escape").is_err());
         assert!(validate_transfer_id(&"x".repeat(MAX_TRANSFER_ID_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn bounds_streamed_directory_batches_and_remote_names() {
+        let mut entries = Vec::new();
+        append_directory_batch(
+            &mut entries,
+            vec![
+                File::new(".".to_owned(), FileAttributes::empty()),
+                File::new("file.txt".to_owned(), FileAttributes::empty()),
+            ],
+        )
+        .expect("batch");
+        assert_eq!(entries.len(), 1);
+
+        entries.resize_with(MAX_LIST_ENTRIES, || SftpEntry {
+            name: "existing".to_owned(),
+            kind: "file",
+            size: 0,
+            permissions: String::new(),
+            modified_unix: None,
+        });
+        assert!(
+            append_directory_batch(
+                &mut entries,
+                vec![File::new("overflow".to_owned(), FileAttributes::empty())],
+            )
+            .is_err()
+        );
+        entries.clear();
+        assert!(
+            append_directory_batch(
+                &mut entries,
+                vec![File::new(
+                    "x".repeat(MAX_REMOTE_NAME_BYTES + 1),
+                    FileAttributes::empty(),
+                )],
+            )
+            .is_err()
+        );
     }
 
     #[test]

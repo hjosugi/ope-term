@@ -10,7 +10,7 @@ use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::keys::ssh_key;
 use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
-use russh_sftp::client::SftpSession;
+use russh_sftp::client::{RawSftpSession, SftpSession};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -387,12 +387,9 @@ async fn session_loop(
                         channel.window_change(cols.max(1), rows.max(1), 0, 0).await?;
                     }
                     Some(SessionCommand::SftpList { path, reply }) => {
-                        let result = match open_sftp(handle, &mut sftp_session).await {
-                            Ok(session) => crate::sftp::list(&session, &path)
-                                .await
-                                .map_err(|error| format!("{error:#}")),
-                            Err(error) => Err(format!("{error:#}")),
-                        };
+                        let result = list_sftp(handle, &path)
+                            .await
+                            .map_err(|error| format!("{error:#}"));
                         let _ = reply.send(result);
                     }
                     Some(SessionCommand::SftpTransfer { request, progress, reply }) => {
@@ -481,6 +478,25 @@ async fn session_loop(
             }
         }
     }
+}
+
+async fn list_sftp(handle: &mut client::Handle<HostVerifier>, path: &str) -> Result<SftpListing> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .context("SFTP一覧用SSH channelを開けません")?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .context("SFTP一覧用subsystemを開始できません")?;
+    let session = RawSftpSession::new(channel.into_stream());
+    session
+        .init()
+        .await
+        .context("SFTP一覧protocolを初期化できません")?;
+    let result = crate::sftp::list(&session, path).await;
+    let _ = session.close_session();
+    result
 }
 
 fn register_transfer(

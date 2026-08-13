@@ -35,6 +35,8 @@ permission 変更は行いません。
 - UI queueは1件ずつ実行し、Rust coreも同一SSH sessionの同時transferを8件で拒否します。
   transfer IDはtaskや一時fileを作る前に長さと文字種を検証します。
 - local / remote とも 1 directory の表示は 10,000 entries、相対 path は 32 KiB に制限します。
+  remote一覧は高水準APIで全件を集めず、SFTP `READDIR` responseごとに処理して10,001件目で
+  directory handleを閉じます。remote entry名も4 KiBで停止します。
 
 !!! warning "切断と再接続"
 
