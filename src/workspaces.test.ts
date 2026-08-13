@@ -11,6 +11,7 @@ import {
   restorePaneLayout,
   sanitizeName,
   sanitizeRoute,
+  saveWorkspaces,
   suggestRouteName,
   storePaneLayout,
   upsertSavedRoute,
@@ -131,5 +132,12 @@ describe('workspace persistence', () => {
       },
     };
     expect(loadWorkspaces(storage)).toEqual({ saved: [], tabs: [], activeTab: -1, paneLayout: null });
+  });
+
+  it('reports unavailable storage without throwing', () => {
+    expect(saveWorkspaces(
+      { saved: [], tabs: [], activeTab: -1, paneLayout: null },
+      { setItem: () => { throw new Error('quota'); } },
+    )).toBe(false);
   });
 });

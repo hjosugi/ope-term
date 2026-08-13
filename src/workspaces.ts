@@ -1,4 +1,5 @@
 import type { PaneLayout } from './pane-layout';
+import { readStorage, writeStorage } from './storage';
 
 /**
  * Route workspaces persist only `~/.ssh/config` alias references.
@@ -166,15 +167,11 @@ function sanitizeStoredPaneLayout(value: unknown, tabCount: number): StoredPaneL
 }
 
 export function loadWorkspaces(storage: Pick<Storage, 'getItem'> = localStorage): WorkspaceState {
-  try {
-    return parseWorkspaces(storage.getItem(STORAGE_KEY));
-  } catch {
-    return emptyWorkspaces();
-  }
+  return parseWorkspaces(readStorage(storage, STORAGE_KEY));
 }
 
-export function saveWorkspaces(state: WorkspaceState, storage: Pick<Storage, 'setItem'> = localStorage): void {
-  storage.setItem(STORAGE_KEY, JSON.stringify(state));
+export function saveWorkspaces(state: WorkspaceState, storage: Pick<Storage, 'setItem'> = localStorage): boolean {
+  return writeStorage(storage, STORAGE_KEY, JSON.stringify(state));
 }
 
 function createId(): string {

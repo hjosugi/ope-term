@@ -1,3 +1,5 @@
+import { readStorage, writeStorage } from './storage';
+
 export const COMMAND_IDS = [
   'workbench.action.showCommands',
   'workbench.action.quickOpenHost',
@@ -210,10 +212,10 @@ export function loadKeybindings(
 ): Record<CommandId, string> {
   const defaults = defaultKeybindings(platform);
   try {
-    const current = storage.getItem(STORAGE_KEY);
+    const current = readStorage(storage, STORAGE_KEY);
     if (current) return parseExport(current, platform).bindings;
 
-    const legacy = storage.getItem(LEGACY_STORAGE_KEY);
+    const legacy = readStorage(storage, LEGACY_STORAGE_KEY);
     if (!legacy) return defaults;
     const parsed = JSON.parse(legacy) as unknown;
     const legacyBindings = mergeBindings(DEFAULT_KEYBINDINGS, parsed);
@@ -234,8 +236,8 @@ export function saveKeybindings(
   bindings: Record<CommandId, string>,
   storage: Pick<Storage, 'setItem'> = localStorage,
   platform: OperatingSystem = detectOperatingSystem(),
-): void {
-  storage.setItem(STORAGE_KEY, exportKeybindings(bindings, platform));
+): boolean {
+  return writeStorage(storage, STORAGE_KEY, exportKeybindings(bindings, platform));
 }
 
 export function exportKeybindings(

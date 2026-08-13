@@ -51,14 +51,24 @@ describe('keybindings', () => {
 
   it('saves and reloads the versioned format', () => {
     let saved = '';
-    saveKeybindings(
+    expect(saveKeybindings(
       { ...DEFAULT_KEYBINDINGS, 'route.connect': 'Ctrl+K Ctrl+C' },
       { setItem: (_key, value) => { saved = value; } },
       'linux',
-    );
+    )).toBe(true);
     expect(JSON.parse(saved)).toMatchObject({ version: 2, platform: 'linux' });
     expect(loadKeybindings({ getItem: (key) => (key.endsWith('.v2') ? saved : null) }, 'linux')['route.connect'])
       .toBe('Ctrl+K Ctrl+C');
+  });
+
+  it('keeps storage failures non-fatal', () => {
+    expect(saveKeybindings(
+      DEFAULT_KEYBINDINGS,
+      { setItem: () => { throw new Error('quota'); } },
+      'linux',
+    )).toBe(false);
+    expect(loadKeybindings({ getItem: () => { throw new Error('disabled'); } }, 'linux'))
+      .toEqual(DEFAULT_KEYBINDINGS);
   });
 
   it('evaluates route, terminal, palette, and editor context keys', () => {

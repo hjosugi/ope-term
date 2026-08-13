@@ -1,3 +1,5 @@
+import { readStorage, writeStorage } from './storage';
+
 export interface SessionLogPolicy {
   enabled: boolean;
   fileNameTemplate: string;
@@ -38,7 +40,7 @@ export function defaultLogPolicy(): SessionLogPolicy {
 
 export function loadLogPolicies(storage: Pick<Storage, 'getItem'> = localStorage): Record<string, SessionLogPolicy> {
   try {
-    const parsed: unknown = JSON.parse(storage.getItem(STORAGE_KEY) ?? '{}');
+    const parsed: unknown = JSON.parse(readStorage(storage, STORAGE_KEY) ?? '{}');
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const policies: Record<string, SessionLogPolicy> = {};
     for (const [key, value] of Object.entries(parsed).slice(0, MAX_POLICIES)) {
@@ -55,8 +57,12 @@ export function loadLogPolicies(storage: Pick<Storage, 'getItem'> = localStorage
 export function saveLogPolicies(
   policies: Record<string, SessionLogPolicy>,
   storage: Pick<Storage, 'setItem'> = localStorage,
-): void {
-  storage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(Object.entries(policies).slice(0, MAX_POLICIES))));
+): boolean {
+  return writeStorage(
+    storage,
+    STORAGE_KEY,
+    JSON.stringify(Object.fromEntries(Object.entries(policies).slice(0, MAX_POLICIES))),
+  );
 }
 
 export function normalizePolicy(value: unknown): SessionLogPolicy | null {

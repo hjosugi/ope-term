@@ -32,6 +32,7 @@ describe('performance gates', () => {
     expect(loadRendererPreference({ getItem: () => 'fallback' })).toBe('fallback');
     expect(loadRendererPreference({ getItem: () => 'webgl' })).toBe('webgl');
     expect(loadRendererPreference({ getItem: () => 'broken' })).toBe('auto');
+    expect(loadRendererPreference({ getItem: () => { throw new Error('disabled'); } })).toBe('auto');
   });
   it('computes nearest-rank percentiles without mutating samples', () => {
     const samples = [40, 10, 30, 20];

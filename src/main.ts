@@ -56,6 +56,7 @@ import {
   saveLogPolicies,
 } from './session-log-settings';
 import { createSftpPanel, type SftpPanel } from './sftp-ui';
+import { readStorage } from './storage';
 import { chunkTerminalInput } from './terminal-input';
 import type {
   AuthPrompt,
@@ -280,6 +281,7 @@ let logViewerDirectory: LocalDirectory | null = null;
 let logPolicies = loadLogPolicies();
 let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
+let workspacePersistenceWarningShown = false;
 let selectedCommand = 0;
 let paletteItems: PaletteItem[] = [];
 let recordingCommand: CommandId | null = null;
@@ -315,7 +317,7 @@ const rendererAddonReady = rendererPreference === 'fallback'
         webglLoadError = error;
       });
 let performanceHarness: BrowserPerformanceHarness | undefined;
-const performanceHarnessReady = localStorage.getItem('ope-term.performance.enabled') === 'true'
+const performanceHarnessReady = readStorage(localStorage, 'ope-term.performance.enabled') === 'true'
   ? import('./performance').then(({ BrowserPerformanceHarness: Harness }) => {
       performanceHarness = new Harness();
       performanceHarness.start();
@@ -459,11 +461,18 @@ function persistWorkspaces(): void {
     activeTab: activeSessionKey ? sessionKeys.indexOf(activeSessionKey) : -1,
     paneLayout: storePaneLayout(paneLayout, sessionKeys),
   };
-  try {
-    saveWorkspaces(workspaces);
-  } catch {
-    // A full or disabled WebView storage must not interrupt an open session.
+  if (saveWorkspaces(workspaces)) {
+    workspacePersistenceWarningShown = false;
+  } else if (!workspacePersistenceWarningShown) {
+    workspacePersistenceWarningShown = true;
+    toast('workspace を端末内に保存できません。現在の起動中だけ保持します。');
   }
+}
+
+function persistKeybindings(): boolean {
+  const saved = saveKeybindings(keybindings, localStorage, operatingSystem);
+  if (!saved) toast('Keyboard Shortcuts を端末内に保存できません。現在の起動中だけ反映します。');
+  return saved;
 }
 
 function renderHosts(): void {
@@ -1858,7 +1867,7 @@ function renderShortcuts(): void {
     reset.disabled = keybindings[command.id] === defaultBindings[command.id];
     reset.addEventListener('click', () => {
       keybindings[command.id] = defaultBindings[command.id];
-      saveKeybindings(keybindings, localStorage, operatingSystem);
+      persistKeybindings();
       renderShortcuts();
     });
     row.append(copy, capture, reset);
@@ -1935,7 +1944,7 @@ function finishShortcutRecording(): void {
     return;
   }
   keybindings[recordingCommand] = recordingChords.join(' ');
-  saveKeybindings(keybindings, localStorage, operatingSystem);
+  persistKeybindings();
   cancelShortcutRecording();
   renderShortcuts();
 }
@@ -1962,12 +1971,12 @@ function downloadShortcuts(): void {
 async function importShortcuts(file: File): Promise<void> {
   const imported = importKeybindings(await file.text(), operatingSystem);
   keybindings = imported.bindings;
-  saveKeybindings(keybindings, localStorage, operatingSystem);
+  const saved = persistKeybindings();
   renderShortcuts();
   const migration = imported.migratedFrom
     ? ` ${imported.migratedFrom} の Ctrl/Cmd を ${operatingSystem} 向けに移行しました。`
     : '';
-  toast(`Keyboard Shortcuts を読み込みました。${migration}`);
+  if (saved) toast(`Keyboard Shortcuts を読み込みました。${migration}`);
 }
 
 async function openLocalTerminalDialog(): Promise<void> {
@@ -2112,8 +2121,11 @@ function saveLogPolicy(): void {
     return;
   }
   logPolicies[editingLogTarget] = result.policy;
-  saveLogPolicies(logPolicies);
-  toast(`${editingLogTarget} の session log 設定を保存しました。次回接続から反映します。`);
+  if (saveLogPolicies(logPolicies)) {
+    toast(`${editingLogTarget} の session log 設定を保存しました。次回接続から反映します。`);
+  } else {
+    toast('session log 設定を端末内に保存できません。現在の起動中だけ保持します。');
+  }
 }
 
 async function refreshLogFiles(directory?: LocalDirectory | null): Promise<void> {
@@ -2227,7 +2239,7 @@ element<HTMLButtonElement>('close-shortcuts').addEventListener('click', closeSho
 element<HTMLButtonElement>('reset-shortcuts').addEventListener('click', () => {
   cancelShortcutRecording();
   keybindings = { ...defaultBindings };
-  saveKeybindings(keybindings, localStorage, operatingSystem);
+  persistKeybindings();
   renderShortcuts();
 });
 element<HTMLButtonElement>('export-shortcuts').addEventListener('click', downloadShortcuts);

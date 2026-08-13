@@ -12,8 +12,13 @@ describe('session log settings', () => {
   it('round trips bounded host-specific policies', () => {
     let saved = '';
     const policy = { ...defaultLogPolicy(), enabled: true };
-    saveLogPolicies({ 'ssh:prod': policy }, { setItem: (_key, value) => { saved = value; } });
+    expect(saveLogPolicies({ 'ssh:prod': policy }, { setItem: (_key, value) => { saved = value; } })).toBe(true);
     expect(loadLogPolicies({ getItem: () => saved })).toEqual({ 'ssh:prod': policy });
+  });
+
+  it('keeps unavailable storage non-fatal', () => {
+    expect(saveLogPolicies({}, { setItem: () => { throw new Error('quota'); } })).toBe(false);
+    expect(loadLogPolicies({ getItem: () => { throw new Error('disabled'); } })).toEqual({});
   });
 
   it('rejects malformed values and clamps rotation limits', () => {
