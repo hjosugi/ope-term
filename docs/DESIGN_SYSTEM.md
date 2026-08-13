@@ -53,6 +53,10 @@ sidebar 幅は `--rail-width` と `--rail-width-compact`、workbench の余白�
 `--content-block-padding` と `--content-inline-padding` が管理します。responsive breakpoint
 では列数や方向だけを切り替え、同じ spacing token を継続して使います。
 
+dialog、route piece、tab、form label column など component 固有の上限・下限も `:root` の
+semantic component bound に集約します。共通の spacing scale へ無理に丸めると操作密度が変わる
+寸法は、用途を示す token 名を付けて共有します。
+
 ## 変更時の確認
 
 1. 新しい裸の `px` 値を追加していないか確認する。
@@ -65,4 +69,4 @@ rg -n --pcre2 '(?<![\\w-])\\d+(?:\\.\\d+)?px' src/style.css
 pnpm run build
 ```
 
-検索結果として残してよい裸の `px` は token の定義と media query の breakpoint だけです。
+検索結果として残してよい裸の `px` / `rem` は token の定義と media query の breakpoint だけです。

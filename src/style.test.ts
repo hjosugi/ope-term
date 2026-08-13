@@ -30,11 +30,11 @@ describe('UI size tokens', () => {
     }
   });
 
-  it('keeps raw pixel values in token definitions or the responsive breakpoint', () => {
+  it('keeps raw fixed lengths in token definitions or the responsive breakpoint', () => {
     const componentCss = appCss
       .replace(/^\s*--[\w-]+:\s*[^;]+;/gm, '')
       .replace('@media (max-width: 850px)', '@media (max-width: compact)');
 
-    expect(componentCss).not.toMatch(/(?<![\w-])\d+(?:\.\d+)?px/);
+    expect(componentCss).not.toMatch(/(?<![\w-])\d+(?:\.\d+)?(?:px|rem)/);
   });
 });
