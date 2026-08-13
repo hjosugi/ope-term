@@ -7,6 +7,11 @@ import {
   parentBrowserPath,
   transferPercent,
 } from './sftp-paths';
+import {
+  pruneCompletedTransfers,
+  transferQueueHasCapacity,
+  type TransferQueueStatus,
+} from './transfer-queue';
 
 interface SftpEntry {
   name: string;
@@ -48,7 +53,7 @@ interface TransferProgress {
 }
 
 type TransferDirection = 'upload' | 'download';
-type TransferStatus = 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
+type TransferStatus = TransferQueueStatus;
 
 interface TransferItem {
   id: string;
@@ -375,6 +380,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       item.error = String(error);
     } finally {
       processing = false;
+      pruneCompletedTransfers(queue);
       renderQueue();
       void processQueue();
     }
@@ -383,6 +389,11 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
   function enqueue(item: Omit<TransferItem, 'id' | 'connectionId' | 'status' | 'transferred' | 'total'>): void {
     const id = connectionId();
     if (!id) return;
+    pruneCompletedTransfers(queue);
+    if (!transferQueueHasCapacity(queue)) {
+      options.notify('SFTP transfer queue は100件までです。失敗またはcancel済み項目を再試行してください。');
+      return;
+    }
     queue.push({ ...item, id: crypto.randomUUID(), connectionId: id, status: 'queued', transferred: 0, total: 0 });
     renderQueue();
     void processQueue();

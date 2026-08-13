@@ -16,6 +16,9 @@ SFTP は最終 hop の認証済み SSH handle に subsystem channel を追加し
 5. 実行中は byte 数と進捗率を表示します。`CANCEL` は一時 file を削除し、`RETRY` は新しい
    transfer ID で同じ項目を queue に戻します。
 
+queueは100件までです。完了履歴は最新20件だけを保持し、失敗・cancel済み項目は確認と
+`RETRY` のため自動削除しません。
+
 現時点では file の upload / download が対象です。directory の再帰転送、rename、削除、作成、
 permission 変更は行いません。
 

@@ -403,6 +403,7 @@ const commands: CommandDefinition[] = [
 ];
 
 function toast(message: string): void {
+  while (ui.toastStack.childElementCount >= 8) ui.toastStack.firstElementChild?.remove();
   const node = document.createElement('div');
   node.className = 'toast';
   node.textContent = message;
