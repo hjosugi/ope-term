@@ -75,6 +75,9 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     ["generate SHA-256 checksums", "release checksums"],
     ["uses: actions/attest@v4", "artifact provenance attestation"],
     ["subject-path: release-upload/*", "attestation of published asset paths"],
+    ["name: Preserve staged release assets", "read-only release staging job"],
+    ["name: Download staged release assets", "write-scoped publish job"],
+    ["needs: stage-release", "publish dependency on attested assets"],
     ["gh release create", "draft Release creation"],
   ];
   for (const [fragment, description] of workflowRequirements) {

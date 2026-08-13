@@ -142,7 +142,6 @@ jobs:
       - name: Build bundles
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -158,12 +157,12 @@ jobs:
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: ope-term-[platform]-[arch]-[bundle]
 
-  publish:
+  stage-release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
     steps:
@@ -188,6 +187,27 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: release-upload/*
+
+      - name: Preserve staged release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: ope-term-release-assets
+          path: release-upload
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: stage-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download staged release assets
+        uses: actions/download-artifact@v7
+        with:
+          name: ope-term-release-assets
+          path: release-upload
 
       - name: Create draft release
         env:

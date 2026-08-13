@@ -65,8 +65,9 @@ acceptance の残作業にします。この環境差を回避するために sy
 tag build は署名情報が一つでも欠けていれば publish 前に失敗します。鍵や証明書をリポジトリへ
 保存してはいけません。
 
-全jobのcheckoutはGit資格情報をworktreeへ残しません。publish jobの`contents: write` tokenは
-draft Releaseを作る最後のstepだけに環境変数で渡し、build・SBOM・checksum生成には公開しません。
+全jobのcheckoutはGit資格情報をworktreeへ残しません。bundle buildにはGitHub tokenを渡さず、
+`stage-release`は`contents: read`でSBOM・checksum・attestationを作って短期artifactへ固定します。
+別の`publish` jobだけに`contents: write`を与え、検証済みartifactを取得してdraft Releaseを作ります。
 
 macOS は次の Actions secrets を使用します。
 
