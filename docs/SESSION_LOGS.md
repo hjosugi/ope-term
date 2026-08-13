@@ -24,6 +24,8 @@ picker で選択するまで有効化できません。
 - 保存先 token はアプリ終了までの権限です。実 path や token は localStorage に永続化しないため、
   再起動後に記録を続ける場合は directory を選び直します。
 - 出力は bounded queue で専用 writer thread へ送り、terminal rendering を file I/O から分離します。
+- logger は通常 file だけを開き、symlink / FIFO を拒否します。Unix で新規作成する log は `0600`
+  に固定します。
 - active file が上限を超えると `.log.1` へ移し、古い世代を順送りして上限世代を削除します。
 - timestamp は行頭へ RFC 3339 UTC で付与します。
 
@@ -48,4 +50,3 @@ passphrase prompt は専用 IPC で処理され、terminal input と session log
     log に含まれます。password prompt は通常 echo を無効化しますが、任意 application の挙動までは
     保証できません。必要な host だけを有効化し、保存先の OS permission と保持期間を管理して
     ください。
-

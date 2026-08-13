@@ -2744,6 +2744,7 @@ dependencies = [
  "bytes",
  "dirs",
  "glob",
+ "libc",
  "portable-pty",
  "regex",
  "russh",

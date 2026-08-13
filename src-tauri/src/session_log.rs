@@ -186,11 +186,24 @@ fn timestamp_lines(bytes: &[u8], line_start: &mut bool) -> Vec<u8> {
 }
 
 fn open_log(path: &Path) -> Result<File> {
-    OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // O_NOFOLLOW closes the check/open race for a hostile same-name
+        // symlink. O_NONBLOCK lets us reject FIFOs without hanging the writer.
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options
         .open(path)
-        .with_context(|| format!("{} を開けません", path.display()))
+        .with_context(|| format!("{} を開けません", path.display()))?;
+    if !file.metadata()?.is_file() {
+        bail!("session log は通常 file でなければなりません");
+    }
+    Ok(file)
 }
 
 fn rotate(path: &Path, retained: u8) -> Result<()> {
@@ -447,6 +460,25 @@ mod tests {
         rotate(&path, 2).expect("rotate");
         assert_eq!(fs::read(rotated_path(&path, 1)).expect("one"), b"current");
         assert_eq!(fs::read(rotated_path(&path, 2)).expect("two"), b"one");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn log_files_are_private_and_symlinks_are_rejected() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("session.log");
+        open_log(&path).expect("log file");
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        let target = directory.path().join("target.txt");
+        fs::write(&target, b"unchanged").expect("target");
+        let link = directory.path().join("link.log");
+        symlink(&target, &link).expect("symlink");
+        assert!(open_log(&link).is_err());
+        assert_eq!(fs::read(&target).expect("target"), b"unchanged");
     }
 
     #[test]
