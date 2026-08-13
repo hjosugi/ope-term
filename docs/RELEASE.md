@@ -65,6 +65,9 @@ acceptance の残作業にします。この環境差を回避するために sy
 tag build は署名情報が一つでも欠けていれば publish 前に失敗します。鍵や証明書をリポジトリへ
 保存してはいけません。
 
+全jobのcheckoutはGit資格情報をworktreeへ残しません。publish jobの`contents: write` tokenは
+draft Releaseを作る最後のstepだけに環境変数で渡し、build・SBOM・checksum生成には公開しません。
+
 macOS は次の Actions secrets を使用します。
 
 - `APPLE_CERTIFICATE`: Developer ID Application 証明書の base64

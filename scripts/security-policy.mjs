@@ -38,6 +38,15 @@ export function auditCsp(value, expected, label) {
   return failures;
 }
 
+export function auditCheckoutCredentials(workflow, label) {
+  const checkouts = workflow.match(/uses:\s*actions\/checkout@/gu)?.length ?? 0;
+  const disabledCredentials = workflow.match(/persist-credentials:\s*false/gu)?.length ?? 0;
+  if (checkouts === disabledCredentials) return [];
+  return [
+    `${label} must set persist-credentials: false on every checkout (${disabledCredentials}/${checkouts})`,
+  ];
+}
+
 async function collectFrontendFiles(directory) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -138,6 +147,12 @@ export async function verifySecurityPolicy(root = defaultRoot) {
   ];
   for (const [description, pattern] of terminalRequirements) {
     if (!pattern.test(terminalSource)) fail(`terminal policy missing: ${description}`);
+  }
+
+  for (const name of await readdir(join(root, ".github/workflows"))) {
+    if (!name.endsWith(".yml") && !name.endsWith(".yaml")) continue;
+    const workflow = await readFile(join(root, ".github/workflows", name), "utf8");
+    failures.push(...auditCheckoutCredentials(workflow, name));
   }
 
   return failures;

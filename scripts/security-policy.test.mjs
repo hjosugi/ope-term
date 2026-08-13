@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditCsp, verifySecurityPolicy } from "./security-policy.mjs";
+import { auditCheckoutCredentials, auditCsp, verifySecurityPolicy } from "./security-policy.mjs";
 
 const expected = {
   "default-src": ["'self'"],
@@ -28,4 +28,17 @@ test("rejects missing, extra, and loosened CSP directives", () => {
   assert(failures.some((failure) => failure.includes("must contain only")));
   assert(failures.some((failure) => failure.includes("default-src must be exactly")));
   assert(failures.some((failure) => failure.includes("object-src must be exactly")));
+});
+
+test("requires every checkout step to discard its Git credential", () => {
+  assert.deepEqual(auditCheckoutCredentials(`
+steps:
+  - uses: actions/checkout@v7
+    with:
+      persist-credentials: false
+`, "safe.yml"), []);
+  assert.match(
+    auditCheckoutCredentials("steps:\n  - uses: actions/checkout@v7\n", "unsafe.yml")[0],
+    /0\/1/u,
+  );
 });
