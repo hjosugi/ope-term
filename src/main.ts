@@ -24,6 +24,7 @@ import {
 import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
 import type { BrowserPerformanceHarness } from './performance';
 import { loadRendererPreference } from './renderer-preference';
+import { PromptQueue } from './prompt-queue';
 import {
   containsPaneSession,
   focusPane,
@@ -280,10 +281,8 @@ let pendingKeyTimer: number | undefined;
 const operatingSystem = detectOperatingSystem();
 const defaultBindings = defaultKeybindings(operatingSystem);
 let keybindings = loadKeybindings(localStorage, operatingSystem);
-let activeHostKeyPrompt: HostKeyDialogItem | null = null;
-const pendingHostKeyPrompts: HostKeyDialogItem[] = [];
-let activeAuthPrompt: AuthDialogItem | null = null;
-const pendingAuthPrompts: AuthDialogItem[] = [];
+const hostKeyPrompts = new PromptQueue<HostKeyDialogItem>();
+const authPrompts = new PromptQueue<AuthDialogItem>();
 const sessions = new Map<string, SessionUi>();
 const rootStyle = getComputedStyle(document.documentElement);
 const terminalFontFamily = cssTextToken(
@@ -1081,24 +1080,23 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
 }
 
 function enqueueHostKeyPrompt(sessionKey: string, connectionId: string, prompt: HostKeyPrompt): void {
-  pendingHostKeyPrompts.push({ sessionKey, connectionId, prompt });
+  hostKeyPrompts.enqueue({ sessionKey, connectionId, prompt });
   showNextSecurePrompt();
 }
 
 function showNextSecurePrompt(): void {
-  if (activeHostKeyPrompt || activeAuthPrompt) return;
-  const hostKey = pendingHostKeyPrompts.shift();
+  if (hostKeyPrompts.active || authPrompts.active) return;
+  const hostKey = hostKeyPrompts.activateNext();
   if (hostKey) {
     showHostKeyPrompt(hostKey);
     return;
   }
-  const auth = pendingAuthPrompts.shift();
+  const auth = authPrompts.activateNext();
   if (auth) showAuthPrompt(auth);
 }
 
 function showHostKeyPrompt(item: HostKeyDialogItem): void {
   clearPendingKeySequence();
-  activeHostKeyPrompt = item;
   const { prompt } = item;
   const changed = prompt.status === 'changed';
   const box = ui.hostKeyDialog.querySelector<HTMLElement>('.host-key-box');
@@ -1130,13 +1128,13 @@ function setHostKeyButtonsDisabled(disabled: boolean): void {
 }
 
 function finishHostKeyPrompt(): void {
-  activeHostKeyPrompt = null;
+  hostKeyPrompts.finish();
   ui.hostKeyDialog.classList.add('hidden');
   showNextSecurePrompt();
 }
 
 async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save'): Promise<void> {
-  const active = activeHostKeyPrompt;
+  const active = hostKeyPrompts.active;
   if (!active) return;
   if (active.prompt.status === 'changed') {
     finishHostKeyPrompt();
@@ -1157,20 +1155,17 @@ async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save
 }
 
 function discardHostKeyPrompts(sessionKey: string): void {
-  for (let index = pendingHostKeyPrompts.length - 1; index >= 0; index -= 1) {
-    if (pendingHostKeyPrompts[index]?.sessionKey === sessionKey) pendingHostKeyPrompts.splice(index, 1);
-  }
-  if (activeHostKeyPrompt?.sessionKey === sessionKey) finishHostKeyPrompt();
+  hostKeyPrompts.discardPending((item) => item.sessionKey === sessionKey);
+  if (hostKeyPrompts.active?.sessionKey === sessionKey) finishHostKeyPrompt();
 }
 
 function enqueueAuthPrompt(sessionKey: string, connectionId: string, prompt: AuthPrompt): void {
-  pendingAuthPrompts.push({ sessionKey, connectionId, prompt });
+  authPrompts.enqueue({ sessionKey, connectionId, prompt });
   showNextSecurePrompt();
 }
 
 function showAuthPrompt(item: AuthDialogItem): void {
   clearPendingKeySequence();
-  activeAuthPrompt = item;
   const { prompt } = item;
   const defaults = {
     password: { title: 'SSH パスワード', kind: 'PASSWORD' },
@@ -1222,13 +1217,13 @@ function setAuthButtonsDisabled(disabled: boolean): void {
 function finishAuthPrompt(): void {
   for (const input of ui.authFields.querySelectorAll<HTMLInputElement>('input')) input.value = '';
   ui.authFields.replaceChildren();
-  activeAuthPrompt = null;
+  authPrompts.finish();
   ui.authDialog.classList.add('hidden');
   showNextSecurePrompt();
 }
 
 async function submitAuthPrompt(cancelled: boolean): Promise<void> {
-  const active = activeAuthPrompt;
+  const active = authPrompts.active;
   if (!active) return;
   const inputs = [...ui.authFields.querySelectorAll<HTMLInputElement>('input')];
   const responses = cancelled ? [] : takeAndClearAuthResponses(inputs);
@@ -1254,10 +1249,8 @@ async function submitAuthPrompt(cancelled: boolean): Promise<void> {
 }
 
 function discardAuthPrompts(sessionKey: string): void {
-  for (let index = pendingAuthPrompts.length - 1; index >= 0; index -= 1) {
-    if (pendingAuthPrompts[index]?.sessionKey === sessionKey) pendingAuthPrompts.splice(index, 1);
-  }
-  if (activeAuthPrompt?.sessionKey === sessionKey) finishAuthPrompt();
+  authPrompts.discardPending((item) => item.sessionKey === sessionKey);
+  if (authPrompts.active?.sessionKey === sessionKey) finishAuthPrompt();
 }
 
 function renderHopbar(session: SessionUi): void {
@@ -2204,7 +2197,7 @@ ui.shortcutImport.addEventListener('change', () => {
   });
 });
 ui.hostKeyReject.addEventListener('click', () => {
-  if (activeHostKeyPrompt?.prompt.status === 'changed') finishHostKeyPrompt();
+  if (hostKeyPrompts.active?.prompt.status === 'changed') finishHostKeyPrompt();
   else void answerHostKey('reject');
 });
 ui.hostKeyOnce.addEventListener('click', () => void answerHostKey('trust_once'));
@@ -2259,7 +2252,7 @@ window.addEventListener(
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        if (activeHostKeyPrompt?.prompt.status === 'changed') finishHostKeyPrompt();
+        if (hostKeyPrompts.active?.prompt.status === 'changed') finishHostKeyPrompt();
         else void answerHostKey('reject');
       }
       return;
