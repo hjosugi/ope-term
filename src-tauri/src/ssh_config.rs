@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -292,12 +292,23 @@ fn read_config_file(path: &Path, budget: &mut ParseBudget) -> Result<String> {
     if budget.files >= MAX_CONFIG_FILES {
         bail!("SSH config Include が合計 {MAX_CONFIG_FILES} file を超えています");
     }
-    let mut file =
-        fs::File::open(path).with_context(|| format!("{} を読み込めません", path.display()))?;
-    let declared_bytes = file
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("{} を読み込めません", path.display()))?;
+    let metadata = file
         .metadata()
-        .with_context(|| format!("{} のサイズを確認できません", path.display()))?
-        .len();
+        .with_context(|| format!("{} のサイズを確認できません", path.display()))?;
+    if !metadata.is_file() {
+        bail!("{} は通常 file ではありません", path.display());
+    }
+    let declared_bytes = metadata.len();
     if declared_bytes > budget.remaining_bytes as u64 {
         bail!("SSH config Include の合計が {MAX_CONFIG_BYTES} bytes を超えています");
     }
@@ -1099,6 +1110,24 @@ Host prod
         let error = load(&path).unwrap_err();
 
         assert!(error.to_string().contains(&MAX_CONFIG_BYTES.to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_special_config_files_without_blocking() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("config.fifo");
+        let native_path = CString::new(path.as_os_str().as_bytes()).expect("native path");
+        // SAFETY: `native_path` is a live, NUL-terminated path and mode has no
+        // platform-specific pointer requirements.
+        assert_eq!(unsafe { libc::mkfifo(native_path.as_ptr(), 0o600) }, 0);
+
+        let error =
+            read_config_file(&path, &mut ParseBudget::default()).expect_err("special config file");
+        assert!(error.to_string().contains("通常 file"));
     }
 
     #[cfg(unix)]
