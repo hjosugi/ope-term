@@ -36,8 +36,9 @@ payload、認証情報、terminal内容は保存しません。
 just reliability-gate artifacts/reliability/cachyos-24h.json
 ```
 
-gateは24時間以上、10回以上のfault、drop後の再接続、全接続のupstream到達、proxy errorなしを
-要求します。途中で停止したreportは調査材料には使えますが合格にはなりません。実機の定期実行は
+gateは24時間以上、10回以上のfault、drop後の再接続、全接続のupstream到達、双方向の実通信、
+proxy errorなしを要求します。TCP接続だけを繰り返してpayloadを交換しなかったreportや、途中で停止した
+reportは調査材料には使えますが合格にはなりません。実機の定期実行は
 CachyOS lab machineのsystemd timerで行い、reportとjournalをrelease artifactへ保存します。
 
 frontendは再接続ごとに新しいconnection IDを発行し、eventとterminal dataの両方で一致するIDだけを
@@ -62,4 +63,6 @@ session名はportableなASCII subsetへ制限し、shell interpolationを使い�
 ## 自動test
 
 `scripts/fault-proxy.test.mjs` はlocalhost echo serverを起動し、forward、強制drop、再接続、bytes集計、
-errorなしを毎回の`pnpm test`で確認します。これは24時間実機testの代替ではなく、harness自体の回帰gateです。
+errorなしを毎回の`pnpm test`で確認します。`scripts/reliability-gate.test.mjs` は24時間、fault数、再接続、
+upstream到達、双方向通信、errorなしの境界値を固定します。これらは24時間実機testの代替ではなく、
+harness自体の回帰gateです。
