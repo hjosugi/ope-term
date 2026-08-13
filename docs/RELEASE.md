@@ -37,7 +37,23 @@ tag build では、これらに次の supply-chain metadata を加えます。
 ```bash
 just version-check
 just version-check --tag v0.1.1
+just release-policy  # icon、bundle matrix、署名 gate、supply-chain step
 ```
+
+## local bundle smoke
+
+Linux では、CI と同じ bundle 指定を個別に確認できます。
+
+```bash
+./scripts/run-cached pnpm tauri build --bundles appimage,deb,rpm
+```
+
+2026-08-13 に x86_64 Linux で deb / rpm の生成と package 内容を確認済みです。AppImage は
+通常の Ubuntu runner ではなく Nix の split-output GLib を使う local shell では、upstream の
+`linuxdeploy-plugin-gtk` が `gio-2.0` の実在しない schema path を copy して停止します。application
+binary と AppDir の生成までは成功しており、Ubuntu 22.04 Actions runner での実体確認を
+acceptance の残作業にします。この環境差を回避するために system library を AppImage へ
+手動注入して release artifact とすることはしません。
 
 ## code signing secrets
 

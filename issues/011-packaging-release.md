@@ -8,6 +8,9 @@ Labels: priority:P1, area:release, enhancement
 ## 受け入れ条件
 
 - [ ] Linux AppImage/deb/rpm、Windows MSI/NSIS、macOS dmg を生成する
+  - 2026-08-13: x86_64 Linux の deb / rpm は local smoke と内容確認に成功
+  - AppImage は Nix split-output GLib と linuxdeploy-plugin-gtk の schema path 非互換を確認。
+    Ubuntu Actions、Windows、macOS の workflow artifact 実証は未完了
 - [ ] Windows と macOS の code signing を設定する
 - [ ] SBOM、checksum、provenance を release に添付する
 - [ ] Tauri updater の署名検証と rollback 方針を実装する

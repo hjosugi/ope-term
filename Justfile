@@ -17,6 +17,7 @@ test:
 
 lint:
     ./scripts/run-cached pnpm run typecheck
+    ./scripts/run-cached pnpm run release:policy
     ./scripts/run-cached actionlint
     ./scripts/run-cached buildifier -mode=check BUILD.bazel MODULE.bazel REPO.bazel
     ./scripts/run-cached shellcheck -x -P scripts scripts/cache-env.sh scripts/nix-local scripts/run-bazel scripts/run-cached scripts/run-fuzz
@@ -30,6 +31,9 @@ build:
 
 version-check *args:
     ./scripts/run-cached node scripts/version-consistency.mjs {{args}}
+
+release-policy:
+    ./scripts/run-cached pnpm run release:policy
 
 check: lint test build
 

@@ -20,6 +20,7 @@
     "performance:gate": "node scripts/performance-gate.mjs",
     "performance:bundle": "node scripts/performance-bundle.mjs",
     "reliability:gate": "node scripts/reliability-gate.mjs",
+    "release:policy": "node scripts/release-policy.mjs",
     "version:check": "node scripts/version-consistency.mjs",
     "security:policy": "node scripts/security-policy.mjs",
     "test": "vitest run && node --test scripts/*.test.mjs",
