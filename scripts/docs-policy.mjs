@@ -33,6 +33,13 @@ function markdownLinks(markdown) {
   return [...markdown.matchAll(/\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gu)].map((match) => match[1]);
 }
 
+function pageWithoutFragment(url) {
+  const normalized = new URL(url);
+  normalized.hash = "";
+  normalized.search = "";
+  return normalized.href;
+}
+
 async function resolveTarget(siteRoot, siteUrl, href, baseUrl) {
   if (/^(?:mailto|tel|javascript|data):/iu.test(href)) return undefined;
   const targetUrl = new URL(href, baseUrl);
@@ -90,8 +97,20 @@ export async function verifyDocsPolicy({
   }
 
   const readme = await readFile(resolve(root, "README.md"), "utf8");
-  for (const href of markdownLinks(readme)) {
+  const readmeLinks = markdownLinks(readme);
+  for (const href of readmeLinks) {
     if (href.startsWith(siteUrl)) await verify(href, new URL(siteUrl), "README.md");
+  }
+
+  const indexedPages = new Set(
+    readmeLinks
+      .filter((href) => href.startsWith(siteUrl))
+      .map((href) => pageWithoutFragment(new URL(href, siteUrl))),
+  );
+  for (const page of pages) {
+    if (relative(siteRoot, page) === "404.html") continue;
+    const url = pageWithoutFragment(pageUrl(siteUrl, siteRoot, page));
+    if (!indexedPages.has(url)) failures.push(`README.md: missing public page link ${url}`);
   }
 
   if (failures.length > 0) throw new Error(`documentation link policy failed:\n- ${failures.join("\n- ")}`);
