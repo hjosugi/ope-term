@@ -118,4 +118,50 @@ mod tests {
         ));
         assert!(matches!(receiver.recv().await, Some(LocalCommand::Close)));
     }
+
+    #[tokio::test]
+    async fn common_requests_and_close_are_translated_for_ssh() {
+        let (commands, mut command_receiver) = mpsc::channel(3);
+        let (host_keys, mut host_key_receiver) = mpsc::channel(1);
+        let (authentication, mut authentication_receiver) = mpsc::channel(1);
+        let session = SessionControl {
+            commands,
+            host_keys,
+            authentication,
+        };
+        let control = TerminalControl::Ssh(session.clone());
+
+        assert!(control.ssh().is_some());
+        control
+            .send(TerminalRequest::Input("uname -a".to_owned()))
+            .await
+            .unwrap();
+        control
+            .send(TerminalRequest::Resize { cols: 96, rows: 32 })
+            .await
+            .unwrap();
+        control.close().await.unwrap();
+
+        assert!(matches!(
+            command_receiver.recv().await,
+            Some(SessionCommand::Input(data)) if data == "uname -a"
+        ));
+        assert!(matches!(
+            command_receiver.recv().await,
+            Some(SessionCommand::Resize { cols: 96, rows: 32 })
+        ));
+        assert!(matches!(
+            command_receiver.recv().await,
+            Some(SessionCommand::Close)
+        ));
+
+        let host_key_answer = host_key_receiver.recv().await.unwrap();
+        assert!(host_key_answer.request_id.is_none());
+        assert!(matches!(host_key_answer.decision, HostKeyDecision::Reject));
+
+        let auth_answer = authentication_receiver.recv().await.unwrap();
+        assert!(auth_answer.request_id.is_none());
+        assert!(auth_answer.responses.is_empty());
+        assert!(auth_answer.cancelled);
+    }
 }
