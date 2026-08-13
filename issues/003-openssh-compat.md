@@ -15,6 +15,7 @@ Labels: priority:P1, area:ssh, enhancement
 
 ## 実装メモ
 
-Includeは全体8 MiB / 1024 file、深さ32、globごと1024 matchで停止する。
+Includeは全体8 MiB / 1024 file / 100,000 directive、1 directive 64 KiB、深さ32、
+globごと1024 matchで停止する。
 解決後の`IdentityFile` / `CertificateFile`はhostごとに各64件を上限とする。
 UIへ列挙する具体Hostはprofile解決前に2,048件で停止する。

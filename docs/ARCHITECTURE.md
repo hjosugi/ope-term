@@ -80,8 +80,9 @@ picker token だけを受け付けます。session UUID、prompt request ID、pi
 
 実装済み: `Host`, `Match`, `Include`, `HostName`, `User`, `Port`, `IdentityFile`,
 `CertificateFile`, `IdentitiesOnly`, `ProxyJump`, `HostKeyAlias`, token、`*`, `?`, `!`, `Key=Value`。
-Include は循環と 32 階層を検査し、全 config 8 MiB / 1024 file、1 glob 1024 match の
-budget 内で lexical order に読み込みます。解決後の `IdentityFile` / `CertificateFile` は各64件、
+Include は循環と 32 階層を検査し、全 config 8 MiB / 1024 file / 100,000 directive、
+1 directive 64 KiB、1 glob 1024 match のbudget内でlexical orderに読み込みます。
+解決後の `IdentityFile` / `CertificateFile` は各64件、
 認証層が読む各fileは1 MiBを上限にします。具体的なHost profileは解決前に2,048件で停止し、
 大量のblockを全Hostに対して反復解決しません。
 

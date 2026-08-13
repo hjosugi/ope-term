@@ -18,6 +18,8 @@ const MULTI_VALUE_KEYS: &[&str] = &[
 const MAX_INCLUDE_DEPTH: usize = 32;
 const MAX_CONFIG_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CONFIG_FILES: usize = 1024;
+const MAX_CONFIG_DIRECTIVES: usize = 100_000;
+const MAX_DIRECTIVE_BYTES: usize = 64 * 1024;
 const MAX_INCLUDE_MATCHES: usize = 1024;
 const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
 const MAX_ROUTE_HOPS: usize = 32;
@@ -83,6 +85,7 @@ pub struct HostProfile {
 
 struct ParseBudget {
     remaining_bytes: usize,
+    remaining_directives: usize,
     files: usize,
 }
 
@@ -90,6 +93,7 @@ impl Default for ParseBudget {
     fn default() -> Self {
         Self {
             remaining_bytes: MAX_CONFIG_BYTES,
+            remaining_directives: MAX_CONFIG_DIRECTIVES,
             files: 0,
         }
     }
@@ -230,6 +234,13 @@ fn parse_text(
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
+        if trimmed.len() > MAX_DIRECTIVE_BYTES {
+            bail!("SSH config directive が {MAX_DIRECTIVE_BYTES} bytes を超えています");
+        }
+        if budget.remaining_directives == 0 {
+            bail!("SSH config directive が合計 {MAX_CONFIG_DIRECTIVES} 件を超えています");
+        }
+        budget.remaining_directives -= 1;
         let normalized = normalize_equals(trimmed);
         let tokens = tokenize(&normalized);
         let Some(key) = tokens.first().map(|value| value.to_ascii_lowercase()) else {
@@ -781,6 +792,37 @@ Host * !secret-*
             .collect::<String>();
         let error = profiles(&parse(&config)).unwrap_err();
         assert!(error.to_string().contains(&MAX_HOST_PROFILES.to_string()));
+    }
+
+    #[test]
+    fn bounds_directive_length_and_count_before_tokenization() {
+        let oversized = format!("Host {}", "x".repeat(MAX_DIRECTIVE_BYTES));
+        let mut blocks = vec![implicit_block()];
+        let error = parse_text(
+            &oversized,
+            None,
+            &mut Vec::new(),
+            &mut blocks,
+            &mut ParseBudget::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains(&MAX_DIRECTIVE_BYTES.to_string()));
+
+        let repeated = "User operator\n".repeat(MAX_CONFIG_DIRECTIVES + 1);
+        let mut blocks = vec![implicit_block()];
+        let error = parse_text(
+            &repeated,
+            None,
+            &mut Vec::new(),
+            &mut blocks,
+            &mut ParseBudget::default(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&MAX_CONFIG_DIRECTIVES.to_string())
+        );
     }
 
     #[test]
