@@ -1985,11 +1985,18 @@ function closeLocalTerminalDialog(): void {
 }
 
 async function pickLocalWorkingDirectory(): Promise<void> {
-  const selected = await invoke<LocalDirectory | null>('pick_local_directory');
-  if (!selected) return;
-  selectedLocalDirectory = selected;
-  ui.localDirectoryLabel.textContent = selected.displayPath;
-  ui.localDirectoryLabel.title = selected.displayPath;
+  ui.localDirectoryPick.disabled = true;
+  try {
+    const selected = await invoke<LocalDirectory | null>('pick_local_directory');
+    if (!selected) return;
+    selectedLocalDirectory = selected;
+    ui.localDirectoryLabel.textContent = selected.displayPath;
+    ui.localDirectoryLabel.title = selected.displayPath;
+  } catch (error) {
+    toast(`local directory を選択できません: ${String(error)}`);
+  } finally {
+    ui.localDirectoryPick.disabled = false;
+  }
 }
 
 async function createLocalTerminal(): Promise<void> {
@@ -2058,13 +2065,20 @@ function closeLogDialog(): void {
 }
 
 async function pickLogDirectory(): Promise<void> {
-  const selected = await invoke<LocalDirectory | null>('pick_local_directory');
-  if (!selected) return;
-  logViewerDirectory = selected;
-  if (editingLogTarget) logDirectories.set(editingLogTarget, selected);
-  ui.logDirectoryLabel.textContent = selected.displayPath;
-  ui.logDirectoryLabel.title = selected.displayPath;
-  await refreshLogFiles(selected);
+  ui.logDirectoryPick.disabled = true;
+  try {
+    const selected = await invoke<LocalDirectory | null>('pick_local_directory');
+    if (!selected) return;
+    logViewerDirectory = selected;
+    if (editingLogTarget) logDirectories.set(editingLogTarget, selected);
+    ui.logDirectoryLabel.textContent = selected.displayPath;
+    ui.logDirectoryLabel.title = selected.displayPath;
+    await refreshLogFiles(selected);
+  } catch (error) {
+    toast(`log directory を選択できません: ${String(error)}`);
+  } finally {
+    ui.logDirectoryPick.disabled = false;
+  }
 }
 
 function saveLogPolicy(): void {

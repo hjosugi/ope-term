@@ -328,11 +328,16 @@ mod application {
         app: AppHandle,
         state: State<'_, AppState>,
     ) -> Result<Option<SelectedDirectory>, String> {
-        let selected = app
-            .dialog()
+        let (selected_sender, selected_receiver) = oneshot::channel();
+        app.dialog()
             .file()
             .set_title("SFTP で使用する local directory")
-            .blocking_pick_folder();
+            .pick_folder(move |selected| {
+                let _ = selected_sender.send(selected);
+            });
+        let selected = selected_receiver
+            .await
+            .map_err(|_| "local directory picker が応答せず終了しました".to_owned())?;
         let Some(selected) = selected else {
             return Ok(None);
         };
