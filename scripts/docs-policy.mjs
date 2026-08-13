@@ -25,8 +25,8 @@ function htmlIds(html) {
   return new Set([...html.matchAll(/\sid=["']([^"']+)["']/gu)].map((match) => match[1]));
 }
 
-function htmlLinks(html) {
-  return [...html.matchAll(/\shref=["']([^"']+)["']/gu)].map((match) => match[1]);
+function htmlReferences(html) {
+  return [...html.matchAll(/\s(?:href|src)=["']([^"']+)["']/gu)].map((match) => match[1]);
 }
 
 function markdownLinks(markdown) {
@@ -43,6 +43,10 @@ async function resolveTarget(siteRoot, siteUrl, href, baseUrl) {
 
   const relativeUrl = decodeURIComponent(targetUrl.pathname.slice(rootUrl.pathname.length));
   let path = resolve(siteRoot, relativeUrl);
+  const relativePath = relative(siteRoot, path);
+  if (relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
+    throw new Error(`internal documentation URL escapes the site root: ${href}`);
+  }
   if ((await stat(path).catch(() => undefined))?.isDirectory()) path = join(path, "index.html");
   return { path, fragment: decodeURIComponent(targetUrl.hash.slice(1)) };
 }
@@ -57,7 +61,13 @@ export async function verifyDocsPolicy({
   let internalLinks = 0;
 
   async function verify(href, baseUrl, source) {
-    const target = await resolveTarget(siteRoot, siteUrl, href, baseUrl).catch(() => undefined);
+    let target;
+    try {
+      target = await resolveTarget(siteRoot, siteUrl, href, baseUrl);
+    } catch (error) {
+      failures.push(`${source}: invalid ${href}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
     if (!target) return;
     internalLinks += 1;
     try {
@@ -76,7 +86,7 @@ export async function verifyDocsPolicy({
   for (const page of pages) {
     const html = await readFile(page, "utf8");
     const source = relative(root, page);
-    for (const href of htmlLinks(html)) await verify(href, pageUrl(siteUrl, siteRoot, page), source);
+    for (const href of htmlReferences(html)) await verify(href, pageUrl(siteUrl, siteRoot, page), source);
   }
 
   const readme = await readFile(resolve(root, "README.md"), "utf8");
