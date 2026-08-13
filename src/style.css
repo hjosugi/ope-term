@@ -111,7 +111,7 @@
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 button, input { font: inherit; }
-button { color: inherit; }
+button { min-height: var(--control-sm); color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible {
   outline: var(--focus-ring-width) solid var(--amber);
   outline-offset: calc(-1 * var(--focus-ring-width));
