@@ -23,7 +23,7 @@ just dev
 | `cargo build --manifest-path src-tauri/Cargo.toml` | 日常の Rust build |
 | `./scripts/run-bazel test //:check` | sandbox 内の Vitest と TypeScript 型検査 |
 | `./scripts/run-bazel build //:frontend` | hermetic Node toolchain による Vite build |
-| `./scripts/nix-local build .#frontend` | Nix 固定依存によるフロントエンド成果物 |
+| `./scripts/nix-local build .#frontend` | Nix 固定依存によるフロントエンド成果物と Vitest / Node policy test |
 | `./scripts/nix-local build` | 配布可能な Tauri package |
 | `just check` | format、lint、test、通常 build の一括検証 |
 | `just version-check` | npm、Cargo、Cargo.lock、Tauri の version 一致を検証 |
@@ -43,6 +43,12 @@ just dev
 
 Bazel は `.bazelversion` の Bazel を Bazelisk 経由で使用します。生成物は
 `bazel-bin/dist`、通常の Vite 生成物は `dist` です。
+
+Nix build の source は、再現性と転送量を保つため `.venv*`、`graphify-out`、`site`、
+`dist`、`target` などの生成物を除外します。一方、frontend check が実行する
+`scripts/*.test.mjs` と、その入力になる `.github/workflows` は source に含めます。
+source filter を変更した場合は `./scripts/nix-local build path:.#frontend --no-link` を使い、
+pure evaluation でも Vitest と Node policy test の両方が実行されることを確認してください。
 
 ## ドキュメントサイト
 

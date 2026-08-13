@@ -18,7 +18,8 @@ ope-term のデスクトップ UI は高密度な運用画面です。コンポ�
 | `--space-7` 以上 | 32 px 以上 | section 間隔と大きい余白 |
 
 既存 token の中間値が必要に見える場合は、まず隣接要素の token を揃えて解決できないか
-確認します。route piece の接続線など意味のある固有ジオメトリだけは `rem` を局所指定します。
+確認します。route piece の接続線など意味のある固有ジオメトリは、用途を表す semantic token として
+`:root` に定義します。
 
 ## Typography
 

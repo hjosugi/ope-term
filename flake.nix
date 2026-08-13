@@ -23,21 +23,22 @@
           !builtins.elem name [
             ".direnv"
             ".git"
+            ".claude"
             "dist"
             "docs"
             "fuzz"
             "gen"
+            "graphify-out"
             "issues"
             "node_modules"
             "artifacts"
             "result"
-            "scripts"
+            "site"
             "target"
             ".bazelrc"
             ".bazelversion"
             ".cargo"
             ".envrc"
-            ".github"
             ".gitignore"
             "BUILD.bazel"
             "CONTRIBUTING.md"
@@ -50,6 +51,7 @@
             "REPO.bazel"
             "SECURITY.md"
           ]
+          && !nixpkgs.lib.hasPrefix ".venv" name
           && !nixpkgs.lib.hasPrefix "bazel-" name
           && !nixpkgs.lib.hasPrefix "result-" name;
       };
