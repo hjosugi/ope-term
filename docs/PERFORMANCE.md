@@ -19,7 +19,7 @@
 - 端末データは Tauri event bus でなく IPC Channel を使用
 - キー入力は 4 ms 単位でまとめ、IPC call 数を抑制
 - resize は 80 ms debounce
-- セッションごとの bounded command queue（256）
+- セッションごとの bounded command queue（64）
 - xterm WebGL を優先し、context loss 時は標準 renderer へ戻す
 - performance harness は計測有効時だけ、WebGL addon は fallback 強制時以外だけ別 chunk から読む
 - production build の main chunk を 500 kB 未満に保ち、optional instrumentation / renderer を分離
