@@ -22,6 +22,11 @@ just dev
 切り分けてください。`LD_LIBRARY_PATH` だけを host Mesa へ差し替えると GTK/WebKitGTK と
 renderer の ABI が分かれるため、恒久対応にはしません。
 
+`./scripts/nix-local build` の Linux package も同じ Mesa library path、GBM backend、DRI
+driver と GStreamer の `appsink` plugin を GApp wrapper に埋め込みます。開発 shell が起動しても
+package の wrapper が欠ける回帰を防ぐため、`nix flake check` は3変数と plugin path が wrapper
+に含まれることも検証します。
+
 ## ビルドの役割
 
 | コマンド | 用途 |

@@ -54,6 +54,8 @@ Nix dev shell から debug app を起動し、次を確認しました。
 - Tauri の `freezePrototype: true` を維持したまま xterm 6.0.0 を読み込める
 - WebKit の accessibility tree に host search、route builder、CONNECT、local terminal の
   controls が構築され、初期画面が操作可能になる
+- 同じ Mesa、GBM、DRI 設定を埋め込んだ Nix production package でも WebKitWebProcess が
+  継続稼働し、accessibility tree に route builder と split controls が構築される
 
 これは計測前提の smoke test であり、release gate の performance artifact ではありません。
 WebGL / fallback の100入力、100 MiB出力、idle / 1 session memory は、以下の手順で別々の

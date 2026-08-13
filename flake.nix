@@ -60,7 +60,9 @@
           pkgs = import nixpkgs { inherit system; };
           linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.glib-networking
+            pkgs.gst_all_1.gst-plugins-base
             pkgs.libayatana-appindicator
+            pkgs.mesa
             pkgs.webkitgtk_4_1
           ];
           pnpmDeps = pkgs.fetchPnpmDeps {
@@ -119,6 +121,14 @@
               pnpm run build
             '';
 
+            preFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              gappsWrapperArgs+=(
+                --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.mesa ]}"
+                --set GBM_BACKENDS_PATH "${pkgs.mesa}/lib/gbm"
+                --set LIBGL_DRIVERS_PATH "${pkgs.mesa}/lib/dri"
+              )
+            '';
+
             doCheck = true;
 
             meta = {
@@ -147,10 +157,33 @@
         }
       );
 
-      checks = forAllSystems (system: {
-        package = self.packages.${system}.default;
-        frontend = self.packages.${system}.frontend;
-      });
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          package = self.packages.${system}.default;
+        in
+        {
+          inherit package;
+          frontend = self.packages.${system}.frontend;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          linux-runtime-wrapper =
+            pkgs.runCommand "ope-term-linux-runtime-wrapper"
+              {
+                nativeBuildInputs = [ pkgs.binutils ];
+              }
+              ''
+                wrapper="${package}/bin/ope-term"
+                strings "$wrapper" > wrapper-strings
+                grep -Fx LD_LIBRARY_PATH wrapper-strings >/dev/null
+                grep -Fx "GBM_BACKENDS_PATH=${pkgs.mesa}/lib/gbm" wrapper-strings >/dev/null
+                grep -Fx "LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri" wrapper-strings >/dev/null
+                grep -F "${pkgs.gst_all_1.gst-plugins-base}/lib/gstreamer-1.0" wrapper-strings >/dev/null
+                touch "$out"
+              '';
+        }
+      );
 
       devShells = forAllSystems (
         system:
