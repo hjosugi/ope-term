@@ -32,11 +32,10 @@ local terminal も xterm、tab、左右・上下 pane、focus、resize、close�
 
 ## Process lifecycle
 
-各 session は PTY master、reader、writer、child wait handle を所有します。tab を閉じると child
+各 session は PTY master、reader / writer thread、child wait blocking taskを所有します。tab を閉じると child
 killer を呼び、終了を wait してから session を完了します。command channel が失われた場合も
 同じ close path に入り、child を orphan にしません。起動途中で reader / writer thread を作れ
 なかった場合も child を kill + wait します。
 
 native PTY smoke test は Linux の通常 CI と Windows / macOS matrix で shell の起動、出力、終了
 回収を検証します。
-

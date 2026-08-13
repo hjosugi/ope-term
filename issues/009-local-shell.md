@@ -22,3 +22,4 @@ Labels: priority:P1, area:terminal, enhancement
   SSH session と共通 lifecycle。
 - OSC 133 handler は opt-in。marker 数だけを表示し、command 内容を保存しない。
 - close、command channel 終了、reader / writer thread の起動失敗で child を kill + wait する。
+  child waitは生成失敗し得る専用threadではなくTokio blocking taskで所有する。

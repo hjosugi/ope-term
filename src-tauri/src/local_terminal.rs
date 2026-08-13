@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use crate::session_log::LogInput;
 use crate::ssh::{CloseReason, SessionEvent};
@@ -177,26 +177,16 @@ pub async fn run(
         return Err(error).context("local PTY reader thread を開始できません");
     }
 
-    let (exit_tx, mut exit_rx) = oneshot::channel();
-    if let Err(error) = std::thread::Builder::new()
-        .name("ope-term-local-pty-child".to_owned())
-        .spawn(move || {
-            let _ = exit_tx.send(child.wait());
-        })
-    {
-        drop(writer_tx);
-        let _ = killer.kill();
-        return Err(error).context("local shell 監視 thread を開始できません");
-    }
+    let mut exit_task = tokio::task::spawn_blocking(move || child.wait());
     let _ = events.send(SessionEvent::Ready);
 
     loop {
         tokio::select! {
-            status = &mut exit_rx => {
+            status = &mut exit_task => {
                 match status {
                     Ok(Ok(_)) => return Ok(CloseReason::Remote),
                     Ok(Err(error)) => return Err(error).context("local shell の終了状態を取得できません"),
-                    Err(_) => bail!("local shell の監視 thread が終了しました"),
+                    Err(error) => bail!("local shell の監視 task が終了しました: {error}"),
                 }
             }
             command = commands.recv() => match command {
@@ -204,13 +194,13 @@ pub async fn run(
                     if input.len() > MAX_INPUT_BYTES {
                         drop(writer_tx);
                         let _ = killer.kill();
-                        let _ = exit_rx.await;
+                        let _ = exit_task.await;
                         bail!("local terminal input が大きすぎます");
                     }
                     if writer_tx.send(input.into_bytes()).await.is_err() {
                         drop(writer_tx);
                         let _ = killer.kill();
-                        let _ = exit_rx.await;
+                        let _ = exit_task.await;
                         bail!("local PTY input は終了しています");
                     }
                 }
@@ -218,14 +208,14 @@ pub async fn run(
                     if let Err(error) = pair.master.resize(pty_size(cols, rows)) {
                         drop(writer_tx);
                         let _ = killer.kill();
-                        let _ = exit_rx.await;
+                        let _ = exit_task.await;
                         return Err(error).context("local PTY のサイズを変更できません");
                     }
                 }
                 Some(LocalCommand::Close) | None => {
                     drop(writer_tx);
                     let _ = killer.kill();
-                    let _ = exit_rx.await;
+                    let _ = exit_task.await;
                     return Ok(CloseReason::Local);
                 }
             }
