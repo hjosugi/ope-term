@@ -113,7 +113,7 @@ mod application {
     #[tauri::command]
     fn list_hosts() -> Result<Vec<HostProfile>, String> {
         ssh_config::load_default()
-            .map(|blocks| ssh_config::profiles(&blocks))
+            .and_then(|blocks| ssh_config::profiles(&blocks))
             .map_err(|error| format!("{error:#}"))
     }
 

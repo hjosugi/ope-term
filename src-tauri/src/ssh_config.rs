@@ -22,6 +22,7 @@ const MAX_INCLUDE_MATCHES: usize = 1024;
 const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
 const MAX_ROUTE_HOPS: usize = 32;
 const MAX_AUTH_FILES: usize = 64;
+const MAX_HOST_PROFILES: usize = 2_048;
 
 #[derive(Debug, Clone, Default)]
 enum Selector {
@@ -713,8 +714,12 @@ fn expand_chain(
     Ok(())
 }
 
-pub fn profiles(blocks: &[Block]) -> Vec<HostProfile> {
-    list_hosts(blocks)
+pub fn profiles(blocks: &[Block]) -> Result<Vec<HostProfile>> {
+    let aliases = list_hosts(blocks);
+    if aliases.len() > MAX_HOST_PROFILES {
+        bail!("表示可能な具体 Host は {MAX_HOST_PROFILES} 件までです");
+    }
+    Ok(aliases
         .into_iter()
         .filter_map(|alias| {
             let endpoint = resolve(&alias, blocks).ok()?;
@@ -732,7 +737,7 @@ pub fn profiles(blocks: &[Block]) -> Vec<HostProfile> {
                 chain,
             })
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
@@ -767,6 +772,15 @@ Host * !secret-*
             list_hosts(&parse(CONFIG)),
             ["prod-db", "bastion", "dmz", "github.com"]
         );
+    }
+
+    #[test]
+    fn bounds_profiles_before_resolving_every_host() {
+        let config = (0..=MAX_HOST_PROFILES)
+            .map(|index| format!("Host host-{index}\n"))
+            .collect::<String>();
+        let error = profiles(&parse(&config)).unwrap_err();
+        assert!(error.to_string().contains(&MAX_HOST_PROFILES.to_string()));
     }
 
     #[test]

@@ -17,3 +17,4 @@ Labels: priority:P1, area:ssh, enhancement
 
 Includeは全体8 MiB / 1024 file、深さ32、globごと1024 matchで停止する。
 解決後の`IdentityFile` / `CertificateFile`はhostごとに各64件を上限とする。
+UIへ列挙する具体Hostはprofile解決前に2,048件で停止する。
