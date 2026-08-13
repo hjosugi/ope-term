@@ -7,7 +7,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 const LOG_QUEUE_CAPACITY: usize = 64;
 const MAX_TEMPLATE_BYTES: usize = 160;
@@ -109,17 +109,21 @@ pub fn configure(input: LogInput, directory: PathBuf, host: &str, user: &str) ->
     })
 }
 
-pub fn start(config: LogConfig) -> Result<LogSink> {
-    fs::create_dir_all(&config.directory).context("log directory を作成できません")?;
+pub async fn start(config: LogConfig) -> Result<LogSink> {
     let (sender, receiver) = mpsc::channel(LOG_QUEUE_CAPACITY);
+    let (ready_sender, ready_receiver) = oneshot::channel();
     std::thread::Builder::new()
         .name("ope-term-session-log".to_owned())
         .spawn(move || {
-            if let Err(error) = write_loop(config, receiver) {
+            if let Err(error) = write_loop(config, receiver, ready_sender) {
                 eprintln!("ope-term session logger stopped: {error:#}");
             }
         })
         .context("session log writer を開始できません")?;
+    ready_receiver
+        .await
+        .context("session log writer が準備前に終了しました")?
+        .map_err(anyhow::Error::msg)?;
     Ok(LogSink { sender })
 }
 
@@ -138,15 +142,33 @@ impl LogSink {
     }
 }
 
-fn write_loop(config: LogConfig, mut receiver: mpsc::Receiver<Vec<u8>>) -> Result<()> {
+fn write_loop(
+    config: LogConfig,
+    mut receiver: mpsc::Receiver<Vec<u8>>,
+    ready: oneshot::Sender<std::result::Result<(), String>>,
+) -> Result<()> {
     let path = config.directory.join(&config.file_name);
-    let mut file = open_log(&path)?;
-    let mut size = file.metadata()?.len();
-    let mut line_start = true;
-    if size > 0 {
-        file.write_all(b"\n")?;
-        size += 1;
+    let initialized = (|| -> Result<(File, u64)> {
+        fs::create_dir_all(&config.directory).context("log directory を作成できません")?;
+        let mut file = open_log(&path)?;
+        let mut size = file.metadata()?.len();
+        if size > 0 {
+            file.write_all(b"\n")?;
+            size += 1;
+        }
+        Ok((file, size))
+    })();
+    let (mut file, mut size) = match initialized {
+        Ok(state) => state,
+        Err(error) => {
+            let _ = ready.send(Err(format!("{error:#}")));
+            return Err(error);
+        }
+    };
+    if ready.send(Ok(())).is_err() {
+        return Ok(());
     }
+    let mut line_start = true;
     while let Some(bytes) = receiver.blocking_recv() {
         let encoded = if config.timestamps {
             timestamp_lines(&bytes, &mut line_start)
@@ -447,6 +469,32 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn reports_an_invalid_log_target_before_session_start() {
+        let directory = tempfile::tempdir().expect("directory");
+        fs::create_dir(directory.path().join("session.log")).expect("conflicting directory");
+        let config = configure(
+            LogInput {
+                enabled: true,
+                directory_token: None,
+                file_name_template: "session.log".to_owned(),
+                timestamps: false,
+                rotation_bytes: MIN_ROTATION_BYTES,
+                retained_files: 1,
+            },
+            directory.path().to_path_buf(),
+            "host",
+            "user",
+        )
+        .expect("config");
+
+        let error = match start(config).await {
+            Ok(_) => panic!("invalid target was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("session.log"));
     }
 
     #[test]

@@ -106,9 +106,15 @@ pub async fn run(
         .ok_or_else(|| anyhow!("shell profile が見つかりません"))?;
     let size = pty_size(request.cols, request.rows);
     let log = match (request.log.clone(), log_directory) {
-        (Some(input), Some(directory)) if input.enabled => Some(crate::session_log::start(
-            crate::session_log::configure(input, directory, "local", &local_user())?,
-        )?),
+        (Some(input), Some(directory)) if input.enabled => Some(
+            crate::session_log::start(crate::session_log::configure(
+                input,
+                directory,
+                "local",
+                &local_user(),
+            )?)
+            .await?,
+        ),
         _ => None,
     };
     let pair = native_pty_system()

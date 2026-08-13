@@ -208,12 +208,15 @@ pub async fn run(
             let target = chain
                 .last()
                 .ok_or_else(|| anyhow!("SSH hop がありません"))?;
-            Some(crate::session_log::start(crate::session_log::configure(
-                input,
-                directory,
-                &target.alias,
-                target.user.as_deref().unwrap_or("unknown"),
-            )?)?)
+            Some(
+                crate::session_log::start(crate::session_log::configure(
+                    input,
+                    directory,
+                    &target.alias,
+                    target.user.as_deref().unwrap_or("unknown"),
+                )?)
+                .await?,
+            )
         }
         _ => None,
     };

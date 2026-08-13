@@ -25,7 +25,8 @@ templateは `.log` で終える必要があります。host/user の危険文字
   再起動後に記録を続ける場合は directory を選び直します。
 - 出力は bounded queue で専用 writer thread へ送り、terminal rendering を file I/O から分離します。
 - logger は通常 file だけを開き、symlink / FIFO を拒否します。Unix で新規作成する log は `0600`
-  に固定します。
+  に固定します。writerの準備完了を待ってからsessionを開始するため、保存先を開けない場合は
+  接続前にエラーを返します。
 - disk、permission、rotationなどのI/O失敗でwriterが停止した場合はterminalとtoastへ一度通知し、
   記録だけを無効化して開いているterminalは継続します。
 - active file が上限を超えると `.log.1` へ移し、古い世代を順送りして上限世代を削除します。
