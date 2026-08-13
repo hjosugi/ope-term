@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { evaluatePerformance, percentile, type PerformanceReport } from './performance';
+import {
+  BoundedSamples,
+  evaluatePerformance,
+  percentile,
+  type PerformanceReport,
+} from './performance';
 import { loadRendererPreference } from './renderer-preference';
 
 function report(overrides: Partial<PerformanceReport> = {}): PerformanceReport {
@@ -39,6 +44,16 @@ describe('performance gates', () => {
     expect(percentile(samples, 0.5)).toBe(20);
     expect(percentile(samples, 0.95)).toBe(40);
     expect(samples).toEqual([40, 10, 30, 20]);
+  });
+
+  it('retains only the newest bounded performance samples', () => {
+    const samples = new BoundedSamples(3);
+    for (const value of [1, 2, 3, 4, Number.NaN, -1, 5]) samples.record(value);
+
+    expect([...samples.snapshot()].sort((left, right) => left - right)).toEqual([3, 4, 5]);
+    samples.reset();
+    expect(samples.snapshot()).toHaveLength(0);
+    expect(() => new BoundedSamples(0)).toThrow('positive integer');
   });
 
   it('passes a report within every budget', () => {

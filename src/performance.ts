@@ -55,6 +55,36 @@ export interface PerformanceHarnessApi {
   download(environment: PerformanceEnvironment, memory: PerformanceMemory): void;
 }
 
+export const MAX_PERFORMANCE_SAMPLES = 10_000;
+
+export class BoundedSamples {
+  private readonly values: number[] = [];
+  private cursor = 0;
+
+  constructor(private readonly capacity = MAX_PERFORMANCE_SAMPLES) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('sample capacity must be a positive integer');
+  }
+
+  record(value: number): void {
+    if (!Number.isFinite(value) || value < 0) return;
+    if (this.values.length < this.capacity) {
+      this.values.push(value);
+      return;
+    }
+    this.values[this.cursor] = value;
+    this.cursor = (this.cursor + 1) % this.capacity;
+  }
+
+  reset(): void {
+    this.values.length = 0;
+    this.cursor = 0;
+  }
+
+  snapshot(): readonly number[] {
+    return this.values;
+  }
+}
+
 declare global {
   interface Window {
     __opeTermPerformance?: PerformanceHarnessApi;
@@ -86,8 +116,8 @@ export function evaluatePerformance(report: PerformanceReport): PerformanceVerdi
 }
 
 export class BrowserPerformanceHarness implements PerformanceHarnessApi {
-  private readonly inputLatencies: number[] = [];
-  private readonly longTasks: number[] = [];
+  private readonly inputLatencies = new BoundedSamples();
+  private maximumLongTaskMs = 0;
   private coldStartMs = 0;
   private outputBytes = 0;
   private outputStartedAt?: number;
@@ -104,7 +134,9 @@ export class BrowserPerformanceHarness implements PerformanceHarnessApi {
     window.addEventListener('keydown', this.onKeydown, { capture: true });
     if (!this.longTaskObserverSupported) return;
     this.observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) this.longTasks.push(entry.duration);
+      for (const entry of list.getEntries()) {
+        this.maximumLongTaskMs = Math.max(this.maximumLongTaskMs, entry.duration);
+      }
     });
     this.observer.observe({ entryTypes: ['longtask'] });
   }
@@ -136,22 +168,23 @@ export class BrowserPerformanceHarness implements PerformanceHarnessApi {
     this.outputBytes = 0;
     this.outputStartedAt = undefined;
     this.outputCompletedAt = undefined;
-    this.longTasks.length = 0;
+    this.maximumLongTaskMs = 0;
   }
 
   snapshot(environment: PerformanceEnvironment, memory: PerformanceMemory): PerformanceReport {
     const outputEnd = this.outputCompletedAt ?? this.clock.now();
     const durationMs = this.outputStartedAt === undefined ? 0 : Math.max(0, outputEnd - this.outputStartedAt);
+    const inputLatencies = this.inputLatencies.snapshot();
     return {
       schemaVersion: 1,
       createdAt: new Date().toISOString(),
       environment: { ...environment, renderer: this.renderer },
       coldStartMs: round(this.coldStartMs),
       inputLatency: {
-        samples: this.inputLatencies.length,
-        p50Ms: round(percentile(this.inputLatencies, 0.5)),
-        p95Ms: round(percentile(this.inputLatencies, 0.95)),
-        p99Ms: round(percentile(this.inputLatencies, 0.99)),
+        samples: inputLatencies.length,
+        p50Ms: round(percentile(inputLatencies, 0.5)),
+        p95Ms: round(percentile(inputLatencies, 0.95)),
+        p99Ms: round(percentile(inputLatencies, 0.99)),
       },
       memory: {
         idleMiB: round(memory.idleMiB),
@@ -164,7 +197,7 @@ export class BrowserPerformanceHarness implements PerformanceHarnessApi {
         throughputMiBPerSecond: durationMs === 0
           ? 0
           : round((this.outputBytes / 1024 / 1024) / (durationMs / 1000)),
-        maximumMainThreadStallMs: round(Math.max(0, ...this.longTasks)),
+        maximumMainThreadStallMs: round(this.maximumLongTaskMs),
         longTaskObserverSupported: this.longTaskObserverSupported,
       },
     };
@@ -186,7 +219,7 @@ export class BrowserPerformanceHarness implements PerformanceHarnessApi {
   private readonly onKeydown = (event: KeyboardEvent): void => {
     if (event.repeat) return;
     const startedAt = this.clock.now();
-    window.requestAnimationFrame(() => this.inputLatencies.push(this.clock.now() - startedAt));
+    window.requestAnimationFrame(() => this.inputLatencies.record(this.clock.now() - startedAt));
   };
 }
 

@@ -101,6 +101,9 @@ window.__opeTermPerformance.download(
 reportは秘密値やterminal内容を含まず、集計値とenvironment metadataだけを保持します。完了後は
 flagを消して通常modeへ戻します。
 
+長時間flagを有効にした場合もmemoryを増やし続けないよう、入力latencyは最新10,000 samplesの
+固定容量bufferに保持し、Long Taskは最大値だけを記録します。
+
 ```js
 localStorage.removeItem('ope-term.performance.enabled');
 location.reload();
