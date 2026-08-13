@@ -27,5 +27,6 @@ Labels: priority:P1, area:files, area:ssh, enhancement
 - 一覧channel開始は30秒timeout、`READDIR` taskはterminal loopから分離し、同時一覧を4件に制限する。
 - local / remote一覧の名前sortはallocation-freeのASCII case-fold比較を共有する。
 - entry選択で一覧DOMを再生成せず、転送progress描画はanimation frame単位にcoalesceする。
+- 一覧DOMは250件ずつframe分割し、世代が変わった古いrenderを中止する。
 - `just check`（frontend / Rust tests、clippy、production build）と`pnpm run security:policy`、
   `just docs` を通過。

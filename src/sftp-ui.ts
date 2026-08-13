@@ -172,6 +172,8 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
   let processing = false;
   const localRequests = new LatestRequest();
   const remoteRequests = new LatestRequest();
+  const entryRenderGenerations = new WeakMap<HTMLElement, number>();
+  const ENTRY_RENDER_BATCH_SIZE = 250;
 
   function connectionId(): string | null {
     const id = options.getConnectionId();
@@ -192,7 +194,10 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     onOpen: (entry: T) => void,
     remote: boolean,
   ): void {
+    const generation = (entryRenderGenerations.get(container) ?? 0) + 1;
+    entryRenderGenerations.set(container, generation);
     container.replaceChildren();
+    container.removeAttribute('aria-busy');
     if (entries.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'sftp-empty';
@@ -200,29 +205,45 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       container.append(empty);
       return;
     }
+    container.setAttribute('aria-busy', 'true');
     let selectedRow: HTMLButtonElement | undefined;
-    for (const entry of entries) {
-      const row = button('');
-      row.className = `sftp-entry${selected?.name === entry.name ? ' selected' : ''}`;
-      if (selected?.name === entry.name) selectedRow = row;
-      const kind = document.createElement('span');
-      kind.className = `sftp-kind ${entry.kind}`;
-      kind.textContent = entry.kind === 'directory' ? 'DIR' : entry.kind === 'symlink' ? 'LNK' : 'FILE';
-      const name = document.createElement('strong');
-      name.textContent = entry.name;
-      const detail = document.createElement('small');
-      const permissions = remote ? (entry as SftpEntry).permissions : '';
-      detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatFileSize(entry.size)}`;
-      row.append(kind, name, detail);
-      row.addEventListener('click', () => {
-        selectedRow?.classList.remove('selected');
-        row.classList.add('selected');
-        selectedRow = row;
-        onSelect(entry);
-      });
-      row.addEventListener('dblclick', () => onOpen(entry));
-      container.append(row);
-    }
+    let offset = 0;
+    const appendBatch = (): void => {
+      if (entryRenderGenerations.get(container) !== generation) return;
+      const fragment = document.createDocumentFragment();
+      const end = Math.min(offset + ENTRY_RENDER_BATCH_SIZE, entries.length);
+      for (; offset < end; offset += 1) {
+        const entry = entries[offset];
+        if (!entry) continue;
+        const row = button('');
+        row.className = `sftp-entry${selected?.name === entry.name ? ' selected' : ''}`;
+        if (selected?.name === entry.name) selectedRow = row;
+        const kind = document.createElement('span');
+        kind.className = `sftp-kind ${entry.kind}`;
+        kind.textContent = entry.kind === 'directory' ? 'DIR' : entry.kind === 'symlink' ? 'LNK' : 'FILE';
+        const name = document.createElement('strong');
+        name.textContent = entry.name;
+        const detail = document.createElement('small');
+        const permissions = remote ? (entry as SftpEntry).permissions : '';
+        detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatFileSize(entry.size)}`;
+        row.append(kind, name, detail);
+        row.addEventListener('click', () => {
+          selectedRow?.classList.remove('selected');
+          row.classList.add('selected');
+          selectedRow = row;
+          onSelect(entry);
+        });
+        row.addEventListener('dblclick', () => onOpen(entry));
+        fragment.append(row);
+      }
+      container.append(fragment);
+      if (offset < entries.length) {
+        window.requestAnimationFrame(appendBatch);
+      } else {
+        container.removeAttribute('aria-busy');
+      }
+    };
+    appendBatch();
   }
 
   function renderLocal(): void {

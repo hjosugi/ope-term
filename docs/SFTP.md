@@ -47,6 +47,7 @@ permission 変更は行いません。
   増やしません。
 - entry選択は一覧DOMを作り直さずselected classだけを更新し、転送progressのqueue描画はanimation
   frameごとにまとめます。
+- 最大10,000件の一覧DOMは250件ずつframe分割し、移動後に残った古い描画はgenerationで停止します。
 
 !!! warning "切断と再接続"
 
