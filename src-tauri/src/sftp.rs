@@ -488,11 +488,13 @@ async fn replace_local_file(
     transfer_id: &str,
 ) -> Result<()> {
     if !target_exists {
-        return match fs::rename(temporary, target).await {
-            Ok(()) => Ok(()),
+        return match fs::hard_link(temporary, target).await {
+            Ok(()) => fs::remove_file(temporary)
+                .await
+                .context("download は完了しましたが一時 link を削除できません"),
             Err(error) => {
                 let _ = fs::remove_file(temporary).await;
-                Err(error).context("download の一時 file を確定できません")
+                Err(error).context("download 先が競合したか、一時 file を安全に確定できません")
             }
         };
     }
@@ -761,6 +763,32 @@ mod tests {
         assert!(error.to_string().contains("backup file"));
         assert_eq!(fs::read(&target).await.expect("target"), b"original");
         assert_eq!(fs::read(&backup).await.expect("backup"), b"existing backup");
+        assert!(local_lstat(&temporary).await.expect("temporary").is_none());
+    }
+
+    #[tokio::test]
+    async fn new_local_replace_is_atomic_and_never_overwrites_a_late_target() {
+        let directory = tempfile::tempdir().expect("directory");
+        let target = directory.path().join("target.txt");
+        let temporary = directory.path().join("download.part");
+        fs::write(&temporary, b"replacement")
+            .await
+            .expect("temporary");
+
+        replace_local_file(&temporary, &target, false, "safe-id")
+            .await
+            .expect("new target");
+        assert_eq!(fs::read(&target).await.expect("target"), b"replacement");
+        assert!(local_lstat(&temporary).await.expect("temporary").is_none());
+
+        fs::write(&temporary, b"second replacement")
+            .await
+            .expect("second temporary");
+        let error = replace_local_file(&temporary, &target, false, "safe-id")
+            .await
+            .expect_err("late target collision");
+        assert!(error.to_string().contains("競合"));
+        assert_eq!(fs::read(&target).await.expect("preserved"), b"replacement");
         assert!(local_lstat(&temporary).await.expect("temporary").is_none());
     }
 
