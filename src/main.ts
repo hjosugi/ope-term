@@ -6,6 +6,7 @@ import './style.css';
 import { clearAuthResponses, takeAndClearAuthResponses } from './auth-secrets';
 import { cssNumberToken, cssTextToken } from './design-tokens';
 import { fuzzyFilter } from './fuzzy';
+import { IncrementalRenderer } from './incremental-render';
 import {
   KEY_SEQUENCE_TIMEOUT_MS,
   defaultKeybindings,
@@ -298,6 +299,8 @@ let keybindings = loadKeybindings(localStorage, operatingSystem);
 const hostKeyPrompts = new PromptQueue<HostKeyDialogItem>();
 const authPrompts = new PromptQueue<AuthDialogItem>();
 const sessions = new Map<string, SessionUi>();
+const hostRenderer = new IncrementalRenderer();
+const HOST_RENDER_BATCH_SIZE = 100;
 const rootStyle = getComputedStyle(document.documentElement);
 const terminalFontFamily = cssTextToken(
   rootStyle,
@@ -488,7 +491,9 @@ function renderHosts(): void {
     [host.alias, host.hostname, host.user ?? '', host.chain.join(' ')].join(' '),
   );
   ui.hostCount.textContent = `${hosts.length} hosts`;
+  hostRenderer.cancel();
   ui.hostList.replaceChildren();
+  ui.hostList.removeAttribute('aria-busy');
 
   if (hosts.length === 0) {
     const empty = document.createElement('div');
@@ -505,37 +510,57 @@ function renderHosts(): void {
     return;
   }
 
-  for (const host of filtered) {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'host-card';
-    card.draggable = true;
-    card.setAttribute('role', 'listitem');
-    card.title = `${host.alias} をルートへ追加`;
-
-    const glyph = document.createElement('span');
-    glyph.className = 'host-glyph';
-    glyph.textContent = 'SSH';
-    const main = document.createElement('span');
-    main.className = 'host-main';
-    const alias = document.createElement('span');
-    alias.className = 'host-alias';
-    alias.textContent = host.alias;
-    const address = document.createElement('span');
-    address.className = 'host-address';
-    address.textContent = `${host.user ? `${host.user}@` : ''}${host.hostname}:${host.port}`;
-    main.append(alias, address);
-    const hops = document.createElement('span');
-    hops.className = 'host-hops';
-    hops.textContent = host.chain.length > 1 ? `${host.chain.length} HOP` : 'DIRECT';
-    card.append(glyph, main, hops);
-    card.addEventListener('click', () => addToRoute(host.alias));
-    card.addEventListener('dragstart', (event) => {
-      event.dataTransfer?.setData('text/ope-host', host.alias);
-      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
-    });
-    ui.hostList.append(card);
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-hosts';
+    empty.textContent = '一致するHostはありません。';
+    ui.hostList.append(empty);
+    return;
   }
+
+  ui.hostList.setAttribute('aria-busy', 'true');
+  hostRenderer.render(
+    filtered.length,
+    HOST_RENDER_BATCH_SIZE,
+    (start, end) => {
+      const fragment = document.createDocumentFragment();
+      for (let index = start; index < end; index += 1) {
+        const host = filtered[index];
+        if (!host) continue;
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'host-card';
+        card.draggable = true;
+        card.setAttribute('role', 'listitem');
+        card.title = `${host.alias} をルートへ追加`;
+
+        const glyph = document.createElement('span');
+        glyph.className = 'host-glyph';
+        glyph.textContent = 'SSH';
+        const main = document.createElement('span');
+        main.className = 'host-main';
+        const alias = document.createElement('span');
+        alias.className = 'host-alias';
+        alias.textContent = host.alias;
+        const address = document.createElement('span');
+        address.className = 'host-address';
+        address.textContent = `${host.user ? `${host.user}@` : ''}${host.hostname}:${host.port}`;
+        main.append(alias, address);
+        const hops = document.createElement('span');
+        hops.className = 'host-hops';
+        hops.textContent = host.chain.length > 1 ? `${host.chain.length} HOP` : 'DIRECT';
+        card.append(glyph, main, hops);
+        card.addEventListener('click', () => addToRoute(host.alias));
+        card.addEventListener('dragstart', (event) => {
+          event.dataTransfer?.setData('text/ope-host', host.alias);
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+        });
+        fragment.append(card);
+      }
+      ui.hostList.append(fragment);
+    },
+    () => ui.hostList.removeAttribute('aria-busy'),
+  );
 }
 
 function addToRoute(alias: string): void {

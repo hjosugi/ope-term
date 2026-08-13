@@ -7,6 +7,7 @@ import {
   parentBrowserPath,
   transferPercent,
 } from './sftp-paths';
+import { IncrementalRenderer } from './incremental-render';
 import {
   pruneCompletedTransfers,
   transferQueueHasCapacity,
@@ -172,7 +173,8 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
   let processing = false;
   const localRequests = new LatestRequest();
   const remoteRequests = new LatestRequest();
-  const entryRenderGenerations = new WeakMap<HTMLElement, number>();
+  const localEntryRenderer = new IncrementalRenderer();
+  const remoteEntryRenderer = new IncrementalRenderer();
   const ENTRY_RENDER_BATCH_SIZE = 250;
 
   function connectionId(): string | null {
@@ -194,8 +196,8 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     onOpen: (entry: T) => void,
     remote: boolean,
   ): void {
-    const generation = (entryRenderGenerations.get(container) ?? 0) + 1;
-    entryRenderGenerations.set(container, generation);
+    const renderer = remote ? remoteEntryRenderer : localEntryRenderer;
+    renderer.cancel();
     container.replaceChildren();
     container.removeAttribute('aria-busy');
     if (entries.length === 0) {
@@ -207,43 +209,41 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     }
     container.setAttribute('aria-busy', 'true');
     let selectedRow: HTMLButtonElement | undefined;
-    let offset = 0;
-    const appendBatch = (): void => {
-      if (entryRenderGenerations.get(container) !== generation) return;
-      const fragment = document.createDocumentFragment();
-      const end = Math.min(offset + ENTRY_RENDER_BATCH_SIZE, entries.length);
-      for (; offset < end; offset += 1) {
-        const entry = entries[offset];
-        if (!entry) continue;
-        const row = button('');
-        row.className = `sftp-entry${selected?.name === entry.name ? ' selected' : ''}`;
-        if (selected?.name === entry.name) selectedRow = row;
-        const kind = document.createElement('span');
-        kind.className = `sftp-kind ${entry.kind}`;
-        kind.textContent = entry.kind === 'directory' ? 'DIR' : entry.kind === 'symlink' ? 'LNK' : 'FILE';
-        const name = document.createElement('strong');
-        name.textContent = entry.name;
-        const detail = document.createElement('small');
-        const permissions = remote ? (entry as SftpEntry).permissions : '';
-        detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatFileSize(entry.size)}`;
-        row.append(kind, name, detail);
-        row.addEventListener('click', () => {
-          selectedRow?.classList.remove('selected');
-          row.classList.add('selected');
-          selectedRow = row;
-          onSelect(entry);
-        });
-        row.addEventListener('dblclick', () => onOpen(entry));
-        fragment.append(row);
-      }
-      container.append(fragment);
-      if (offset < entries.length) {
-        window.requestAnimationFrame(appendBatch);
-      } else {
+    renderer.render(
+      entries.length,
+      ENTRY_RENDER_BATCH_SIZE,
+      (start, end) => {
+        const fragment = document.createDocumentFragment();
+        for (let index = start; index < end; index += 1) {
+          const entry = entries[index];
+          if (!entry) continue;
+          const row = button('');
+          row.className = `sftp-entry${selected?.name === entry.name ? ' selected' : ''}`;
+          if (selected?.name === entry.name) selectedRow = row;
+          const kind = document.createElement('span');
+          kind.className = `sftp-kind ${entry.kind}`;
+          kind.textContent = entry.kind === 'directory' ? 'DIR' : entry.kind === 'symlink' ? 'LNK' : 'FILE';
+          const name = document.createElement('strong');
+          name.textContent = entry.name;
+          const detail = document.createElement('small');
+          const permissions = remote ? (entry as SftpEntry).permissions : '';
+          detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatFileSize(entry.size)}`;
+          row.append(kind, name, detail);
+          row.addEventListener('click', () => {
+            selectedRow?.classList.remove('selected');
+            row.classList.add('selected');
+            selectedRow = row;
+            onSelect(entry);
+          });
+          row.addEventListener('dblclick', () => onOpen(entry));
+          fragment.append(row);
+        }
+        container.append(fragment);
+      },
+      () => {
         container.removeAttribute('aria-busy');
-      }
-    };
-    appendBatch();
+      },
+    );
   }
 
   function renderLocal(): void {
