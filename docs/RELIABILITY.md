@@ -40,6 +40,10 @@ gateは24時間以上、10回以上のfault、drop後の再接続、全接続の
 要求します。途中で停止したreportは調査材料には使えますが合格にはなりません。実機の定期実行は
 CachyOS lab machineのsystemd timerで行い、reportとjournalをrelease artifactへ保存します。
 
+frontendは再接続ごとに新しいconnection IDを発行し、eventとterminal dataの両方で一致するIDだけを
+受け入れます。tab close時はbackendの応答を待たずにIDを無効化するため、遅延frameが破棄済みxtermや
+次の接続へ混ざりません。切断時の未送信input bufferも同時に破棄します。
+
 ## tmux / screenへ復帰するopt-in workflow
 
 再接続は常に新しいshellです。ope-termが切断前の入力を再送したり、任意commandを暗黙実行したりは

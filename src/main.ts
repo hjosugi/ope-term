@@ -21,7 +21,13 @@ import {
   type CommandContext,
   type CommandId,
 } from './keybindings';
-import { MAX_AUTO_RETRIES, closeMessage, retryDelayMs, shouldAutoRetry } from './reconnect';
+import {
+  MAX_AUTO_RETRIES,
+  closeMessage,
+  isCurrentConnection,
+  retryDelayMs,
+  shouldAutoRetry,
+} from './reconnect';
 import type { BrowserPerformanceHarness } from './performance';
 import { loadRendererPreference } from './renderer-preference';
 import { PromptQueue } from './prompt-queue';
@@ -777,6 +783,7 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
   onEvent.onmessage = (event) => handleSessionEvent(session, connectionId, event);
   const onData = new Channel<ArrayBuffer>();
   onData.onmessage = (data) => {
+    if (!isCurrentConnection(session.connectionId, connectionId)) return;
     performanceHarness?.recordOutput(data.byteLength);
     session.terminal.write(new Uint8Array(data));
   };
@@ -1023,7 +1030,7 @@ function queueResize(session: SessionUi, cols: number, rows: number): void {
 
 function handleSessionEvent(session: SessionUi, connectionId: string, event: SessionEvent): void {
   // Events from a connection the tab already replaced by reconnecting are stale.
-  if (session.connectionId !== connectionId) return;
+  if (!isCurrentConnection(session.connectionId, connectionId)) return;
   switch (event.type) {
     case 'chain':
       session.hops = event.hops;
@@ -1588,7 +1595,12 @@ function closeSession(key: string): void {
   const session = sessions.get(key);
   if (!session) return;
   const connectionId = session.connectionId;
-  if (connectionId && (session.state === 'connecting' || session.state === 'connected')) {
+  const wasLive = session.state === 'connecting' || session.state === 'connected';
+  // Invalidate both Channel callbacks before asking the backend to close. A
+  // queued event/data frame must never target a disposed xterm instance.
+  session.connectionId = null;
+  session.state = 'closed';
+  if (connectionId && wasLive) {
     void invoke('close_session', { sessionId: connectionId }).catch(() => undefined);
   }
   discardHostKeyPrompts(key);

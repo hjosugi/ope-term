@@ -16,6 +16,11 @@ export function shouldAutoRetry(reason: CloseReason, attempt: number): boolean {
   return reason === 'transport' && attempt <= MAX_AUTO_RETRIES;
 }
 
+/** Rejects delayed events or terminal data from a replaced/closed backend. */
+export function isCurrentConnection(current: string | null, incoming: string): boolean {
+  return current === incoming;
+}
+
 /** Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s. */
 export function retryDelayMs(attempt: number): number {
   return Math.min(BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1), MAX_DELAY_MS);
