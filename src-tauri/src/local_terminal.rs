@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::session_log::LogInput;
 use crate::ssh::{CloseReason, SessionEvent};
 
-const MAX_INPUT_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_INPUT_BYTES: usize = 1024 * 1024;
 const PTY_WRITE_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]

@@ -14,7 +14,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const TRANSFER_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_REMOTE_NAME_BYTES: usize = 4 * 1024;
+const MAX_REMOTE_PATH_BYTES: usize = 32 * 1024;
 const MAX_TRANSFER_ID_BYTES: usize = 64;
+const MAX_LIST_ENTRIES: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,31 +100,34 @@ pub struct SftpTransferResult {
 }
 
 pub async fn list(session: &SftpSession, path: &str) -> Result<SftpListing> {
-    reject_nul(path)?;
+    validate_remote_path(path)?;
     let canonical_path = session
         .canonicalize(if path.trim().is_empty() { "." } else { path })
         .await
         .context("remote path を解決できません")?;
-    let mut entries = session
+    let directory_entries = session
         .read_dir(canonical_path.clone())
         .await
-        .context("remote directory を一覧できません")?
-        .map(|entry| {
-            let metadata = entry.metadata();
-            let file_type = metadata.file_type();
-            SftpEntry {
-                name: entry.file_name(),
-                kind: file_type_name(file_type),
-                size: metadata.len(),
-                permissions: metadata.permissions().to_string(),
-                modified_unix: metadata
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_secs()),
-            }
-        })
-        .collect::<Vec<_>>();
+        .context("remote directory を一覧できません")?;
+    let mut entries = Vec::new();
+    for entry in directory_entries {
+        if entries.len() >= MAX_LIST_ENTRIES {
+            bail!("remote directory は {MAX_LIST_ENTRIES} entries を超えているため表示できません");
+        }
+        let metadata = entry.metadata();
+        let file_type = metadata.file_type();
+        entries.push(SftpEntry {
+            name: entry.file_name(),
+            kind: file_type_name(file_type),
+            size: metadata.len(),
+            permissions: metadata.permissions().to_string(),
+            modified_unix: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs()),
+        });
+    }
     entries.sort_by(|left, right| {
         entry_rank(left.kind)
             .cmp(&entry_rank(right.kind))
@@ -142,7 +147,7 @@ pub async fn transfer(
 ) -> Result<SftpTransferResult> {
     validate_transfer_id(&request.transfer_id)?;
     validate_remote_name(&request.remote_name)?;
-    reject_nul(&request.remote_directory)?;
+    validate_remote_path(&request.remote_directory)?;
     emit(&progress, &request.transfer_id, "running", 0, 0);
     let result = match request.direction {
         TransferDirection::Upload => upload(&session, &request, &progress, &cancelled).await,
@@ -502,6 +507,13 @@ fn reject_nul(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_remote_path(value: &str) -> Result<()> {
+    if value.len() > MAX_REMOTE_PATH_BYTES {
+        bail!("remote path は {MAX_REMOTE_PATH_BYTES} bytes 以下にしてください");
+    }
+    reject_nul(value)
+}
+
 fn join_remote(directory: &str, name: &str) -> String {
     if directory == "/" {
         format!("/{name}")
@@ -563,6 +575,7 @@ mod tests {
             );
         }
         assert!(validate_remote_name("report 2026.txt").is_ok());
+        assert!(validate_remote_path(&"x".repeat(MAX_REMOTE_PATH_BYTES + 1)).is_err());
     }
 
     #[test]

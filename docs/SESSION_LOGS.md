@@ -33,6 +33,7 @@ picker で選択するまで有効化できません。
 
 viewer は選択 directory の `.log` と `.log.N` だけを一覧・検索します。fuzzy は query 文字の順序
 一致、exact は substring、regex は Rust `regex` の線形時間 engine を使用します。
+directory 一覧は 10,000 entries で停止します。
 
 file は全読み込みせず 64 KiB の reader buffer で先頭から走査します。1行の保持は 4 KiB、結果は
 500 件に制限するため、100 MiB 以上でも file size に比例した memory を確保しません。100 MiB の

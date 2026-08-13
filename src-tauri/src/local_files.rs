@@ -10,6 +10,8 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const MAX_SCOPES: usize = 64;
+const MAX_LIST_ENTRIES: usize = 10_000;
+const MAX_RELATIVE_PATH_BYTES: usize = 32 * 1024;
 
 pub type LocalScopes = Arc<Mutex<VecDeque<(String, PathBuf)>>>;
 
@@ -72,6 +74,9 @@ pub async fn list(scopes: &LocalScopes, token: &str, relative_path: &str) -> Res
         .context("local directory を一覧できません")?;
     let mut entries = Vec::new();
     while let Some(entry) = reader.next_entry().await? {
+        if entries.len() >= MAX_LIST_ENTRIES {
+            bail!("local directory は {MAX_LIST_ENTRIES} entries を超えているため表示できません");
+        }
         let metadata = fs::symlink_metadata(entry.path()).await?;
         let file_type = metadata.file_type();
         entries.push(LocalEntry {
@@ -174,6 +179,9 @@ async fn scoped_path(
 }
 
 fn safe_relative(raw: &str) -> Result<PathBuf> {
+    if raw.len() > MAX_RELATIVE_PATH_BYTES {
+        bail!("local relative path は {MAX_RELATIVE_PATH_BYTES} bytes 以下にしてください");
+    }
     if raw.contains('\0') {
         bail!("local relative path に NUL は使えません");
     }
@@ -223,6 +231,7 @@ mod tests {
     fn rejects_parent_and_absolute_paths() {
         assert!(safe_relative("../secret").is_err());
         assert!(safe_relative("/etc/passwd").is_err());
+        assert!(safe_relative(&"a".repeat(MAX_RELATIVE_PATH_BYTES + 1)).is_err());
         assert!(safe_relative("safe/child").is_ok());
     }
 

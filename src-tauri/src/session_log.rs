@@ -14,6 +14,7 @@ const MAX_TEMPLATE_BYTES: usize = 160;
 const MAX_QUERY_BYTES: usize = 256;
 const MAX_LINE_BYTES: usize = 4 * 1024;
 const MAX_RESULTS: usize = 500;
+const MAX_LOG_DIRECTORY_ENTRIES: usize = 10_000;
 const MIN_ROTATION_BYTES: u64 = 1024 * 1024;
 const MAX_ROTATION_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_RETAINED_FILES: u8 = 20;
@@ -232,7 +233,15 @@ fn rotated_path(path: &Path, generation: u8) -> PathBuf {
 
 pub fn list(directory: &Path) -> Result<Vec<LogFile>> {
     let mut logs = Vec::new();
-    for entry in fs::read_dir(directory).context("log directory を一覧できません")? {
+    for (scanned, entry) in fs::read_dir(directory)
+        .context("log directory を一覧できません")?
+        .enumerate()
+    {
+        if scanned >= MAX_LOG_DIRECTORY_ENTRIES {
+            bail!(
+                "log directory は {MAX_LOG_DIRECTORY_ENTRIES} entries を超えているため表示できません"
+            );
+        }
         let entry = entry?;
         let metadata = fs::symlink_metadata(entry.path())?;
         let name = entry.file_name().to_string_lossy().into_owned();

@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use crate::local_terminal::LocalCommand;
+use crate::local_terminal::{LocalCommand, MAX_INPUT_BYTES};
 use crate::ssh::{AuthAnswer, HostKeyAnswer, HostKeyDecision, SessionCommand, SessionControl};
 
 /// Operations shared by every interactive terminal transport.
@@ -27,6 +27,11 @@ impl TerminalControl {
     }
 
     pub async fn send(&self, request: TerminalRequest) -> Result<(), String> {
+        if matches!(&request, TerminalRequest::Input(data) if data.len() > MAX_INPUT_BYTES) {
+            return Err(format!(
+                "terminal input は一度に {MAX_INPUT_BYTES} bytes 以下にしてください"
+            ));
+        }
         match (self, request) {
             (Self::Ssh(control), TerminalRequest::Input(data)) => control
                 .commands
@@ -116,6 +121,20 @@ mod tests {
             })
         ));
         assert!(matches!(receiver.recv().await, Some(LocalCommand::Close)));
+    }
+
+    #[tokio::test]
+    async fn common_input_boundary_rejects_oversized_payloads_before_queueing() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let control = TerminalControl::Local(sender);
+
+        let error = control
+            .send(TerminalRequest::Input("x".repeat(MAX_INPUT_BYTES + 1)))
+            .await
+            .expect_err("oversized input");
+
+        assert!(error.contains(&MAX_INPUT_BYTES.to_string()));
+        assert!(receiver.try_recv().is_err());
     }
 
     #[tokio::test]

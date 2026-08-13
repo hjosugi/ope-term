@@ -32,6 +32,7 @@ permission 変更は行いません。
 - remote entry の permission を一覧に表示します。既存 remote file の上書き時は permission を
   引き継ぎます。
 - file 全体を memory に載せず 256 KiB chunk で stream します。
+- local / remote とも 1 directory の表示は 10,000 entries、相対 path は 32 KiB に制限します。
 
 !!! warning "切断と再接続"
 
