@@ -65,6 +65,17 @@ NixのTauri packageは `tauri.conf.json` の `beforeBuildCommand` をfrontend bu
 derivationの `preBuild` から同じcommandを重複実行しません。この分離は
 release policyとNixの `build-path-policy` checkが回帰検査します。
 
+RustのNix packageはCraneの `buildDepsOnly` でrelease依存を先にimmutableなartifactへ固め、
+アプリderivationへ展開します。通常のソース変更ではこの依存archiveを再利用し、workspace crateと
+Tauri bundleだけを再構築します。Cargoのartifact fingerprintはfeature、target、profile、linkerに加え、
+native build scriptが読む環境にも依存するため、`HOST_CC` / `HOST_CXX` とtarget linker / Rust flagsは
+依存・アプリで共有します。これらを片側だけ変更するとAWS-LCなどのnative依存が再コンパイルされます。
+
+2026-08-14のx86_64 Linux計測では、従来のclean package build約25分に対し、依存archiveを新規作成する
+cold buildは8分51秒でした。ソースだけを変更したbuildは2分01秒で、archiveは338 MiB、最終package
+自体は20 MiBでした。数値は同一machine・同一custom storeの実測であり、CI runnerの保証値では
+ありません。Rust testはpackage生成へ重複させず、`just check` / CIのtest phaseで実行します。
+
 Nix build の source は、再現性と転送量を保つため `.venv*`、`graphify-out`、`site`、
 `dist`、`target` などの生成物を除外します。一方、frontend check が実行する
 `scripts/*.test.mjs` と、その入力になる `.github/workflows` は source に含めます。

@@ -1,10 +1,16 @@
 {
   description = "ope-term reproducible Tauri development and build environment";
 
+  inputs.crane.url = "github:ipetkov/crane";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      crane,
+      nixpkgs,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -58,6 +64,8 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          craneLib = crane.mkLib pkgs;
+          cargoTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
           linuxBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.glib-networking
             pkgs.gst_all_1.gst-plugins-base
@@ -73,6 +81,57 @@
             fetcherVersion = 4;
             hash = "sha256-h3lo9aKwW4ZkTwVrqyk1fMirnhu4TmpWDkbGK9mmHX4=";
           };
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            src = source;
+            cargoLock = ./src-tauri/Cargo.lock;
+            cargoToml = ./src-tauri/Cargo.toml;
+          };
+          cargoCommonArgs = {
+            pname = "ope-term";
+            version = "0.1.1";
+            src = source;
+            cargoLock = ./src-tauri/Cargo.lock;
+            cargoToml = ./src-tauri/Cargo.toml;
+            inherit cargoVendorDir;
+
+            env = {
+              CARGO_PROFILE_RELEASE_STRIP = "false";
+              CARGO_TARGET_DIR = "target";
+              HOST_CC = "${pkgs.stdenv.cc}/bin/${pkgs.stdenv.cc.targetPrefix}cc";
+              HOST_CXX = "${pkgs.stdenv.cc}/bin/${pkgs.stdenv.cc.targetPrefix}c++";
+              "CARGO_TARGET_${pkgs.stdenv.hostPlatform.rust.cargoEnvVarTarget}_LINKER" =
+                "${pkgs.stdenv.cc}/bin/${pkgs.stdenv.cc.targetPrefix}cc";
+              "CARGO_TARGET_${pkgs.stdenv.hostPlatform.rust.cargoEnvVarTarget}_RUSTFLAGS" =
+                "-Cforce-frame-pointers=yes";
+            };
+            postConfigure = ''
+              cp Cargo.lock src-tauri/Cargo.lock
+            '';
+
+            inherit pnpmDeps;
+            nativeBuildInputs = [
+              pkgs.cargo-tauri.hook
+              pkgs.nodejs_24
+              pkgs.pkg-config
+              pkgs.pnpm_10
+              pkgs.pnpmConfigHook
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.wrapGAppsHook4 ];
+            buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
+          };
+          cargoArtifacts = craneLib.buildDepsOnly (
+            cargoCommonArgs
+            // {
+              buildPhaseCargoCommand = ''
+                cargoWithProfile build --manifest-path src-tauri/Cargo.toml --target ${cargoTarget} --bins --features tauri/custom-protocol --locked
+              '';
+              doCheck = false;
+              env = cargoCommonArgs.env // {
+                dontPnpmConfigure = "1";
+                dontTauriFixup = "1";
+              };
+            }
+          );
           frontend = pkgs.stdenvNoCC.mkDerivation {
             pname = "ope-term-frontend";
             version = "0.1.1";
@@ -96,45 +155,35 @@
               runHook postInstall
             '';
           };
-          app = pkgs.rustPlatform.buildRustPackage {
-            pname = "ope-term";
-            version = "0.1.1";
-            src = source;
+          app = craneLib.mkCargoDerivation (
+            cargoCommonArgs
+            // {
+              buildAndTestSubdir = "src-tauri";
+              inherit cargoArtifacts pnpmDeps;
+              buildPhaseCargoCommand = "";
+              checkPhaseCargoCommand = "";
+              buildPhase = "tauriBuildHook";
+              installPhase = "tauriInstallHook";
+              doCheck = false;
+              doInstallCargoArtifacts = false;
 
-            cargoRoot = "src-tauri";
-            buildAndTestSubdir = "src-tauri";
-            cargoLock.lockFile = ./src-tauri/Cargo.lock;
-            inherit pnpmDeps;
+              preFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+                gappsWrapperArgs+=(
+                  --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.mesa ]}"
+                  --set GBM_BACKENDS_PATH "${pkgs.mesa}/lib/gbm"
+                  --set LIBGL_DRIVERS_PATH "${pkgs.mesa}/lib/dri"
+                )
+              '';
 
-            nativeBuildInputs = [
-              pkgs.cargo-tauri.hook
-              pkgs.nodejs_24
-              pkgs.pkg-config
-              pkgs.pnpm_10
-              pkgs.pnpmConfigHook
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.wrapGAppsHook4 ];
-
-            buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
-
-            preFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-              gappsWrapperArgs+=(
-                --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.mesa ]}"
-                --set GBM_BACKENDS_PATH "${pkgs.mesa}/lib/gbm"
-                --set LIBGL_DRIVERS_PATH "${pkgs.mesa}/lib/dri"
-              )
-            '';
-
-            doCheck = true;
-
-            meta = {
-              description = "Route-first SSH terminal for operators and developers";
-              homepage = "https://github.com/hjosugi/ope-term";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "ope-term";
-              platforms = pkgs.lib.platforms.linux ++ pkgs.lib.platforms.darwin;
-            };
-          };
+              meta = {
+                description = "Route-first SSH terminal for operators and developers";
+                homepage = "https://github.com/hjosugi/ope-term";
+                license = pkgs.lib.licenses.mit;
+                mainProgram = "ope-term";
+                platforms = pkgs.lib.platforms.linux ++ pkgs.lib.platforms.darwin;
+              };
+            }
+          );
         in
         {
           inherit app frontend pnpmDeps;
@@ -182,6 +231,10 @@
                   echo "Nix app must not duplicate Tauri's frontend build" >&2
                   exit 1
                 fi
+                grep -F 'craneLib.buildDepsOnly' "$flakeSource" >/dev/null
+                grep -F 'inherit cargoArtifacts pnpmDeps;' "$flakeSource" >/dev/null
+                grep -F 'HOST_CC =' "$flakeSource" >/dev/null
+                grep -F 'HOST_CXX =' "$flakeSource" >/dev/null
                 touch "$out"
               '';
         }
