@@ -141,7 +141,7 @@ pub async fn list(session: &RawSftpSession, path: &str) -> Result<SftpListing> {
     entries.sort_by(|left, right| {
         entry_rank(left.kind)
             .cmp(&entry_rank(right.kind))
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| crate::name_sort::case_insensitive(&left.name, &right.name))
     });
     Ok(SftpListing {
         canonical_path,

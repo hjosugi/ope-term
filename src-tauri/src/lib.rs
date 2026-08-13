@@ -7,6 +7,8 @@ mod local_files;
 #[cfg(feature = "app")]
 mod local_terminal;
 #[cfg(feature = "app")]
+mod name_sort;
+#[cfg(feature = "app")]
 mod session_log;
 #[cfg(feature = "app")]
 mod sftp;

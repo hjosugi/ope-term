@@ -43,6 +43,8 @@ permission 変更は行いません。
   remote一覧は高水準APIで全件を集めず、SFTP `READDIR` responseごとに処理して10,001件目で
   directory handleを閉じます。remote entry名も4 KiBで停止します。一覧channelの開始は30秒で
   timeoutし、`READDIR` はterminal loopから分離したtaskで処理します。同時一覧は4件までです。
+  local / remote の名前sortは比較ごとのlowercase文字列を確保しないため、大量entryでも一時allocationを
+  増やしません。
 
 !!! warning "切断と再接続"
 
