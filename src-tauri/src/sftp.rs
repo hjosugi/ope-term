@@ -394,22 +394,30 @@ async fn replace_remote_file(
     transfer_id: &str,
 ) -> Result<()> {
     if !target_exists {
-        return session
-            .rename(temporary, target)
-            .await
-            .context("upload の一時 file を確定できません");
+        return match session.rename(temporary, target).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = session.remove_file(temporary).await;
+                Err(error).context("upload の一時 file を確定できません")
+            }
+        };
     }
     let backup = format!("{target}.ope-term-backup-{transfer_id}");
     if remote_lstat(session, &backup).await?.is_some() {
+        let _ = session.remove_file(temporary).await;
         bail!("remote backup file が既に存在します");
     }
-    session
-        .rename(target, &backup)
-        .await
-        .context("上書き前の remote file を退避できません")?;
-    if let Err(error) = session.rename(temporary, target).await {
-        let _ = session.rename(&backup, target).await;
+    if let Err(error) = session.rename(target, &backup).await {
         let _ = session.remove_file(temporary).await;
+        return Err(error).context("上書き前の remote file を退避できません");
+    }
+    if let Err(error) = session.rename(temporary, target).await {
+        let _ = session.remove_file(temporary).await;
+        if let Err(restore_error) = session.rename(&backup, target).await {
+            bail!(
+                "upload file を配置できず（{error}）、元の file の復元にも失敗しました（{restore_error}）。backup は {backup} に残っています"
+            );
+        }
         return Err(error).context("upload file を配置できず、元の file を復元しました");
     }
     session
@@ -425,9 +433,13 @@ async fn replace_local_file(
     transfer_id: &str,
 ) -> Result<()> {
     if !target_exists {
-        return fs::rename(temporary, target)
-            .await
-            .context("download の一時 file を確定できません");
+        return match fs::rename(temporary, target).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = fs::remove_file(temporary).await;
+                Err(error).context("download の一時 file を確定できません")
+            }
+        };
     }
     let file_name = target
         .file_name()
@@ -435,14 +447,21 @@ async fn replace_local_file(
         .ok_or_else(|| anyhow!("download 先 file name を扱えません"))?;
     let backup = target.with_file_name(format!("{file_name}.ope-term-backup-{transfer_id}"));
     if local_lstat(&backup).await?.is_some() {
+        let _ = fs::remove_file(temporary).await;
         bail!("local backup file が既に存在します");
     }
-    fs::rename(target, &backup)
-        .await
-        .context("上書き前の local file を退避できません")?;
-    if let Err(error) = fs::rename(temporary, target).await {
-        let _ = fs::rename(&backup, target).await;
+    if let Err(error) = fs::rename(target, &backup).await {
         let _ = fs::remove_file(temporary).await;
+        return Err(error).context("上書き前の local file を退避できません");
+    }
+    if let Err(error) = fs::rename(temporary, target).await {
+        let _ = fs::remove_file(temporary).await;
+        if let Err(restore_error) = fs::rename(&backup, target).await {
+            bail!(
+                "download file を配置できず（{error}）、元の file の復元にも失敗しました（{restore_error}）。backup は {} に残っています",
+                backup.display()
+            );
+        }
         return Err(error).context("download file を配置できず、元の file を復元しました");
     }
     fs::remove_file(&backup)
@@ -578,5 +597,28 @@ mod tests {
                 .expect("backup metadata")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn backup_collision_removes_the_download_temporary_file() {
+        let directory = tempfile::tempdir().expect("directory");
+        let target = directory.path().join("target.txt");
+        let temporary = directory.path().join("download.part");
+        let backup = directory.path().join("target.txt.ope-term-backup-safe-id");
+        fs::write(&target, b"original").await.expect("original");
+        fs::write(&temporary, b"replacement")
+            .await
+            .expect("temporary");
+        fs::write(&backup, b"existing backup")
+            .await
+            .expect("backup");
+
+        let error = replace_local_file(&temporary, &target, true, "safe-id")
+            .await
+            .expect_err("backup collision");
+        assert!(error.to_string().contains("backup file"));
+        assert_eq!(fs::read(&target).await.expect("target"), b"original");
+        assert_eq!(fs::read(&backup).await.expect("backup"), b"existing backup");
+        assert!(local_lstat(&temporary).await.expect("temporary").is_none());
     }
 }

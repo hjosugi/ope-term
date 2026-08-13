@@ -27,7 +27,8 @@ permission 変更は行いません。
 - upload 元の local symlink と、既存 symlink への上書きを拒否します。remote symlink の
   download は追加確認後に実体を解決します。
 - 転送先へ直接書かず、同じ directory の `.part` file へ stream した後に rename します。
-  上書き時は既存 file を一時退避し、rename 失敗時は復元します。
+  上書き時は既存 file を一時退避し、rename 失敗時は復元します。確定前の失敗では `.part` を
+  削除し、まれに復元自体が失敗した場合は、残した backup path を error に明示します。
 - remote entry の permission を一覧に表示します。既存 remote file の上書き時は permission を
   引き継ぎます。
 - file 全体を memory に載せず 256 KiB chunk で stream します。
@@ -37,4 +38,3 @@ permission 変更は行いません。
     転送中に session を閉じた場合は cancel されます。transport 断後の自動再接続では新しい
     SSH/SFTP session になるため、失敗した項目は接続完了後に `RETRY` してください。途中 byte
     からの resume はまだ対応していません。
-
