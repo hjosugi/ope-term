@@ -69,6 +69,7 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     ["WINDOWS_CERTIFICATE", "Windows signing secret gate"],
     ["APPLE_CERTIFICATE", "macOS signing secret gate"],
     ["uploadWorkflowArtifacts: true", "workflow artifact upload"],
+    ["-- --locked", "Cargo.lock-enforced bundle build"],
     ["ope-term.cdx.json", "CycloneDX SBOM generation"],
     ["node scripts/release-assets.mjs release-assets release-upload", "flat release staging"],
     ["generate SHA-256 checksums", "release checksums"],

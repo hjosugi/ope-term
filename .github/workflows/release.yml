@@ -150,6 +150,7 @@ jobs:
             --target ${{ matrix.target }}
             --bundles ${{ matrix.bundles }}
             ${{ matrix.release_config }}
+            -- --locked
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: ope-term-[platform]-[arch]-[bundle]
 

@@ -50,7 +50,7 @@ just release-policy  # icon、bundle matrix、署名 gate、supply-chain step
 Linux では、CI と同じ bundle 指定を個別に確認できます。
 
 ```bash
-./scripts/run-cached pnpm tauri build --bundles appimage,deb,rpm
+./scripts/run-cached pnpm tauri build --bundles appimage,deb,rpm -- --locked
 ```
 
 2026-08-13 に x86_64 Linux で deb / rpm の生成と package 内容を確認済みです。AppImage は

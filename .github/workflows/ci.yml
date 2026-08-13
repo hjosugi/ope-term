@@ -67,8 +67,8 @@ jobs:
         with:
           workspaces: src-tauri
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
   rust-local-pty:
     name: local PTY (${{ matrix.os }})
@@ -86,4 +86,4 @@ jobs:
         with:
           workspaces: src-tauri
           key: local-pty-${{ matrix.os }}
-      - run: cargo test --manifest-path src-tauri/Cargo.toml local_terminal::tests
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml local_terminal::tests

@@ -20,7 +20,7 @@ just dev
 | コマンド | 用途 |
 |---|---|
 | `pnpm run build` | 日常の高速なフロントエンド build |
-| `cargo build --manifest-path src-tauri/Cargo.toml` | 日常の Rust build |
+| `cargo build --locked --manifest-path src-tauri/Cargo.toml` | Cargo.lock 固定の日常 Rust build |
 | `./scripts/run-bazel test //:check` | sandbox 内の Vitest と TypeScript 型検査 |
 | `./scripts/run-bazel build //:frontend` | hermetic Node toolchain による Vite build |
 | `./scripts/nix-local build .#frontend` | Nix 固定依存によるフロントエンド成果物と Vitest / Node policy test |

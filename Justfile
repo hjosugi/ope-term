@@ -13,7 +13,7 @@ dev:
 
 test:
     ./scripts/run-cached pnpm test
-    ./scripts/run-cached cargo nextest run --manifest-path src-tauri/Cargo.toml
+    ./scripts/run-cached cargo nextest run --locked --manifest-path src-tauri/Cargo.toml
 
 lint:
     ./scripts/run-cached pnpm run typecheck
@@ -23,11 +23,11 @@ lint:
     ./scripts/run-cached shellcheck -x -P scripts scripts/cache-env.sh scripts/nix-local scripts/run-bazel scripts/run-cached scripts/run-fuzz
     ./scripts/run-cached nixfmt --check flake.nix
     ./scripts/run-cached cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-    ./scripts/run-cached cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+    ./scripts/run-cached cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 build:
     ./scripts/run-cached pnpm run build
-    ./scripts/run-cached cargo build --manifest-path src-tauri/Cargo.toml
+    ./scripts/run-cached cargo build --locked --manifest-path src-tauri/Cargo.toml
 
 version-check *args:
     ./scripts/run-cached node scripts/version-consistency.mjs {{args}}
