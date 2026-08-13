@@ -200,9 +200,11 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       container.append(empty);
       return;
     }
+    let selectedRow: HTMLButtonElement | undefined;
     for (const entry of entries) {
       const row = button('');
       row.className = `sftp-entry${selected?.name === entry.name ? ' selected' : ''}`;
+      if (selected?.name === entry.name) selectedRow = row;
       const kind = document.createElement('span');
       kind.className = `sftp-kind ${entry.kind}`;
       kind.textContent = entry.kind === 'directory' ? 'DIR' : entry.kind === 'symlink' ? 'LNK' : 'FILE';
@@ -212,7 +214,12 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       const permissions = remote ? (entry as SftpEntry).permissions : '';
       detail.textContent = `${permissions}${permissions ? '  ' : ''}${formatFileSize(entry.size)}`;
       row.append(kind, name, detail);
-      row.addEventListener('click', () => onSelect(entry));
+      row.addEventListener('click', () => {
+        selectedRow?.classList.remove('selected');
+        row.classList.add('selected');
+        selectedRow = row;
+        onSelect(entry);
+      });
       row.addEventListener('dblclick', () => onOpen(entry));
       container.append(row);
     }
@@ -223,7 +230,6 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     localPath.title = localPath.textContent;
     renderEntries(localList, localEntries, selectedLocal, (entry) => {
       selectedLocal = entry;
-      renderLocal();
       updateActions();
     }, (entry) => {
       if (entry.kind === 'directory') void loadLocal(joinBrowserPath(localCurrent, entry.name));
@@ -235,7 +241,6 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     remotePath.title = remoteCurrent;
     renderEntries(remoteList, remoteEntries, selectedRemote, (entry) => {
       selectedRemote = entry;
-      renderRemote();
       updateActions();
     }, (entry) => {
       if (entry.kind === 'directory') void loadRemote(joinBrowserPath(remoteCurrent, entry.name));
@@ -328,6 +333,16 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     }
   }
 
+  let queueRenderPending = false;
+  function scheduleQueueRender(): void {
+    if (queueRenderPending) return;
+    queueRenderPending = true;
+    window.requestAnimationFrame(() => {
+      queueRenderPending = false;
+      renderQueue();
+    });
+  }
+
   async function processQueue(): Promise<void> {
     if (processing) return;
     const item = queue.find((candidate) => candidate.status === 'queued');
@@ -356,7 +371,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       item.status = event.status;
       item.transferred = event.transferred;
       item.total = event.total;
-      renderQueue();
+      scheduleQueueRender();
     };
     try {
       await invoke('sftp_transfer', {

@@ -26,5 +26,6 @@ Labels: priority:P1, area:files, area:ssh, enhancement
 - remote一覧は`READDIR` response単位で処理し、10,000件または4 KiB超のentry名でhandleを閉じる。
 - 一覧channel開始は30秒timeout、`READDIR` taskはterminal loopから分離し、同時一覧を4件に制限する。
 - local / remote一覧の名前sortはallocation-freeのASCII case-fold比較を共有する。
+- entry選択で一覧DOMを再生成せず、転送progress描画はanimation frame単位にcoalesceする。
 - `just check`（frontend / Rust tests、clippy、production build）と`pnpm run security:policy`、
   `just docs` を通過。

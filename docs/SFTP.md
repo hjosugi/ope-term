@@ -45,6 +45,8 @@ permission 変更は行いません。
   timeoutし、`READDIR` はterminal loopから分離したtaskで処理します。同時一覧は4件までです。
   local / remote の名前sortは比較ごとのlowercase文字列を確保しないため、大量entryでも一時allocationを
   増やしません。
+- entry選択は一覧DOMを作り直さずselected classだけを更新し、転送progressのqueue描画はanimation
+  frameごとにまとめます。
 
 !!! warning "切断と再接続"
 
