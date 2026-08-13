@@ -33,4 +33,10 @@ export class PromptQueue<T> {
     }
     return removed;
   }
+
+  discard(predicate: (item: T) => boolean): { active: boolean; pending: number } {
+    const active = this.current !== undefined && predicate(this.current);
+    if (active) this.current = undefined;
+    return { active, pending: this.discardPending(predicate) };
+  }
 }

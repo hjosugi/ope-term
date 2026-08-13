@@ -1063,6 +1063,11 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
       toast(event.message);
       break;
     case 'closed': {
+      // A timeout or transport loss can close the backend while a secure prompt
+      // is visible. Keep a changed-key warning because it explains the refusal,
+      // but never leave an actionable prompt targeting a dead connection.
+      discardHostKeyPrompts(session.key, true);
+      discardAuthPrompts(session.key);
       session.state = 'closed';
       session.closeReason = event.reason;
       session.connectionId = null;
@@ -1161,9 +1166,14 @@ async function answerHostKey(decision: 'reject' | 'trust_once' | 'trust_and_save
   }
 }
 
-function discardHostKeyPrompts(sessionKey: string): void {
-  hostKeyPrompts.discardPending((item) => item.sessionKey === sessionKey);
-  if (hostKeyPrompts.active?.sessionKey === sessionKey) finishHostKeyPrompt();
+function discardHostKeyPrompts(sessionKey: string, preserveChanged = false): void {
+  const discarded = hostKeyPrompts.discard(
+    (item) => item.sessionKey === sessionKey && (!preserveChanged || item.prompt.status !== 'changed'),
+  );
+  if (discarded.active) {
+    ui.hostKeyDialog.classList.add('hidden');
+    showNextSecurePrompt();
+  }
 }
 
 function enqueueAuthPrompt(sessionKey: string, connectionId: string, prompt: AuthPrompt): void {
@@ -1256,8 +1266,13 @@ async function submitAuthPrompt(cancelled: boolean): Promise<void> {
 }
 
 function discardAuthPrompts(sessionKey: string): void {
-  authPrompts.discardPending((item) => item.sessionKey === sessionKey);
-  if (authPrompts.active?.sessionKey === sessionKey) finishAuthPrompt();
+  const discarded = authPrompts.discard((item) => item.sessionKey === sessionKey);
+  if (discarded.active) {
+    for (const input of ui.authFields.querySelectorAll<HTMLInputElement>('input')) input.value = '';
+    ui.authFields.replaceChildren();
+    ui.authDialog.classList.add('hidden');
+    showNextSecurePrompt();
+  }
 }
 
 function renderHopbar(session: SessionUi): void {

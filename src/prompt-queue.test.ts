@@ -28,4 +28,15 @@ describe('PromptQueue', () => {
     queue.finish();
     expect(queue.activateNext()).toEqual({ session: 'keep', sequence: 3 });
   });
+
+  it('discards a matching active prompt and matching pending prompts together', () => {
+    const queue = new PromptQueue<{ session: string; sequence: number }>();
+    queue.enqueue({ session: 'drop', sequence: 1 });
+    queue.enqueue({ session: 'keep', sequence: 2 });
+    queue.enqueue({ session: 'drop', sequence: 3 });
+    queue.activateNext();
+
+    expect(queue.discard((item) => item.session === 'drop')).toEqual({ active: true, pending: 1 });
+    expect(queue.activateNext()).toEqual({ session: 'keep', sequence: 2 });
+  });
 });
