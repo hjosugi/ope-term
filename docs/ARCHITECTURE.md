@@ -84,7 +84,8 @@ Include は循環と 32 階層を検査し、全 config 8 MiB / 1024 file / 100,
 1 directive 64 KiB、1 glob 1024 match のbudget内でlexical orderに読み込みます。
 解決後の `IdentityFile` / `CertificateFile` は各64件、
 認証層が読む各fileは1 MiBを上限にします。具体的なHost profileは解決前に2,048件で停止し、
-大量のblockを全Hostに対して反復解決しません。
+大量のblockを全Hostに対して反復解決しません。解決後もhostname / host-key aliasは4 KiB、
+userは1 KiB、認証file pathは32 KiBで検証します。
 
 未実装: `CanonicalizeHostname` と OpenSSH config 全 directive / token の完全互換。互換範囲外は
 黙って安全性を弱めず、issue 単位で追加します。

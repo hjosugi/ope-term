@@ -19,3 +19,4 @@ Includeは全体8 MiB / 1024 file / 100,000 directive、1 directive 64 KiB、深
 globごと1024 matchで停止する。
 解決後の`IdentityFile` / `CertificateFile`はhostごとに各64件を上限とする。
 UIへ列挙する具体Hostはprofile解決前に2,048件で停止する。
+解決後のhostname / host-key aliasは4 KiB、userは1 KiB、認証file pathは32 KiBを上限とする。

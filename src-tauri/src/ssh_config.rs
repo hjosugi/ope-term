@@ -22,6 +22,8 @@ const MAX_CONFIG_DIRECTIVES: usize = 100_000;
 const MAX_DIRECTIVE_BYTES: usize = 64 * 1024;
 const MAX_INCLUDE_MATCHES: usize = 1024;
 const MAX_HOST_SPEC_BYTES: usize = 4 * 1024;
+const MAX_USER_BYTES: usize = 1024;
+const MAX_AUTH_PATH_BYTES: usize = 32 * 1024;
 const MAX_ROUTE_HOPS: usize = 32;
 const MAX_AUTH_FILES: usize = 64;
 const MAX_HOST_PROFILES: usize = 2_048;
@@ -527,7 +529,7 @@ pub fn resolve(alias: &str, blocks: &[Block]) -> Result<Endpoint> {
         .filter(|value| !value.eq_ignore_ascii_case("none"))
         .map(|value| expand_tokens(&value, &token_context));
 
-    Ok(Endpoint {
+    let endpoint = Endpoint {
         alias: canonical_alias,
         hostname,
         user,
@@ -538,7 +540,41 @@ pub fn resolve(alias: &str, blocks: &[Block]) -> Result<Endpoint> {
         identities_only: first(&values, "identitiesonly")
             .is_some_and(|value| value.eq_ignore_ascii_case("yes")),
         proxy_jump,
-    })
+    };
+    validate_endpoint(&endpoint)?;
+    Ok(endpoint)
+}
+
+fn validate_endpoint(endpoint: &Endpoint) -> Result<()> {
+    if endpoint.hostname.is_empty() || endpoint.hostname.len() > MAX_HOST_SPEC_BYTES {
+        bail!("HostName は1..={MAX_HOST_SPEC_BYTES} bytesにしてください");
+    }
+    if endpoint
+        .user
+        .as_ref()
+        .is_some_and(|user| user.is_empty() || user.len() > MAX_USER_BYTES)
+    {
+        bail!("User は1..={MAX_USER_BYTES} bytesにしてください");
+    }
+    if endpoint
+        .host_key_alias
+        .as_ref()
+        .is_some_and(|alias| alias.is_empty() || alias.len() > MAX_HOST_SPEC_BYTES)
+    {
+        bail!("HostKeyAlias は1..={MAX_HOST_SPEC_BYTES} bytesにしてください");
+    }
+    if endpoint
+        .identity_files
+        .iter()
+        .chain(&endpoint.certificate_files)
+        .any(|path| {
+            path.as_os_str().is_empty()
+                || path.as_os_str().to_string_lossy().len() > MAX_AUTH_PATH_BYTES
+        })
+    {
+        bail!("認証file pathは1..={MAX_AUTH_PATH_BYTES} bytesにしてください");
+    }
+    Ok(())
 }
 
 fn selector_matches(
@@ -841,6 +877,24 @@ Host * !secret-*
             }
             let error = resolve("crowded", &parse(&config)).unwrap_err();
             assert!(error.to_string().contains(&MAX_AUTH_FILES.to_string()));
+        }
+    }
+
+    #[test]
+    fn bounds_resolved_network_values_and_auth_paths() {
+        for (directive, value, maximum) in [
+            ("HostName", "h", MAX_HOST_SPEC_BYTES),
+            ("User", "u", MAX_USER_BYTES),
+            ("HostKeyAlias", "a", MAX_HOST_SPEC_BYTES),
+            ("IdentityFile", "p", MAX_AUTH_PATH_BYTES),
+            ("CertificateFile", "p", MAX_AUTH_PATH_BYTES),
+        ] {
+            let config = format!(
+                "Host bounded\n  {directive} {}\n",
+                value.repeat(maximum + 1)
+            );
+            let error = resolve("bounded", &parse(&config)).unwrap_err();
+            assert!(error.to_string().contains("bytes"));
         }
     }
 
