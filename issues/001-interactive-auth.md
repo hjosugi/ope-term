@@ -19,3 +19,6 @@ v0.1 は Unix ssh-agent とパスフレーズなし秘密鍵だけを扱う。MF
 - [x] 暗号化 OpenSSH 秘密鍵を開ける
 - [x] 入力値が DevTools、ログ、panic payload に出ないことをテストする
 - [x] 多段接続のどの hop が要求しているか UI に表示する
+
+暗号化鍵の読込/KDFはTokio connection taskからblocking poolへ分離し、移動したpassphraseも
+drop時にzeroizeする。認証中のterminal入力はshellへ持ち越さない。

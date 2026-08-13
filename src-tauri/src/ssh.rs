@@ -14,7 +14,7 @@ use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tokio::sync::{Mutex, mpsc, oneshot};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::host_keys::{self, KnownHostStatus};
 use crate::session_log::{LogInput, LogSink};
@@ -728,18 +728,31 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
             })
             .collect()
     };
-    let certificates: Vec<_> = certificate_candidates
-        .iter()
-        .filter_map(|path| ssh_key::Certificate::read_file(path).ok())
-        .collect();
+    let certificates = tokio::task::spawn_blocking(move || {
+        certificate_candidates
+            .iter()
+            .filter_map(|path| ssh_key::Certificate::read_file(path).ok())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .context("SSH certificate load task が失敗しました")?;
 
     let mut attempted_keys = Vec::new();
-    for path in candidates.into_iter().filter(|path| path.is_file()) {
+    for path in candidates {
         if !methods.contains(&MethodKind::PublicKey) {
             break;
         }
+        let load_path = path.clone();
+        let loaded = tokio::task::spawn_blocking(move || {
+            load_path
+                .is_file()
+                .then(|| russh::keys::load_secret_key(&load_path, None))
+        })
+        .await
+        .context("SSH private key load task が失敗しました")?;
+        let Some(loaded) = loaded else { continue };
         attempted_keys.push(path.display().to_string());
-        let key = match russh::keys::load_secret_key(&path, None) {
+        let key = match loaded {
             Ok(key) => Some(key),
             Err(russh::keys::Error::KeyIsEncrypted) => {
                 let mut decrypted = None;
@@ -762,10 +775,14 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
                         ),
                     )
                     .await?;
-                    let mut passphrase = responses.pop().unwrap_or_default();
-                    let loaded = russh::keys::load_secret_key(&path, Some(&passphrase));
-                    passphrase.zeroize();
+                    let passphrase = Zeroizing::new(responses.pop().unwrap_or_default());
                     responses.zeroize();
+                    let load_path = path.clone();
+                    let loaded = tokio::task::spawn_blocking(move || {
+                        russh::keys::load_secret_key(&load_path, Some(passphrase.as_str()))
+                    })
+                    .await
+                    .context("encrypted SSH private key load task が失敗しました")?;
                     if let Ok(key) = loaded {
                         decrypted = Some(key);
                         break;
