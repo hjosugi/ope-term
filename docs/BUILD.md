@@ -74,6 +74,10 @@ native build scriptが読む環境にも依存するため、`HOST_CC` / `HOST_C
 Rust dependency derivationには `pnpmDeps`、Node、pnpm、Tauri bundle hookを渡しません。これらは
 最終Tauri derivationだけの入力です。そのためfrontend dependencyだけを更新しても338 MiB級の
 Cargo artifactを無効化せず、frontend fetch/buildとworkspace bundleだけを更新できます。
+最終Tauri derivationのapplication sourceからは `.github` とpolicy・計測用scriptを除外し、workflowや
+policy testだけの変更でproduction binaryを再リンクしません。Vite configがimportする
+`scripts/xterm-freeze-compat.mjs`だけはproduction frontendの入力として残します。repository全体を検査する
+frontend derivationは従来どおり全scriptとworkflowを含み、policy testのcoverageを落としません。
 
 GitHub ActionsのWindows/macOS local PTY smokeは、Release matrixと同じRust target tripleをcache
 keyに使います。同じCargo.lock・targetのTauri依存をworkflow間で共有し、OS別native検査のために

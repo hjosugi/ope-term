@@ -60,6 +60,18 @@
           && !nixpkgs.lib.hasPrefix "bazel-" name
           && !nixpkgs.lib.hasPrefix "result-" name;
       };
+      applicationSource = nixpkgs.lib.cleanSourceWith {
+        src = source;
+        filter =
+          path: type:
+          let
+            name = builtins.baseNameOf path;
+            parent = builtins.baseNameOf (builtins.dirOf path);
+          in
+          name != ".github"
+          && (parent != "scripts" || name == "xterm-freeze-compat.mjs")
+          && (name != "scripts" || type == "directory");
+      };
       buildFor =
         system:
         let
@@ -76,20 +88,20 @@
           pnpmDeps = pkgs.fetchPnpmDeps {
             pname = "ope-term";
             version = "0.1.1";
-            src = source;
+            src = applicationSource;
             pnpm = pkgs.pnpm_10;
             fetcherVersion = 4;
             hash = "sha256-mxBC2G++6RVqt447e1S9eZ6OuNk4twDRWlzTKu96Xcc=";
           };
           cargoVendorDir = craneLib.vendorCargoDeps {
-            src = source;
+            src = applicationSource;
             cargoLock = ./src-tauri/Cargo.lock;
             cargoToml = ./src-tauri/Cargo.toml;
           };
           cargoCommonArgs = {
             pname = "ope-term";
             version = "0.1.1";
-            src = source;
+            src = applicationSource;
             cargoLock = ./src-tauri/Cargo.lock;
             cargoToml = ./src-tauri/Cargo.toml;
             inherit cargoVendorDir;
@@ -234,9 +246,11 @@
                 fi
                 cargo_common="$(sed -n '/^          cargoCommonArgs = {$/,/^          };$/p' "$flakeSource")"
                 cargo_artifacts="$(sed -n '/^          cargoArtifacts = craneLib.buildDepsOnly ($/,/^          );$/p' "$flakeSource")"
+                frontend_config="$(sed -n '/^          frontend = pkgs.stdenvNoCC.mkDerivation {$/,/^          };$/p' "$flakeSource")"
                 app_config="$(sed -n '/^          app = craneLib.mkCargoDerivation ($/,/^          );$/p' "$flakeSource")"
                 test -n "$cargo_common"
                 test -n "$cargo_artifacts"
+                test -n "$frontend_config"
                 test -n "$app_config"
                 if grep -F 'pnpmDeps' <<<"$cargo_common"; then
                   echo "Rust dependency inputs must not include pnpmDeps" >&2
@@ -245,6 +259,9 @@
                 grep -F 'nativeBuildInputs = [ pkgs.pkg-config ];' <<<"$cargo_common" >/dev/null
                 grep -F 'HOST_CC =' <<<"$cargo_common" >/dev/null
                 grep -F 'HOST_CXX =' <<<"$cargo_common" >/dev/null
+                grep -F 'src = applicationSource;' <<<"$cargo_common" >/dev/null
+                grep -F 'src = source;' <<<"$frontend_config" >/dev/null
+                grep -F 'parent != "scripts" || name == "xterm-freeze-compat.mjs"' "$flakeSource" >/dev/null
                 grep -F 'inherit cargoArtifacts pnpmDeps;' <<<"$app_config" >/dev/null
                 grep -F 'cargoCommonArgs.nativeBuildInputs' <<<"$app_config" >/dev/null
                 touch "$out"
