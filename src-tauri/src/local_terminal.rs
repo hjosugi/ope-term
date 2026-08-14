@@ -344,13 +344,10 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         drop(writer);
 
-        // A PTY output stream is not required to report EOF promptly on every
-        // backend. Observe the marker instead, then bound process reaping with
-        // non-blocking polls so a platform regression cannot hang the test job.
-        let output = output_rx
-            .recv_timeout(Duration::from_secs(30))
-            .expect("PTY smoke output timed out")
-            .expect("read output");
+        // Follow portable-pty's one-shot command ordering: finish the child,
+        // close the master, and only then collect reader output. ConPTY may
+        // retain its output until the process has exited, so waiting for the
+        // marker first creates a reader/child deadlock on Windows.
         let deadline = Instant::now() + Duration::from_secs(10);
         let status = loop {
             if let Some(status) = child.try_wait().expect("poll child") {
@@ -365,6 +362,10 @@ mod tests {
         };
         assert!(status.success());
         drop(pair.master);
+        let output = output_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("PTY smoke output timed out")
+            .expect("read output");
         assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
     }
 
