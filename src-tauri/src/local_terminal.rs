@@ -308,6 +308,9 @@ mod tests {
         let mut reader = pair.master.try_clone_reader().expect("reader");
         let status = child.wait().expect("wait");
         assert!(status.success());
+        // ConPTY owns the output pipe until the pseudo console is closed, so
+        // its reader cannot observe EOF while the master handle is alive.
+        drop(pair.master);
         let mut output = String::new();
         reader.read_to_string(&mut output).expect("read output");
         assert!(output.contains("ope-term-local-pty-smoke"));

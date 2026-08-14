@@ -86,6 +86,7 @@ jobs:
 
   rust-local-pty:
     name: local PTY (${{ matrix.os }})
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
