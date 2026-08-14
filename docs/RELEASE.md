@@ -64,6 +64,11 @@ split-output GLib を使う local shell では、upstream の
 `linuxdeploy-plugin-gtk` が `gio-2.0` の実在しない schema path を copy して停止するため、
 AppImage acceptance は Ubuntu runner を正とします。system library の手動注入は行いません。
 
+2026-08-15のunsigned dry run
+[#31813389358](https://github.com/hjosugi/ope-term/actions/runs/31813389358) では、Linux、Windows、
+Apple Silicon / Intel macOSの全bundle、AppImageの`appsink` load、SBOM・checksumのflat stagingが
+成功しました。`publish`とtag限定attestationは意図どおりskipされ、tagやReleaseは作成していません。
+
 ## code signing secrets
 
 tag build は署名情報が一つでも欠けていれば publish 前に失敗します。鍵や証明書をリポジトリへ
@@ -128,7 +133,6 @@ Updater の署名検証を無効化する例外は設けません。自動 downg
 
 ## 現在の残作業
 
-- GitHub Actions で初回 dry run を行い、全 bundle の実体を確認する
 - Apple / Windows の証明書を用意し、tag build で署名と notarization を実証する
 - Updater の鍵管理者、endpoint、鍵 backup / rotation を決めて plugin を実装する
 - draft Release 上で SBOM、checksum、attestation の検証記録を残す

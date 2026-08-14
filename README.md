@@ -8,6 +8,8 @@
 
 > [!WARNING]
 > 現在は v0.1.1 alpha です。主要なSSH認証、strict `known_hosts` 検証、自動再接続に対応していますが、OpenSSH config の全ディレクティブと24時間実機運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
+> 全OSのunsigned bundle dry runは完了していますが、Windows/macOSの署名鍵とnotarization、
+> updater鍵運用は未設定のため、署名済みv0.1.1 Releaseはまだ公開していません。
 >
 > `russh` の未修正 RSA 依存を出荷しないため、現在は RSA 秘密鍵認証と RSA のみの
 > host key を無効化しています。Ed25519 / ECDSA を使用してください。

@@ -7,14 +7,14 @@ Labels: priority:P1, area:release, enhancement
 
 ## 受け入れ条件
 
-- [ ] Linux AppImage/deb/rpm、Windows MSI/NSIS、macOS dmg を生成する
-  - 2026-08-13: x86_64 Linux の deb / rpm は local smoke と内容確認に成功
-  - AppImage は Nix split-output GLib と linuxdeploy-plugin-gtk の schema path 非互換を確認。
-    Ubuntu Actions、Windows、macOS の workflow artifact 実証は未完了
+- [x] Linux AppImage/deb/rpm、Windows MSI/NSIS、macOS dmg を生成する
+  - 2026-08-15: unsigned dry run
+    [#31813389358](https://github.com/hjosugi/ope-term/actions/runs/31813389358) で4 targetの
+    bundle、AppImage内GStreamer `appsink` load、flat stagingを実証
 - [ ] Windows と macOS の code signing を設定する
 - [ ] SBOM、checksum、provenance を release に添付する
   - workflow artifact の basename 衝突検査、Release と一致する flat checksum、attestation の
-    local policy test は完了。read-only staging jobとwrite-scoped publish jobも分離済み。
-    tag draft Release 上での実証は未完了
+    local policy test は完了。read-only staging jobとwrite-scoped publish jobも分離済み。2026-08-15の
+    dry runでSBOM・checksum stagingまで実証済み。tag限定のattestationとdraft Release添付は未完了
 - [ ] Tauri updater の署名検証と rollback 方針を実装する
 - [x] tag と Cargo/npm/Tauri version の一致を検証する

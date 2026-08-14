@@ -20,7 +20,7 @@
 | セキュリティ基盤 | 脅威モデル、CSP と capability の自動監査、fuzzing、SBOM、脆弱性・license・source audit |
 | 開発環境 | Nix flake と direnv、Bazel build、`/mnt/data` へのキャッシュ集約 |
 | 性能ゲート | cold start / latency / memory / 100 MiB output harness、WebGL/fallback artifact bundle、version付きbudget判定 |
-| リリース基盤 | multi-OS bundle workflow、version/icon/signing/supply-chain policy、Linux deb/rpm local smoke |
+| リリース基盤 | multi-OS bundle workflow、version/icon/signing/supply-chain policy、全OS unsigned dry run |
 | Transport 境界 | SSH/local共通input/resize/close、telnet optionとserial OS lifecycleの実装前gate |
 
 ## これからの作業
@@ -29,7 +29,7 @@
 |---|---|---|
 | P0 | [#10 Performance](https://github.com/hjosugi/ope-term/issues/10) | harnessとbudget gateは実装済み。残りはWebKitGTK / WebView2 / WKWebViewとCachyOS Wayland実機artifact |
 | P1 | [#7 Reliability](https://github.com/hjosugi/ope-term/issues/7) | 切断分類、backoff、tmux/screen opt-in設計は完了。残りは外部SSH先を使う24時間soakの完走記録 |
-| P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | workflowは実装済み。残りは全OS dry run、Windows/macOS署名、Release添付、updater鍵運用 |
+| P1 | [#11 Release](https://github.com/hjosugi/ope-term/issues/11) | 全OS dry runは完了。残りはWindows/macOS署名、tag attestation・Release添付、updater鍵運用 |
 | P2 | [#12 Transports](https://github.com/hjosugi/ope-term/issues/12) | 境界とdesk researchは完了。残りはoperator/実機需要確認と、採用時のtelnet平文UI enforcement |
 
 未完了欄は、実機・24時間・署名鍵・利用者ヒアリングなどリポジトリ外の証跡が揃うまで
