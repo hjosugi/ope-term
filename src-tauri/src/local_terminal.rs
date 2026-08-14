@@ -271,6 +271,8 @@ fn default_shell() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -306,14 +308,56 @@ mod tests {
         let mut child = pair.slave.spawn_command(command).expect("spawn shell");
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().expect("reader");
-        let status = child.wait().expect("wait");
+        let (output_tx, output_rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            const MARKER: &[u8] = b"ope-term-local-pty-smoke";
+            let mut output = Vec::new();
+            let mut buffer = [0_u8; 4 * 1024];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        output.extend_from_slice(&buffer[..read]);
+                        if output.windows(MARKER.len()).any(|window| window == MARKER) {
+                            break;
+                        }
+                        if output.len() > 64 * 1024 {
+                            let _ =
+                                output_tx.send(Err("PTY smoke output exceeded 64 KiB".to_owned()));
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = output_tx.send(Err(error.to_string()));
+                        return;
+                    }
+                }
+            }
+            let _ = output_tx.send(Ok(output));
+        });
+
+        // A PTY output stream is not required to report EOF promptly on every
+        // backend. Observe the marker instead, then bound process reaping with
+        // non-blocking polls so a platform regression cannot hang the test job.
+        let output = output_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("PTY smoke output timed out")
+            .expect("read output");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll child") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                drop(pair.master);
+                panic!("PTY smoke child did not exit within 10 seconds");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         assert!(status.success());
-        // ConPTY owns the output pipe until the pseudo console is closed, so
-        // its reader cannot observe EOF while the master handle is alive.
         drop(pair.master);
-        let mut output = String::new();
-        reader.read_to_string(&mut output).expect("read output");
-        assert!(output.contains("ope-term-local-pty-smoke"));
+        assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
     }
 
     #[cfg(unix)]

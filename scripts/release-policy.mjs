@@ -37,6 +37,22 @@ function workflowStep(workflow, name) {
   return lines.slice(start, end).join("\n");
 }
 
+function workflowJob(workflow, name) {
+  const lines = workflow.split("\n");
+  const marker = `${name}:`;
+  const start = lines.findIndex((line) => line.trim() === marker);
+  requireValue(start >= 0, `release workflow is missing ${name} job`);
+  const indent = lines[start].search(/\S/);
+  let end = start + 1;
+  while (end < lines.length) {
+    const trimmed = lines[end].trim();
+    const nextIndent = lines[end].search(/\S/);
+    if (trimmed && nextIndent >= 0 && nextIndent <= indent) break;
+    end += 1;
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 export async function verifyReleasePolicy(root = process.cwd()) {
   const tauriRoot = resolve(root, "src-tauri");
   const [configText, workflow, justfile, packageText] = await Promise.all([
@@ -117,6 +133,12 @@ export async function verifyReleasePolicy(root = process.cwd()) {
   for (const [fragment, description] of workflowRequirements) {
     requireWorkflowFragment(workflow, fragment, description);
   }
+
+  const versionJob = workflowJob(workflow, "version");
+  requireValue(
+    !versionJob.includes("cache: pnpm"),
+    "version-only job must not enable a pnpm cache without creating the pnpm store",
+  );
 
   const unsignedBundleStep = workflowStep(workflow, "Build unsigned bundles");
   requireValue(

@@ -265,6 +265,7 @@ mod tests {
     #[tokio::test]
     async fn scopes_listing_and_transfer_paths_to_the_selected_root() {
         let root = tempfile::tempdir().expect("root");
+        #[cfg(unix)]
         let outside = tempfile::tempdir().expect("outside");
         std::fs::create_dir(root.path().join("directory")).expect("directory");
         std::fs::write(root.path().join("file.txt"), b"safe").expect("file");
