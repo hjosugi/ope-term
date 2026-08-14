@@ -4,24 +4,11 @@ import { Terminal } from '@xterm/xterm';
 import './style.css';
 
 import { clearAuthResponses, takeAndClearAuthResponses } from './auth-secrets';
+import { CommandUi, type CommandDefinition } from './command-ui';
 import { cssNumberToken, cssTextToken } from './design-tokens';
 import { fuzzyFilter } from './fuzzy';
 import { IncrementalRenderer } from './incremental-render';
-import {
-  KEY_SEQUENCE_TIMEOUT_MS,
-  defaultKeybindings,
-  detectOperatingSystem,
-  eventToChord,
-  exportKeybindings,
-  findKeybindingConflicts,
-  formatKeySequence,
-  importKeybindings,
-  loadKeybindings,
-  resolveKeybinding,
-  saveKeybindings,
-  type CommandContext,
-  type CommandId,
-} from './keybindings';
+import { detectOperatingSystem } from './keybindings';
 import {
   MAX_AUTO_RETRIES,
   canQueueTerminalInput,
@@ -147,23 +134,6 @@ interface SessionUi {
   retryAt?: number;
 }
 
-interface CommandDefinition {
-  id: CommandId;
-  category: string;
-  label: string;
-  when?: string;
-  run: () => void;
-}
-
-interface PaletteItem {
-  id: string;
-  category: string;
-  label: string;
-  detail?: string;
-  keybinding?: string;
-  run: () => void;
-}
-
 interface HostKeyDialogItem {
   sessionKey: string;
   connectionId: string;
@@ -217,6 +187,10 @@ const ui = {
   shortcutQuery: element<HTMLInputElement>('shortcut-query'),
   shortcutList: element<HTMLElement>('shortcut-list'),
   shortcutImport: element<HTMLInputElement>('shortcut-import'),
+  shortcutClose: element<HTMLButtonElement>('close-shortcuts'),
+  shortcutReset: element<HTMLButtonElement>('reset-shortcuts'),
+  shortcutExport: element<HTMLButtonElement>('export-shortcuts'),
+  shortcutImportButton: element<HTMLButtonElement>('import-shortcuts'),
   panePicker: element<HTMLElement>('pane-picker'),
   panePickerTitle: element<HTMLElement>('pane-picker-title'),
   panePickerList: element<HTMLElement>('pane-picker-list'),
@@ -286,16 +260,8 @@ let logPolicies = loadLogPolicies();
 let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
 let workspacePersistenceWarningShown = false;
-let selectedCommand = 0;
-let paletteItems: PaletteItem[] = [];
-let recordingCommand: CommandId | null = null;
-let recordingChords: string[] = [];
-let recordingTimer: number | undefined;
-let pendingKeyChords: string[] = [];
-let pendingKeyTimer: number | undefined;
 const operatingSystem = detectOperatingSystem();
-const defaultBindings = defaultKeybindings(operatingSystem);
-let keybindings = loadKeybindings(localStorage, operatingSystem);
+let commandUi: CommandUi;
 const hostKeyPrompts = new PromptQueue<HostKeyDialogItem>();
 const authPrompts = new PromptQueue<AuthDialogItem>();
 const sessions = new Map<string, SessionUi>();
@@ -341,7 +307,7 @@ const commands: CommandDefinition[] = [
     category: 'View',
     label: 'Command Palette を表示',
     when: '!paletteOpen && !shortcutEditorOpen',
-    run: openCommandPalette,
+    run: () => commandUi.openPalette(),
   },
   {
     id: 'workbench.action.quickOpenHost',
@@ -408,9 +374,53 @@ const commands: CommandDefinition[] = [
     category: 'Preferences',
     label: 'Keyboard Shortcuts を開く',
     when: '!paletteOpen && !shortcutEditorOpen',
-    run: openShortcutEditor,
+    run: () => commandUi.openShortcutEditor(),
   },
 ];
+
+commandUi = new CommandUi({
+  elements: {
+    palette: ui.palette,
+    commandQuery: ui.commandQuery,
+    commandResults: ui.commandResults,
+    shortcutEditor: ui.shortcutEditor,
+    shortcutPlatform: ui.shortcutPlatform,
+    shortcutQuery: ui.shortcutQuery,
+    shortcutList: ui.shortcutList,
+    shortcutImport: ui.shortcutImport,
+    shortcutClose: ui.shortcutClose,
+    shortcutReset: ui.shortcutReset,
+    shortcutExport: ui.shortcutExport,
+    shortcutImportButton: ui.shortcutImportButton,
+  },
+  commands,
+  operatingSystem,
+  additionalItems: () => [
+    ...workspaces.saved.map((entry) => ({
+      id: `workspace.${entry.id}`,
+      category: 'Workspace',
+      label: entry.name,
+      detail: routePreview(entry.route, hosts).join(' → '),
+      run: () => void connectSavedRoute(entry),
+    })),
+    ...hosts.map((host) => ({
+      id: `host.${host.alias}`,
+      category: 'Host',
+      label: host.alias,
+      detail: host.chain.join(' → '),
+      run: () => {
+        showBuilder();
+        route = [host.alias];
+        renderRoute();
+      },
+    })),
+  ],
+  baseContext: () => ({
+    terminalFocus: !ui.terminalStage.classList.contains('hidden'),
+    routeFocus: !ui.builder.classList.contains('hidden'),
+  }),
+  toast,
+});
 
 function toast(message: string): void {
   while (ui.toastStack.childElementCount >= 8) ui.toastStack.firstElementChild?.remove();
@@ -478,12 +488,6 @@ function persistWorkspaces(): void {
     workspacePersistenceWarningShown = true;
     toast('workspace を端末内に保存できません。現在の起動中だけ保持します。');
   }
-}
-
-function persistKeybindings(): boolean {
-  const saved = saveKeybindings(keybindings, localStorage, operatingSystem);
-  if (!saved) toast('Keyboard Shortcuts を端末内に保存できません。現在の起動中だけ反映します。');
-  return saved;
 }
 
 function renderHosts(): void {
@@ -1188,7 +1192,7 @@ function showNextSecurePrompt(): void {
 }
 
 function showHostKeyPrompt(item: HostKeyDialogItem): void {
-  clearPendingKeySequence();
+  commandUi.clearPendingSequence();
   const { prompt } = item;
   const changed = prompt.status === 'changed';
   const box = ui.hostKeyDialog.querySelector<HTMLElement>('.host-key-box');
@@ -1262,7 +1266,7 @@ function enqueueAuthPrompt(sessionKey: string, connectionId: string, prompt: Aut
 }
 
 function showAuthPrompt(item: AuthDialogItem): void {
-  clearPendingKeySequence();
+  commandUi.clearPendingSequence();
   const { prompt } = item;
   const defaults = {
     password: { title: 'SSH パスワード', kind: 'PASSWORD' },
@@ -1755,290 +1759,14 @@ function restoreTabs(): void {
 }
 
 function focusHostSearch(): void {
-  closeCommandPalette();
+  commandUi.closePalette();
   showBuilder();
   ui.hostSearch.focus();
   ui.hostSearch.select();
 }
 
-function commandItems(): PaletteItem[] {
-  const base = commands.map((command) => ({
-    id: command.id,
-    category: command.category,
-    label: command.label,
-    keybinding: formatKeySequence(keybindings[command.id], operatingSystem),
-    run: command.run,
-  }));
-  const workspaceItems = workspaces.saved.map((entry) => ({
-    id: `workspace.${entry.id}`,
-    category: 'Workspace',
-    label: entry.name,
-    detail: routePreview(entry.route, hosts).join(' → '),
-    run: () => void connectSavedRoute(entry),
-  }));
-  const hostItems = hosts.map((host) => ({
-    id: `host.${host.alias}`,
-    category: 'Host',
-    label: host.alias,
-    detail: host.chain.join(' → '),
-    run: () => {
-      showBuilder();
-      route = [host.alias];
-      renderRoute();
-    },
-  }));
-  return [...base, ...workspaceItems, ...hostItems];
-}
-
-function openCommandPalette(): void {
-  clearPendingKeySequence();
-  ui.shortcutEditor.classList.add('hidden');
-  ui.palette.classList.remove('hidden');
-  ui.commandQuery.value = '';
-  selectedCommand = 0;
-  renderCommandResults();
-  window.requestAnimationFrame(() => ui.commandQuery.focus());
-}
-
-function closeCommandPalette(): void {
-  ui.palette.classList.add('hidden');
-}
-
-function renderCommandResults(): void {
-  paletteItems = fuzzyFilter(ui.commandQuery.value, commandItems(), (item) =>
-    `${item.category} ${item.label} ${item.detail ?? ''} ${item.keybinding ?? ''}`,
-  );
-  selectedCommand = Math.min(selectedCommand, Math.max(0, paletteItems.length - 1));
-  ui.commandResults.replaceChildren();
-  if (paletteItems.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'command-empty';
-    empty.textContent = '一致するコマンドはありません';
-    ui.commandResults.append(empty);
-    return;
-  }
-  paletteItems.forEach((item, index) => {
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = `command-item${index === selectedCommand ? ' selected' : ''}`;
-    const label = document.createElement('span');
-    label.className = 'command-label';
-    const category = document.createElement('small');
-    category.textContent = item.category.toUpperCase();
-    label.append(category, document.createTextNode(item.label));
-    if (item.detail) {
-      const detail = document.createElement('small');
-      detail.textContent = `  ${item.detail}`;
-      label.append(detail);
-    }
-    const key = document.createElement('span');
-    key.className = 'command-key';
-    key.textContent = item.keybinding ?? '';
-    row.append(label, key);
-    row.addEventListener('mouseenter', () => {
-      if (selectedCommand === index) return;
-      selectedCommand = index;
-      for (const [rowIndex, candidate] of [...ui.commandResults.children].entries()) {
-        candidate.classList.toggle('selected', rowIndex === selectedCommand);
-      }
-    });
-    row.addEventListener('click', () => executePaletteItem(item));
-    ui.commandResults.append(row);
-  });
-}
-
-function executePaletteItem(item: PaletteItem | undefined): void {
-  if (!item) return;
-  closeCommandPalette();
-  item.run();
-}
-
-function openShortcutEditor(): void {
-  clearPendingKeySequence();
-  closeCommandPalette();
-  ui.shortcutEditor.classList.remove('hidden');
-  ui.shortcutQuery.value = '';
-  cancelShortcutRecording();
-  ui.shortcutPlatform.textContent = operatingSystem === 'macos'
-    ? 'macOS · Cmd'
-    : `${operatingSystem === 'windows' ? 'Windows' : 'Linux'} · Ctrl`;
-  renderShortcuts();
-  window.requestAnimationFrame(() => ui.shortcutQuery.focus());
-}
-
-function closeShortcutEditor(): void {
-  cancelShortcutRecording();
-  ui.shortcutEditor.classList.add('hidden');
-}
-
-function renderShortcuts(): void {
-  syncKeybindingLabels();
-  const query = ui.shortcutQuery.value;
-  const conflicts = findKeybindingConflicts(keybindings, commands);
-  const conflictsByCommand = new Map<CommandId, CommandId[]>();
-  for (const conflict of conflicts) {
-    for (const commandId of conflict.commands) {
-      conflictsByCommand.set(commandId, conflict.commands.filter((candidate) => candidate !== commandId));
-    }
-  }
-  const visible = fuzzyFilter(query, commands, (command) =>
-    `${command.category} ${command.label} ${command.id} ${keybindings[command.id]} ${command.when ?? ''}`,
-  );
-  ui.shortcutList.replaceChildren();
-  for (const command of visible) {
-    const row = document.createElement('div');
-    const commandConflicts = conflictsByCommand.get(command.id) ?? [];
-    row.className = `shortcut-row${commandConflicts.length > 0 ? ' conflict' : ''}`;
-    const copy = document.createElement('span');
-    copy.className = 'shortcut-command';
-    const label = document.createElement('strong');
-    label.textContent = command.label;
-    const id = document.createElement('small');
-    id.textContent = `${command.id}${command.when ? ` · when ${command.when}` : ''}`;
-    copy.append(label, id);
-    if (commandConflicts.length > 0) {
-      const warning = document.createElement('small');
-      warning.className = 'shortcut-conflict';
-      warning.textContent = `競合: ${commandConflicts.join(', ')}`;
-      copy.append(warning);
-    }
-    const capture = document.createElement('button');
-    capture.type = 'button';
-    capture.className = `shortcut-capture${recordingCommand === command.id ? ' recording' : ''}`;
-    capture.textContent = recordingCommand === command.id
-      ? recordingChords.length > 0
-        ? `${formatKeySequence(recordingChords.join(' '), operatingSystem)} …`
-        : 'キーを入力…'
-      : formatKeySequence(keybindings[command.id], operatingSystem);
-    capture.addEventListener('click', () => {
-      cancelShortcutRecording();
-      recordingCommand = command.id;
-      recordingChords = [];
-      renderShortcuts();
-      capture.focus();
-    });
-    const reset = document.createElement('button');
-    reset.type = 'button';
-    reset.className = 'shortcut-reset-one';
-    reset.textContent = '↺';
-    reset.title = '既定値に戻す';
-    reset.disabled = keybindings[command.id] === defaultBindings[command.id];
-    reset.addEventListener('click', () => {
-      keybindings[command.id] = defaultBindings[command.id];
-      persistKeybindings();
-      renderShortcuts();
-    });
-    row.append(copy, capture, reset);
-    ui.shortcutList.append(row);
-  }
-}
-
-function syncKeybindingLabels(): void {
-  for (const node of document.querySelectorAll<HTMLElement>('[data-keybinding]')) {
-    const id = node.dataset.keybinding as CommandId | undefined;
-    if (id && id in keybindings) node.textContent = formatKeySequence(keybindings[id], operatingSystem);
-  }
-}
-
-function commandContext(): CommandContext {
-  return {
-    terminalFocus: !ui.terminalStage.classList.contains('hidden'),
-    routeFocus: !ui.builder.classList.contains('hidden'),
-    paletteOpen: !ui.palette.classList.contains('hidden'),
-    shortcutEditorOpen: !ui.shortcutEditor.classList.contains('hidden'),
-  };
-}
-
-function runKeybinding(chord: string): boolean {
-  const hadPrefix = pendingKeyChords.length > 0;
-  pendingKeyChords.push(chord);
-  let resolution = resolveKeybinding(pendingKeyChords, keybindings, commands, commandContext());
-  if (resolution.status === 'none' && hadPrefix) {
-    clearPendingKeySequence();
-    pendingKeyChords = [chord];
-    resolution = resolveKeybinding(pendingKeyChords, keybindings, commands, commandContext());
-  }
-  if (resolution.status === 'none') {
-    clearPendingKeySequence();
-    return false;
-  }
-  if (resolution.status === 'match') {
-    clearPendingKeySequence();
-    commands.find((command) => command.id === resolution.commandId)?.run();
-    return true;
-  }
-
-  if (pendingKeyTimer !== undefined) window.clearTimeout(pendingKeyTimer);
-  const exactCommandId = resolution.exactCommandId;
-  pendingKeyTimer = window.setTimeout(() => {
-    clearPendingKeySequence();
-    if (exactCommandId) commands.find((command) => command.id === exactCommandId)?.run();
-  }, KEY_SEQUENCE_TIMEOUT_MS);
-  return true;
-}
-
-function clearPendingKeySequence(): void {
-  if (pendingKeyTimer !== undefined) window.clearTimeout(pendingKeyTimer);
-  pendingKeyTimer = undefined;
-  pendingKeyChords = [];
-}
-
-function recordShortcutChord(chord: string): void {
-  if (!recordingCommand) return;
-  recordingChords.push(chord);
-  if (recordingChords.length >= 4) {
-    finishShortcutRecording();
-    return;
-  }
-  if (recordingTimer !== undefined) window.clearTimeout(recordingTimer);
-  recordingTimer = window.setTimeout(finishShortcutRecording, KEY_SEQUENCE_TIMEOUT_MS);
-  renderShortcuts();
-}
-
-function finishShortcutRecording(): void {
-  if (!recordingCommand || recordingChords.length === 0) {
-    cancelShortcutRecording();
-    renderShortcuts();
-    return;
-  }
-  keybindings[recordingCommand] = recordingChords.join(' ');
-  persistKeybindings();
-  cancelShortcutRecording();
-  renderShortcuts();
-}
-
-function cancelShortcutRecording(): void {
-  if (recordingTimer !== undefined) window.clearTimeout(recordingTimer);
-  recordingTimer = undefined;
-  recordingCommand = null;
-  recordingChords = [];
-}
-
-function downloadShortcuts(): void {
-  const blob = new Blob([exportKeybindings(keybindings, operatingSystem)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `ope-term-keybindings-${operatingSystem}.json`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url));
-}
-
-async function importShortcuts(file: File): Promise<void> {
-  const imported = importKeybindings(await file.text(), operatingSystem);
-  keybindings = imported.bindings;
-  const saved = persistKeybindings();
-  renderShortcuts();
-  const migration = imported.migratedFrom
-    ? ` ${imported.migratedFrom} の Ctrl/Cmd を ${operatingSystem} 向けに移行しました。`
-    : '';
-  if (saved) toast(`Keyboard Shortcuts を読み込みました。${migration}`);
-}
-
 async function openLocalTerminalDialog(): Promise<void> {
-  closeCommandPalette();
+  commandUi.closePalette();
   try {
     localProfiles = await invoke<ShellProfile[]>('list_shell_profiles');
   } catch (error) {
@@ -2118,7 +1846,7 @@ function sessionLogInput(session: SessionUi): SessionLogInput | undefined {
 }
 
 async function openLogDialog(configure: boolean): Promise<void> {
-  closeCommandPalette();
+  commandUi.closePalette();
   const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
   if (configure && !session) {
     toast('設定対象の terminal tab を選択してください。');
@@ -2268,51 +1996,6 @@ ui.routeTrack.addEventListener('drop', (event) => {
   const alias = event.dataTransfer?.getData('text/ope-host');
   if (alias) addToRoute(alias);
 });
-ui.commandQuery.addEventListener('input', () => {
-  selectedCommand = 0;
-  renderCommandResults();
-});
-ui.commandQuery.addEventListener('keydown', (event) => {
-  if (event.key === 'ArrowDown') {
-    event.preventDefault();
-    selectedCommand = Math.min(selectedCommand + 1, paletteItems.length - 1);
-    renderCommandResults();
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault();
-    selectedCommand = Math.max(0, selectedCommand - 1);
-    renderCommandResults();
-  } else if (event.key === 'Enter') {
-    event.preventDefault();
-    executePaletteItem(paletteItems[selectedCommand]);
-  } else if (event.key === 'Escape') {
-    event.preventDefault();
-    closeCommandPalette();
-  }
-});
-ui.palette.addEventListener('mousedown', (event) => {
-  if (event.target === ui.palette) closeCommandPalette();
-});
-ui.shortcutQuery.addEventListener('input', renderShortcuts);
-element<HTMLButtonElement>('close-shortcuts').addEventListener('click', closeShortcutEditor);
-element<HTMLButtonElement>('reset-shortcuts').addEventListener('click', () => {
-  cancelShortcutRecording();
-  keybindings = { ...defaultBindings };
-  persistKeybindings();
-  renderShortcuts();
-});
-element<HTMLButtonElement>('export-shortcuts').addEventListener('click', downloadShortcuts);
-element<HTMLButtonElement>('import-shortcuts').addEventListener('click', () => {
-  cancelShortcutRecording();
-  ui.shortcutImport.value = '';
-  ui.shortcutImport.click();
-});
-ui.shortcutImport.addEventListener('change', () => {
-  const file = ui.shortcutImport.files?.[0];
-  if (!file) return;
-  void importShortcuts(file).catch((error: unknown) => {
-    toast(`Keyboard Shortcuts の読み込みに失敗しました: ${String(error)}`);
-  });
-});
 ui.hostKeyReject.addEventListener('click', () => {
   if (hostKeyPrompts.active?.prompt.status === 'changed') finishHostKeyPrompt();
   else void answerHostKey('reject');
@@ -2321,9 +2004,6 @@ ui.hostKeyOnce.addEventListener('click', () => void answerHostKey('trust_once'))
 ui.hostKeySave.addEventListener('click', () => void answerHostKey('trust_and_save'));
 ui.authCancel.addEventListener('click', () => void submitAuthPrompt(true));
 ui.authSubmit.addEventListener('click', () => void submitAuthPrompt(false));
-ui.shortcutEditor.addEventListener('mousedown', (event) => {
-  if (event.target === ui.shortcutEditor) closeShortcutEditor();
-});
 ui.paneNewRoute.addEventListener('click', beginNewRouteForPane);
 ui.paneNewLocal.addEventListener('click', beginLocalTerminalForPane);
 ui.panePickerCancel.addEventListener('click', () => closePanePicker());
@@ -2395,29 +2075,7 @@ window.addEventListener(
       }
       return;
     }
-    if (recordingCommand) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.key === 'Escape') {
-        cancelShortcutRecording();
-      } else {
-        const chord = eventToChord(event);
-        if (chord) recordShortcutChord(chord);
-      }
-      renderShortcuts();
-      return;
-    }
-    if (!ui.shortcutEditor.classList.contains('hidden') && event.key === 'Escape') {
-      event.preventDefault();
-      closeShortcutEditor();
-      return;
-    }
-    if (!ui.palette.classList.contains('hidden')) return;
-    const chord = eventToChord(event);
-    if (chord && runKeybinding(chord)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    commandUi.handleGlobalKeydown(event);
   },
   true,
 );
@@ -2430,7 +2088,7 @@ window.addEventListener('resize', () => {
 
 async function boot(): Promise<void> {
   await Promise.all([performanceHarnessReady, rendererAddonReady]);
-  syncKeybindingLabels();
+  commandUi.syncKeybindingLabels();
   await loadHosts();
   void loadConfigPath();
   restoreTabs();
