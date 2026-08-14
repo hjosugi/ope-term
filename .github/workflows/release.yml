@@ -69,6 +69,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             gstreamer1.0-plugins-base \
+            gstreamer1.0-tools \
             librsvg2-dev \
             patchelf \
             xdg-utils
@@ -192,9 +193,17 @@ jobs:
             echo "::error::AppImage is missing the GStreamer appsink plugin: $plugin"
             exit 1
           fi
+          appdir="$extract_dir/squashfs-root"
+          GST_REGISTRY_1_0="$RUNNER_TEMP/ope-term-gstreamer-registry.bin" \
+          GST_REGISTRY_REUSE_PLUGIN_SCANNER=no \
+          GST_PLUGIN_SYSTEM_PATH_1_0="$appdir/usr/lib/gstreamer-1.0" \
+          GST_PLUGIN_PATH_1_0="$appdir/usr/lib/gstreamer-1.0" \
+          GST_PLUGIN_SCANNER_1_0="$appdir/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner" \
+          LD_LIBRARY_PATH="$appdir/usr/lib" \
+            gst-inspect-1.0 appsink >/dev/null
 
   stage-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-22.04
     permissions:
@@ -205,7 +214,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ope-term-*
           path: release-assets
@@ -220,6 +229,7 @@ jobs:
         run: node scripts/release-assets.mjs release-assets release-upload
 
       - name: Attest release assets
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: release-upload/*
@@ -240,7 +250,7 @@ jobs:
       contents: write
     steps:
       - name: Download staged release assets
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ope-term-release-assets
           path: release-upload

@@ -86,11 +86,15 @@ jobs:
 
   rust-local-pty:
     name: local PTY (${{ matrix.os }})
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -102,5 +106,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
-          key: local-pty-${{ matrix.os }}
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml local_terminal::tests
+          key: ${{ matrix.target }}
+      - name: Compile local PTY tests
+        timeout-minutes: 40
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --no-run local_terminal::tests
+      - name: Run local PTY tests
+        timeout-minutes: 2
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml local_terminal::tests

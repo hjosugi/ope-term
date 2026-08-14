@@ -71,6 +71,15 @@ Tauri bundleだけを再構築します。Cargoのartifact fingerprintはfeature
 native build scriptが読む環境にも依存するため、`HOST_CC` / `HOST_CXX` とtarget linker / Rust flagsは
 依存・アプリで共有します。これらを片側だけ変更するとAWS-LCなどのnative依存が再コンパイルされます。
 
+Rust dependency derivationには `pnpmDeps`、Node、pnpm、Tauri bundle hookを渡しません。これらは
+最終Tauri derivationだけの入力です。そのためfrontend dependencyだけを更新しても338 MiB級の
+Cargo artifactを無効化せず、frontend fetch/buildとworkspace bundleだけを更新できます。
+
+GitHub ActionsのWindows/macOS local PTY smokeは、Release matrixと同じRust target tripleをcache
+keyに使います。同じCargo.lock・targetのTauri依存をworkflow間で共有し、OS別native検査のために
+同一依存を再コンパイルしません。cold compileには40分を許可しますが、コンパイル済みPTY testの
+実行は2分で打ち切るため、EOF待ち回帰を長時間放置しません。
+
 2026-08-14のx86_64 Linux計測では、従来のclean package build約25分に対し、依存archiveを新規作成する
 cold buildは8分51秒でした。ソースだけを変更したbuildは2分01秒で、archiveは338 MiB、最終package
 自体は20 MiBでした。数値は同一machine・同一custom storeの実測であり、CI runnerの保証値では

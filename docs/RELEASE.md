@@ -1,8 +1,9 @@
 # リリース工程
 
 `.github/workflows/release.yml` は Linux、Windows、macOS の bundle を別 runner で生成します。
-通常の `workflow_dispatch` は Release を作らず、Actions の workflow artifact だけを残す
-dry run です。`v*` tag の push だけが、全 build の成功後に draft Release を作ります。
+通常の `workflow_dispatch` は Release を作らず、bundleをflat stagingしてchecksum・SBOMを含む
+Actions workflow artifactだけを残すdry runです。`v*` tag の push だけが、全 build の成功後に
+draft Release を作ります。
 
 ## 成果物
 
@@ -57,7 +58,9 @@ Linux では、CI と同じ bundle 指定を個別に確認できます。
 package 内容を確認済みです。WebKitGTK の asset protocol が使う GStreamer `appsink` は、共有
 library だけでなく動的 plugin も必要です。`bundle.linux.appimage.bundleMediaFramework` を有効にし、
 CI は AppImage を展開して `usr/lib/gstreamer-1.0/libgstapp.so` の存在まで検査します。通常の Ubuntu
-runner ではなく Nix の split-output GLib を使う local shell では、upstream の
+runner上の同一ABIの `gst-inspect-1.0` にAppImage内のlibrary・plugin・scanner pathだけを渡し、
+`appsink` factoryを実際にloadできることも検査します。通常の Ubuntu runner ではなく Nix の
+split-output GLib を使う local shell では、upstream の
 `linuxdeploy-plugin-gtk` が `gio-2.0` の実在しない schema path を copy して停止するため、
 AppImage acceptance は Ubuntu runner を正とします。system library の手動注入は行いません。
 
@@ -71,7 +74,9 @@ tag build は署名情報が一つでも欠けていれば publish 前に失敗�
 tag以外では変数そのものを設定しないことをrelease policyで検査します。
 
 全jobのcheckoutはGit資格情報をworktreeへ残しません。bundle buildにはGitHub tokenを渡さず、
-`stage-release`は`contents: read`でSBOM・checksum・attestationを作って短期artifactへ固定します。
+`stage-release`は`contents: read`でSBOM・checksumを作って短期artifactへ固定し、tag時だけprovenance
+attestationも生成します。dispatchでもpublish直前まで通すため、artifact download・basename衝突・
+checksum・SBOM stagingをunsigned dry runで検査できます。
 別の`publish` jobだけに`contents: write`を与え、検証済みartifactを取得してdraft Releaseを作ります。
 外部Actionは可変tagではなくfull commit SHAへ固定し、version注記をDependabotが更新します。
 

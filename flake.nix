@@ -79,7 +79,7 @@
             src = source;
             pnpm = pkgs.pnpm_10;
             fetcherVersion = 4;
-            hash = "sha256-h3lo9aKwW4ZkTwVrqyk1fMirnhu4TmpWDkbGK9mmHX4=";
+            hash = "sha256-mxBC2G++6RVqt447e1S9eZ6OuNk4twDRWlzTKu96Xcc=";
           };
           cargoVendorDir = craneLib.vendorCargoDeps {
             src = source;
@@ -108,15 +108,7 @@
               cp Cargo.lock src-tauri/Cargo.lock
             '';
 
-            inherit pnpmDeps;
-            nativeBuildInputs = [
-              pkgs.cargo-tauri.hook
-              pkgs.nodejs_24
-              pkgs.pkg-config
-              pkgs.pnpm_10
-              pkgs.pnpmConfigHook
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.wrapGAppsHook4 ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
             buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
           };
           cargoArtifacts = craneLib.buildDepsOnly (
@@ -166,6 +158,15 @@
               installPhase = "tauriInstallHook";
               doCheck = false;
               doInstallCargoArtifacts = false;
+              nativeBuildInputs =
+                cargoCommonArgs.nativeBuildInputs
+                ++ [
+                  pkgs.cargo-tauri.hook
+                  pkgs.nodejs_24
+                  pkgs.pnpm_10
+                  pkgs.pnpmConfigHook
+                ]
+                ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.wrapGAppsHook4 ];
 
               preFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
                 gappsWrapperArgs+=(
@@ -231,10 +232,21 @@
                   echo "Nix app must not duplicate Tauri's frontend build" >&2
                   exit 1
                 fi
-                grep -F 'craneLib.buildDepsOnly' "$flakeSource" >/dev/null
-                grep -F 'inherit cargoArtifacts pnpmDeps;' "$flakeSource" >/dev/null
-                grep -F 'HOST_CC =' "$flakeSource" >/dev/null
-                grep -F 'HOST_CXX =' "$flakeSource" >/dev/null
+                cargo_common="$(sed -n '/^          cargoCommonArgs = {$/,/^          };$/p' "$flakeSource")"
+                cargo_artifacts="$(sed -n '/^          cargoArtifacts = craneLib.buildDepsOnly ($/,/^          );$/p' "$flakeSource")"
+                app_config="$(sed -n '/^          app = craneLib.mkCargoDerivation ($/,/^          );$/p' "$flakeSource")"
+                test -n "$cargo_common"
+                test -n "$cargo_artifacts"
+                test -n "$app_config"
+                if grep -F 'pnpmDeps' <<<"$cargo_common"; then
+                  echo "Rust dependency inputs must not include pnpmDeps" >&2
+                  exit 1
+                fi
+                grep -F 'nativeBuildInputs = [ pkgs.pkg-config ];' <<<"$cargo_common" >/dev/null
+                grep -F 'HOST_CC =' <<<"$cargo_common" >/dev/null
+                grep -F 'HOST_CXX =' <<<"$cargo_common" >/dev/null
+                grep -F 'inherit cargoArtifacts pnpmDeps;' <<<"$app_config" >/dev/null
+                grep -F 'cargoCommonArgs.nativeBuildInputs' <<<"$app_config" >/dev/null
                 touch "$out"
               '';
         }

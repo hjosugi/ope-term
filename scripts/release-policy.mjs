@@ -86,8 +86,10 @@ export async function verifyReleasePolicy(root = process.cwd()) {
   const workflowRequirements = [
     ["bundles: appimage,deb,rpm", "Linux AppImage/deb/rpm matrix entry"],
     ["gstreamer1.0-plugins-base", "Linux GStreamer base plugin installation"],
+    ["gstreamer1.0-tools", "Linux GStreamer inspection tool"],
     ["name: Verify Linux AppImage media framework", "AppImage media plugin verification"],
     ["usr/lib/gstreamer-1.0/libgstapp.so", "AppImage appsink plugin assertion"],
+    ["gst-inspect-1.0 appsink", "AppImage appsink load assertion"],
     ["bundles: msi,nsis", "Windows MSI/NSIS matrix entry"],
     ["target: aarch64-apple-darwin", "Apple Silicon target"],
     ["target: x86_64-apple-darwin", "Intel macOS target"],
@@ -104,6 +106,10 @@ export async function verifyReleasePolicy(root = process.cwd()) {
     ["name: Attest release assets", "artifact provenance attestation"],
     ["subject-path: release-upload/*", "attestation of published asset paths"],
     ["name: Preserve staged release assets", "read-only release staging job"],
+    [
+      "if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'",
+      "workflow-dispatch release staging",
+    ],
     ["name: Download staged release assets", "write-scoped publish job"],
     ["needs: stage-release", "publish dependency on attested assets"],
     ["gh release create", "draft Release creation"],
@@ -129,6 +135,11 @@ export async function verifyReleasePolicy(root = process.cwd()) {
   requireValue(
     signedBundleStep.includes("APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}"),
     "signed bundle step must receive the Apple certificate",
+  );
+  const attestationStep = workflowStep(workflow, "Attest release assets");
+  requireValue(
+    attestationStep.includes("if: startsWith(github.ref, 'refs/tags/v')"),
+    "unsigned workflow-dispatch assets must not be attested as release assets",
   );
 
   for (const [fragment, description] of [
