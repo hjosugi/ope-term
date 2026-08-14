@@ -51,6 +51,10 @@ export async function verifyReleasePolicy(root = process.cwd()) {
 
   requireValue(config.bundle?.active === true, "Tauri bundle.active must stay enabled");
   requireValue(config.bundle?.targets === "all", "Tauri bundle.targets must cover all configured targets");
+  requireValue(
+    config.bundle?.linux?.appimage?.bundleMediaFramework === true,
+    "Tauri AppImage must bundle the GStreamer media framework",
+  );
   requireValue(Array.isArray(icons) && icons.length > 0, "Tauri bundle.icon must not be empty");
 
   const pngSizes = new Set();
@@ -81,6 +85,9 @@ export async function verifyReleasePolicy(root = process.cwd()) {
 
   const workflowRequirements = [
     ["bundles: appimage,deb,rpm", "Linux AppImage/deb/rpm matrix entry"],
+    ["gstreamer1.0-plugins-base", "Linux GStreamer base plugin installation"],
+    ["name: Verify Linux AppImage media framework", "AppImage media plugin verification"],
+    ["usr/lib/gstreamer-1.0/libgstapp.so", "AppImage appsink plugin assertion"],
     ["bundles: msi,nsis", "Windows MSI/NSIS matrix entry"],
     ["target: aarch64-apple-darwin", "Apple Silicon target"],
     ["target: x86_64-apple-darwin", "Intel macOS target"],

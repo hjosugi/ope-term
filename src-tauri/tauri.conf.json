@@ -41,6 +41,11 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Route-first SSH terminal",
-    "longDescription": "An operations terminal that makes SSH jump routes visible and composable."
+    "longDescription": "An operations terminal that makes SSH jump routes visible and composable.",
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
   }
 }

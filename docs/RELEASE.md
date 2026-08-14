@@ -53,12 +53,13 @@ Linux では、CI と同じ bundle 指定を個別に確認できます。
 ./scripts/run-cached pnpm tauri build --bundles appimage,deb,rpm -- --locked
 ```
 
-2026-08-13 に x86_64 Linux で deb / rpm の生成と package 内容を確認済みです。AppImage は
-通常の Ubuntu runner ではなく Nix の split-output GLib を使う local shell では、upstream の
-`linuxdeploy-plugin-gtk` が `gio-2.0` の実在しない schema path を copy して停止します。application
-binary と AppDir の生成までは成功しており、Ubuntu 22.04 Actions runner での実体確認を
-acceptance の残作業にします。この環境差を回避するために system library を AppImage へ
-手動注入して release artifact とすることはしません。
+2026-08-14 に Ubuntu 22.04 Actions runner で x86_64 Linux の AppImage / deb / rpm を生成し、
+package 内容を確認済みです。WebKitGTK の asset protocol が使う GStreamer `appsink` は、共有
+library だけでなく動的 plugin も必要です。`bundle.linux.appimage.bundleMediaFramework` を有効にし、
+CI は AppImage を展開して `usr/lib/gstreamer-1.0/libgstapp.so` の存在まで検査します。通常の Ubuntu
+runner ではなく Nix の split-output GLib を使う local shell では、upstream の
+`linuxdeploy-plugin-gtk` が `gio-2.0` の実在しない schema path を copy して停止するため、
+AppImage acceptance は Ubuntu runner を正とします。system library の手動注入は行いません。
 
 ## code signing secrets
 

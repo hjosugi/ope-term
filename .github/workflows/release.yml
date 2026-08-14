@@ -68,6 +68,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
+            gstreamer1.0-plugins-base \
             librsvg2-dev \
             patchelf \
             xdg-utils
@@ -169,6 +170,28 @@ jobs:
             -- --locked
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: ope-term-[platform]-[arch]-[bundle]
+
+      - name: Verify Linux AppImage media framework
+        if: startsWith(matrix.name, 'linux-')
+        shell: bash
+        run: |
+          appimage="$(find src-tauri/target -type f -name '*.AppImage' -print -quit)"
+          if [[ -z "$appimage" ]]; then
+            echo "::error::Linux build did not produce an AppImage"
+            exit 1
+          fi
+          appimage="$(realpath "$appimage")"
+          extract_dir="$RUNNER_TEMP/ope-term-appimage"
+          mkdir -p "$extract_dir"
+          (
+            cd "$extract_dir"
+            "$appimage" --appimage-extract >/dev/null
+          )
+          plugin="$extract_dir/squashfs-root/usr/lib/gstreamer-1.0/libgstapp.so"
+          if [[ ! -f "$plugin" ]]; then
+            echo "::error::AppImage is missing the GStreamer appsink plugin: $plugin"
+            exit 1
+          fi
 
   stage-release:
     if: startsWith(github.ref, 'refs/tags/v')
