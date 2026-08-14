@@ -335,6 +335,14 @@ mod tests {
             }
             let _ = output_tx.send(Ok(output));
         });
+        // portable-pty requires taking and dropping the input writer even for
+        // a one-shot command so that ConPTY can observe EOF and drain output.
+        // macOS needs a short grace period before that EOF for short-lived
+        // children; this mirrors portable-pty's cross-platform example.
+        let writer = pair.master.take_writer().expect("writer");
+        #[cfg(target_os = "macos")]
+        std::thread::sleep(Duration::from_millis(20));
+        drop(writer);
 
         // A PTY output stream is not required to report EOF promptly on every
         // backend. Observe the marker instead, then bound process reaping with
