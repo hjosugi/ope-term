@@ -271,8 +271,6 @@ fn default_shell() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
-    #[cfg(windows)]
-    use std::io::Write;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -301,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn native_pty_spawns_a_platform_shell_and_reaps_it() {
+    fn native_pty_spawns_and_reaps_a_platform_process() {
         let pair = native_pty_system()
             .openpty(PtySize::default())
             .expect("native PTY");
@@ -337,32 +335,11 @@ mod tests {
             }
             let _ = output_tx.send(Ok(output));
         });
-        // portable-pty requires taking and dropping the input writer so that
-        // the child observes EOF and ConPTY can drain output. On Windows,
-        // write the marker through the PTY and wait until it is observed before
-        // asking the interactive shell to exit. Closing input before that
-        // handshake can race cmd.exe startup and discard its output.
+        // portable-pty requires taking and dropping the input writer even for
+        // a one-shot command so that ConPTY can observe EOF and drain output.
         // macOS needs a short grace period before that EOF for short-lived
         // children; this mirrors portable-pty's cross-platform example.
         let writer = pair.master.take_writer().expect("writer");
-        #[cfg(windows)]
-        let mut writer = writer;
-        #[cfg(windows)]
-        {
-            writer
-                .write_all(b"echo ope-term-local-pty-smoke\r\n")
-                .expect("write smoke marker");
-            writer.flush().expect("flush smoke marker");
-            let output = output_rx
-                .recv_timeout(Duration::from_secs(10))
-                .expect("PTY smoke output timed out")
-                .expect("read output");
-            assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
-            writer
-                .write_all(b"exit /b 0\r\n")
-                .expect("write smoke exit");
-            writer.flush().expect("flush smoke exit");
-        }
         #[cfg(target_os = "macos")]
         std::thread::sleep(Duration::from_millis(20));
         drop(writer);
@@ -384,14 +361,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         };
         drop(pair.master);
-        #[cfg(not(windows))]
         let output = output_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("PTY smoke output timed out")
             .expect("read output");
-        #[cfg(not(windows))]
-        assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
         assert!(status.success());
+        assert!(smoke_output_is_valid(&output));
     }
 
     #[cfg(unix)]
@@ -403,8 +378,18 @@ mod tests {
 
     #[cfg(windows)]
     fn smoke_command() -> CommandBuilder {
-        let mut command = CommandBuilder::new("cmd.exe");
-        command.args(["/D", "/Q"]);
-        command
+        // Match portable-pty's Windows example: use a process that does not
+        // inspect stdin, because closing ConPTY input can race cmd.exe startup.
+        CommandBuilder::new("whoami.exe")
+    }
+
+    #[cfg(not(windows))]
+    fn smoke_output_is_valid(output: &[u8]) -> bool {
+        String::from_utf8_lossy(output).contains("ope-term-local-pty-smoke")
+    }
+
+    #[cfg(windows)]
+    fn smoke_output_is_valid(output: &[u8]) -> bool {
+        !String::from_utf8_lossy(output).trim().is_empty()
     }
 }
