@@ -37,6 +37,7 @@ import {
   type PaneSplit,
 } from './pane-layout';
 import { appendUnique, moveRouteItem, routePreview } from './route';
+import { createRouteMapUi } from './route-map-ui';
 import {
   createLogPolicy,
   defaultLogPolicy,
@@ -167,6 +168,8 @@ const ui = {
   configPath: element<HTMLElement>('config-path'),
   workspaceList: element<HTMLElement>('workspace-list'),
   workspaceCount: element<HTMLElement>('workspace-count'),
+  routeMapCanvas: element<HTMLElement>('route-map-canvas'),
+  routeMapCount: element<HTMLElement>('route-map-count'),
   routeName: element<HTMLInputElement>('route-name'),
   saveRoute: element<HTMLButtonElement>('save-route'),
   routeTrack: element<HTMLElement>('route-track'),
@@ -474,6 +477,26 @@ function hostAliases(): string[] {
   return hosts.map((host) => host.alias);
 }
 
+const routeMapUi = createRouteMapUi({
+  elements: { canvas: ui.routeMapCanvas, count: ui.routeMapCount },
+  onSelect: (alias) => {
+    route = [alias];
+    renderRoute();
+    ui.connect.focus();
+  },
+  isLive: (alias) =>
+    [...sessions.values()].some(
+      (session) =>
+        (session.state === 'connecting' || session.state === 'connected') &&
+        routePreview(session.route, hosts).includes(alias),
+    ),
+});
+
+/** Redraws the hop-depth map of the config, with the workbench route highlighted. */
+function renderRouteMap(): void {
+  routeMapUi.render(hosts, routePreview(route, hosts));
+}
+
 function persistWorkspaces(): void {
   const sessionKeys = [...sessions.keys()];
   workspaces = {
@@ -587,6 +610,7 @@ function renderRoute(): void {
     ui.routeTrack.append(ui.routeEmpty);
     ui.routeHint.textContent = '';
     ui.statusRoute.textContent = 'NO ROUTE';
+    renderRouteMap();
     return;
   }
 
@@ -658,6 +682,8 @@ function renderRoute(): void {
   } else {
     ui.routeHint.textContent = route.length > 1 ? '明示ルート: 配置した順番で direct-tcpip を接続します。' : '直接接続';
   }
+
+  renderRouteMap();
 }
 
 function renderWorkspaces(): void {
@@ -775,6 +801,7 @@ function showBuilder(cancelPendingSplit = true): void {
   ui.connectionState.textContent = 'ROUTE READY';
   ui.connectionState.style.color = 'var(--green)';
   renderTabs();
+  renderRouteMap();
   persistWorkspaces();
 }
 

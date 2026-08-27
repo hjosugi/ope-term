@@ -28,6 +28,7 @@
 - 暗号化 OpenSSH 秘密鍵のパスフレーズ入力
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート
+- hop 深さ別に踏み台経路を並べ、経路だけを点灯させる ROUTE MAP
 - ルートに名前を付けた保存と、alias だけを参照する再利用
 - 起動時のタブ復元（接続は自動で開始しない）と、切断済みタブの再接続
 - 切断理由の分類（local / remote / transport / failed）と、transport 断だけを対象にした
