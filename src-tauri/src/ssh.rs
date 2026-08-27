@@ -625,8 +625,14 @@ impl client::Handler for HostVerifier {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let server_public_key = match server_key {
+            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            russh::keys::PublicKeyOrCertificate::Certificate(_) => {
+                bail!("SSH host certificate の CA 検証は未対応のため、接続を拒否しました")
+            }
+        };
         let path = self.known_hosts_path.clone();
         let hostname = self.known_hosts_hostname.clone();
         let port = self.port;
@@ -1193,7 +1199,7 @@ sJWR7W+cGvJ/vLsw==
 
         async fn check_server_key(
             &mut self,
-            _server_public_key: &ssh_key::PublicKey,
+            _server_key: &russh::keys::PublicKeyOrCertificate,
         ) -> Result<bool, Self::Error> {
             Ok(true)
         }
