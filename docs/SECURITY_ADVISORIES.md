@@ -1,11 +1,14 @@
 # Dependency advisory review
 
-Last reviewed: 2026-08-13 with `cargo-audit`, `cargo-deny`, and the current
-RustSec database.
+Last reviewed: 2026-08-27 with `cargo-audit`, `cargo-deny`, the current
+RustSec database, and GitHub Dependabot alerts.
 
-`just security` reports no RustSec vulnerabilities and no pnpm vulnerabilities
-at high severity or above. Informational RustSec warnings remain visible in CI;
-they are not silently ignored by configuration.
+`just security` reports no entries in cargo-audit's vulnerability category and
+no pnpm vulnerabilities at high severity or above. Informational RustSec
+warnings remain visible in CI; they are not silently ignored by configuration.
+GitHub classifies the `glib::VariantStrIter` unsoundness below as a separate
+open moderate alert, so a green audit is not presented as meaning that every
+transitive advisory has been fixed.
 
 `cargo-deny` independently rejects unapproved dependency licenses, wildcard
 version requirements, unknown registries, and Git dependencies. Duplicate
@@ -32,6 +35,15 @@ RustSec marks those bindings unmaintained:
 - RUSTSEC-2024-0411 through RUSTSEC-2024-0420 (GTK3/ATK/GDK bindings);
 - RUSTSEC-2024-0370 (`proc-macro-error`, through GTK macros);
 - RUSTSEC-2024-0429 (`glib::VariantStrIter` unsoundness).
+
+GitHub tracks RUSTSEC-2024-0429 as
+[GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g). The
+patched `glib` line starts at 0.20, while the current Tauri 2.11.5 / Wry 0.55.1
+Linux dependency graph requires the GTK3 binding line at `glib` 0.18.5. This is
+therefore kept open for upstream migration rather than dismissed as resolved.
+The required GTK4/WebKit6 migrations are still tracked upstream in
+[Tauri #7335](https://github.com/tauri-apps/tauri/issues/7335) and
+[Wry #1474](https://github.com/tauri-apps/wry/issues/1474).
 
 ope-term does not call GTK, ATK, GDK, `proc-macro-error`, or
 `glib::VariantStrIter` directly; they are platform dependencies of
