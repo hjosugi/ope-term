@@ -338,8 +338,9 @@ mod tests {
             let _ = output_tx.send(Ok(output));
         });
         // portable-pty requires taking and dropping the input writer so that
-        // the child observes EOF and ConPTY can drain output. Drive cmd.exe
-        // through stdin to ensure its command is queued before that EOF.
+        // the child observes EOF and ConPTY can drain output. On Windows, wait
+        // for cmd.exe's startup marker before asking the interactive shell to
+        // exit; closing an empty ConPTY input pipe can race command startup.
         // macOS needs a short grace period before that EOF for short-lived
         // children; this mirrors portable-pty's cross-platform example.
         let writer = pair.master.take_writer().expect("writer");
@@ -347,10 +348,15 @@ mod tests {
         let mut writer = writer;
         #[cfg(windows)]
         {
+            let output = output_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("PTY smoke output timed out")
+                .expect("read output");
+            assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
             writer
-                .write_all(b"echo ope-term-local-pty-smoke\r\nexit /b 0\r\n")
-                .expect("write smoke command");
-            writer.flush().expect("flush smoke command");
+                .write_all(b"exit /b 0\r\n")
+                .expect("write smoke exit");
+            writer.flush().expect("flush smoke exit");
         }
         #[cfg(target_os = "macos")]
         std::thread::sleep(Duration::from_millis(20));
@@ -373,10 +379,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         };
         drop(pair.master);
+        #[cfg(not(windows))]
         let output = output_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("PTY smoke output timed out")
             .expect("read output");
+        #[cfg(not(windows))]
         assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
         assert!(status.success());
     }
@@ -391,7 +399,7 @@ mod tests {
     #[cfg(windows)]
     fn smoke_command() -> CommandBuilder {
         let mut command = CommandBuilder::new("cmd.exe");
-        command.args(["/D", "/Q"]);
+        command.args(["/D", "/Q", "/K", "echo ope-term-local-pty-smoke"]);
         command
     }
 }
