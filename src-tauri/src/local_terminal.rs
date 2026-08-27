@@ -338,9 +338,10 @@ mod tests {
             let _ = output_tx.send(Ok(output));
         });
         // portable-pty requires taking and dropping the input writer so that
-        // the child observes EOF and ConPTY can drain output. On Windows, wait
-        // for cmd.exe's startup marker before asking the interactive shell to
-        // exit; closing an empty ConPTY input pipe can race command startup.
+        // the child observes EOF and ConPTY can drain output. On Windows,
+        // write the marker through the PTY and wait until it is observed before
+        // asking the interactive shell to exit. Closing input before that
+        // handshake can race cmd.exe startup and discard its output.
         // macOS needs a short grace period before that EOF for short-lived
         // children; this mirrors portable-pty's cross-platform example.
         let writer = pair.master.take_writer().expect("writer");
@@ -348,6 +349,10 @@ mod tests {
         let mut writer = writer;
         #[cfg(windows)]
         {
+            writer
+                .write_all(b"echo ope-term-local-pty-smoke\r\n")
+                .expect("write smoke marker");
+            writer.flush().expect("flush smoke marker");
             let output = output_rx
                 .recv_timeout(Duration::from_secs(10))
                 .expect("PTY smoke output timed out")
@@ -399,7 +404,7 @@ mod tests {
     #[cfg(windows)]
     fn smoke_command() -> CommandBuilder {
         let mut command = CommandBuilder::new("cmd.exe");
-        command.args(["/D", "/Q", "/K", "echo ope-term-local-pty-smoke"]);
+        command.args(["/D", "/Q"]);
         command
     }
 }
