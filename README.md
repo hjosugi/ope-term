@@ -21,6 +21,7 @@
 - ssh-agent、秘密鍵、certificate、password、keyboard-interactive/OTP による SSH2 認証
 - `known_hosts` の厳格なホスト鍵検証（unknown は指紋確認、changed は拒否）
 - ProxyJump 自動展開と、任意に組んだ多段ルート、hop ごとの状態表示
+- 踏み台経路を hop 深さ別に並べ、指した Host までの経路だけを点灯させる ROUTE MAP
 - ルートの保存と起動時のタブ復元（接続は自動で開始しない）、切断済みタブの再接続
 - xterm / SSH 接続を維持したまま移動できる、左右・上下の terminal pane
 - 認証済み多段 SSH session を共有する、安全な local / remote 2 ペイン SFTP file manager
