@@ -337,10 +337,11 @@ mod tests {
         });
         // portable-pty requires taking and dropping the input writer even for
         // a one-shot command so that ConPTY can observe EOF and drain output.
-        // macOS needs a short grace period before that EOF for short-lived
-        // children; this mirrors portable-pty's cross-platform example.
+        // macOS and Windows need a short grace period before that EOF for
+        // short-lived children; without it cmd.exe can observe a broken input
+        // handle during startup and return a non-zero status.
         let writer = pair.master.take_writer().expect("writer");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         std::thread::sleep(Duration::from_millis(20));
         drop(writer);
 
