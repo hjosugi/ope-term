@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import commandUiSource from './command-ui.ts?raw';
 import mainSource from './main.ts?raw';
+import routeMapSource from './route-map-ui.ts?raw';
 import sftpSource from './sftp-ui.ts?raw';
 import css from './style.css?inline';
 
@@ -43,7 +44,8 @@ describe('UI size tokens', () => {
       .replace('@media (max-width: 850px)', '@media (max-width: compact)');
 
     expect(componentCss).not.toMatch(/(?<![\w-])\d+(?:\.\d+)?(?:px|rem|em)/);
-    expect(`${mainSource}\n${commandUiSource}\n${sftpSource}`).not.toMatch(/\d+(?:\.\d+)?(?:px|rem)/);
+    expect(`${mainSource}\n${commandUiSource}\n${sftpSource}\n${routeMapSource}`)
+      .not.toMatch(/\d+(?:\.\d+)?(?:px|rem)/);
   });
 
   it('defines every referenced token exactly once', () => {
