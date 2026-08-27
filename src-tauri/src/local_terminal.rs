@@ -271,6 +271,8 @@ fn default_shell() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+    #[cfg(windows)]
+    use std::io::Write;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -335,11 +337,21 @@ mod tests {
             }
             let _ = output_tx.send(Ok(output));
         });
-        // portable-pty requires taking and dropping the input writer even for
-        // a one-shot command so that ConPTY can observe EOF and drain output.
+        // portable-pty requires taking and dropping the input writer so that
+        // the child observes EOF and ConPTY can drain output. Drive cmd.exe
+        // through stdin to ensure its command is queued before that EOF.
         // macOS needs a short grace period before that EOF for short-lived
         // children; this mirrors portable-pty's cross-platform example.
         let writer = pair.master.take_writer().expect("writer");
+        #[cfg(windows)]
+        let mut writer = writer;
+        #[cfg(windows)]
+        {
+            writer
+                .write_all(b"echo ope-term-local-pty-smoke\r\nexit /b 0\r\n")
+                .expect("write smoke command");
+            writer.flush().expect("flush smoke command");
+        }
         #[cfg(target_os = "macos")]
         std::thread::sleep(Duration::from_millis(20));
         drop(writer);
@@ -366,14 +378,7 @@ mod tests {
             .expect("PTY smoke output timed out")
             .expect("read output");
         assert!(String::from_utf8_lossy(&output).contains("ope-term-local-pty-smoke"));
-        // ConPTY can report cmd.exe status 1 after the test deliberately closes
-        // its input to generate EOF, even though the command produced its marker
-        // and was reaped. The application also treats shell exit as a normal
-        // remote close, so output plus bounded reaping are the Windows contract.
-        #[cfg(not(windows))]
         assert!(status.success());
-        #[cfg(windows)]
-        let _ = status;
     }
 
     #[cfg(unix)]
@@ -386,7 +391,7 @@ mod tests {
     #[cfg(windows)]
     fn smoke_command() -> CommandBuilder {
         let mut command = CommandBuilder::new("cmd.exe");
-        command.args(["/C", "echo ope-term-local-pty-smoke"]);
+        command.args(["/D", "/Q"]);
         command
     }
 }
