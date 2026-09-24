@@ -26,6 +26,10 @@ export const COMMAND_IDS = [
   'pane.resizeNarrower',
   'pane.resizeTaller',
   'pane.resizeShorter',
+  'pane.moveLeft',
+  'pane.moveRight',
+  'pane.moveUp',
+  'pane.moveDown',
   'preferences.openKeyboardShortcuts',
 ] as const;
 
@@ -96,6 +100,10 @@ export function defaultKeybindings(platform: OperatingSystem): Record<CommandId,
     'pane.resizeNarrower': `${primary}+K ${primary}+Shift+ArrowLeft`,
     'pane.resizeTaller': `${primary}+K ${primary}+Shift+ArrowDown`,
     'pane.resizeShorter': `${primary}+K ${primary}+Shift+ArrowUp`,
+    'pane.moveLeft': `${primary}+Shift+Alt+ArrowLeft`,
+    'pane.moveRight': `${primary}+Shift+Alt+ArrowRight`,
+    'pane.moveUp': `${primary}+Shift+Alt+ArrowUp`,
+    'pane.moveDown': `${primary}+Shift+Alt+ArrowDown`,
     'preferences.openKeyboardShortcuts': `${primary}+K ${primary}+K`,
   };
 }

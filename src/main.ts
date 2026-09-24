@@ -22,6 +22,8 @@ import type { BrowserPerformanceHarness } from './performance';
 import { loadRendererPreference } from './renderer-preference';
 import { PromptQueue } from './prompt-queue';
 import {
+  PANE_MAX_RATIO,
+  PANE_MIN_RATIO,
   containsPaneSession,
   focusPane,
   paneLeaf,
@@ -30,7 +32,9 @@ import {
   replacePaneSession,
   resizePane,
   setSplitRatio,
+  splitAtPath,
   splitPane,
+  swapPaneSessions,
   type PaneAxis,
   type PaneDirection,
   type PaneLayout,
@@ -64,7 +68,7 @@ import {
   restorePaneLayout,
   sanitizeName,
   saveWorkspaces,
-  storePaneLayout,
+  snapshotWorkspaceTabs,
   suggestRouteName,
   upsertSavedRoute,
   type SavedRoute,
@@ -262,6 +266,8 @@ let logViewerDirectory: LocalDirectory | null = null;
 let logPolicies = loadLogPolicies();
 let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
+/** Until boot restores the stored tabs, persisting must not overwrite them. */
+let workspaceTabsRestored = false;
 let workspacePersistenceWarningShown = false;
 const operatingSystem = detectOperatingSystem();
 let commandUi: CommandUi;
@@ -372,6 +378,10 @@ const commands: CommandDefinition[] = [
   { id: 'pane.resizeNarrower', category: 'Pane', label: 'pane を横に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('horizontal', -0.05) },
   { id: 'pane.resizeTaller', category: 'Pane', label: 'pane を縦に広げる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', 0.05) },
   { id: 'pane.resizeShorter', category: 'Pane', label: 'pane を縦に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', -0.05) },
+  { id: 'pane.moveLeft', category: 'Pane', label: 'session を左の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('left') },
+  { id: 'pane.moveRight', category: 'Pane', label: 'session を右の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('right') },
+  { id: 'pane.moveUp', category: 'Pane', label: 'session を上の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('up') },
+  { id: 'pane.moveDown', category: 'Pane', label: 'session を下の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('down') },
   {
     id: 'preferences.openKeyboardShortcuts',
     category: 'Preferences',
@@ -399,13 +409,17 @@ commandUi = new CommandUi({
   commands,
   operatingSystem,
   additionalItems: () => [
-    ...workspaces.saved.map((entry) => ({
-      id: `workspace.${entry.id}`,
-      category: 'Workspace',
-      label: entry.name,
-      detail: routePreview(entry.route, hosts).join(' → '),
-      run: () => void connectSavedRoute(entry),
-    })),
+    ...workspaces.saved.map((entry) => {
+      const missing = missingAliases(entry.route, hostAliases());
+      const preview = routePreview(entry.route, hosts).join(' → ');
+      return {
+        id: `workspace.${entry.id}`,
+        category: 'Workspace',
+        label: entry.name,
+        detail: missing.length > 0 ? `${preview} · SSH config にない Host: ${missing.join(', ')}` : preview,
+        run: () => void connectSavedRoute(entry),
+      };
+    }),
     ...hosts.map((host) => ({
       id: `host.${host.alias}`,
       category: 'Host',
@@ -498,13 +512,18 @@ function renderRouteMap(): void {
 }
 
 function persistWorkspaces(): void {
-  const sessionKeys = [...sessions.keys()];
-  workspaces = {
-    saved: workspaces.saved,
-    tabs: [...sessions.values()].map((session) => [...session.route]),
-    activeTab: activeSessionKey ? sessionKeys.indexOf(activeSessionKey) : -1,
-    paneLayout: storePaneLayout(paneLayout, sessionKeys),
-  };
+  const tabs = workspaceTabsRestored
+    ? snapshotWorkspaceTabs(
+        [...sessions.values()].map((session) => ({
+          key: session.key,
+          route: session.route,
+          restorable: session.kind === 'ssh',
+        })),
+        activeSessionKey,
+        paneLayout,
+      )
+    : { tabs: workspaces.tabs, activeTab: workspaces.activeTab, paneLayout: workspaces.paneLayout };
+  workspaces = { saved: workspaces.saved, ...tabs };
   if (saveWorkspaces(workspaces)) {
     workspacePersistenceWarningShown = false;
   } else if (!workspacePersistenceWarningShown) {
@@ -807,6 +826,14 @@ function showBuilder(cancelPendingSplit = true): void {
 
 async function connectRoute(): Promise<void> {
   if (route.length === 0) return;
+  // Refuse before a tab exists: a degraded saved route opened from the palette
+  // must not leave an idle tab behind for a Host the config no longer has.
+  const missing = missingAliases(route, hostAliases());
+  if (missing.length > 0) {
+    pendingPaneSplit = null;
+    toast(`SSH config に無い Host のため接続できません: ${missing.join(', ')}`);
+    return;
+  }
   const session = createSession([...route]);
   sessions.set(session.key, session);
   const split = pendingPaneSplit;
@@ -1499,16 +1526,29 @@ function activateSession(key: string): void {
   });
 }
 
-function renderPaneLayout(): void {
+/**
+ * Rebuilds the pane tree. Re-parenting detaches the focused xterm or divider,
+ * so focus returns to the same divider (keyboard resize) or to the active
+ * terminal instead of silently dropping to the document body.
+ */
+function renderPaneLayout(focusDividerPath?: string): void {
+  const hadFocus = ui.terminalStage.contains(document.activeElement);
   ui.terminalStage.replaceChildren();
   if (!paneLayout) return;
-  ui.terminalStage.append(buildPaneNode(paneLayout));
+  ui.terminalStage.append(buildPaneNode(paneLayout, ''));
   window.requestAnimationFrame(() => {
     for (const key of paneSessions(paneLayout)) sessions.get(key)?.fit.fit();
+    if (focusDividerPath !== undefined) {
+      ui.terminalStage
+        .querySelector<HTMLElement>(`.pane-divider[data-split-path="${focusDividerPath}"]`)
+        ?.focus();
+    } else if (hadFocus && activeSessionKey && !ui.terminalStage.classList.contains('hidden')) {
+      sessions.get(activeSessionKey)?.terminal.focus();
+    }
   });
 }
 
-function buildPaneNode(node: PaneLayout): HTMLElement {
+function buildPaneNode(node: PaneLayout, path: string): HTMLElement {
   if (node.type === 'leaf') {
     const frame = document.createElement('section');
     frame.className = `pane-leaf${node.sessionKey === activeSessionKey ? ' active' : ''}`;
@@ -1526,14 +1566,48 @@ function buildPaneNode(node: PaneLayout): HTMLElement {
   const split = document.createElement('div');
   split.className = `pane-split ${node.axis}`;
   applySplitTemplate(split, node.axis, node.ratio);
-  split.append(buildPaneNode(node.first));
+  split.append(buildPaneNode(node.first, `${path}1`));
   const divider = document.createElement('button');
   divider.type = 'button';
   divider.className = 'pane-divider';
-  divider.setAttribute('aria-label', node.axis === 'horizontal' ? '左右 pane のサイズを変更' : '上下 pane のサイズを変更');
+  divider.dataset.splitPath = path;
+  divider.setAttribute('role', 'separator');
+  // A left/right split is divided by a vertical bar, and vice versa.
+  divider.setAttribute('aria-orientation', node.axis === 'horizontal' ? 'vertical' : 'horizontal');
+  divider.setAttribute('aria-valuemin', String(Math.round(PANE_MIN_RATIO * 100)));
+  divider.setAttribute('aria-valuemax', String(Math.round(PANE_MAX_RATIO * 100)));
+  divider.setAttribute('aria-valuenow', String(Math.round(node.ratio * 100)));
+  divider.setAttribute(
+    'aria-label',
+    node.axis === 'horizontal' ? '左右 pane のサイズを変更（← →）' : '上下 pane のサイズを変更（↑ ↓）',
+  );
   divider.addEventListener('pointerdown', (event) => startDividerDrag(event, split, node));
-  split.append(divider, buildPaneNode(node.second));
+  divider.addEventListener('keydown', (event) => resizeDividerFromKeyboard(event, path));
+  split.append(divider, buildPaneNode(node.second, `${path}2`));
   return split;
+}
+
+const PANE_KEYBOARD_STEP = 0.05;
+
+/** Arrow keys on a focused divider move it, keeping focus on the same divider. */
+function resizeDividerFromKeyboard(event: KeyboardEvent, path: string): void {
+  const split = splitAtPath(paneLayout, path);
+  if (!split) return;
+  const decrease = split.axis === 'horizontal' ? 'ArrowLeft' : 'ArrowUp';
+  const increase = split.axis === 'horizontal' ? 'ArrowRight' : 'ArrowDown';
+  let ratio: number;
+  if (event.key === decrease) ratio = split.ratio - PANE_KEYBOARD_STEP;
+  else if (event.key === increase) ratio = split.ratio + PANE_KEYBOARD_STEP;
+  else if (event.key === 'Home') ratio = PANE_MIN_RATIO;
+  else if (event.key === 'End') ratio = PANE_MAX_RATIO;
+  else return;
+  event.preventDefault();
+  event.stopPropagation();
+  const resized = setSplitRatio(paneLayout, split, ratio);
+  if (resized === paneLayout) return;
+  paneLayout = resized;
+  renderPaneLayout(path);
+  persistWorkspaces();
 }
 
 function applySplitTemplate(element: HTMLElement, axis: PaneAxis, ratio: number): void {
@@ -1554,7 +1628,7 @@ function startDividerDrag(event: PointerEvent, element: HTMLElement, split: Pane
     ratio = split.axis === 'horizontal'
       ? (moveEvent.clientX - rect.left) / rect.width
       : (moveEvent.clientY - rect.top) / rect.height;
-    ratio = Math.min(0.85, Math.max(0.15, ratio));
+    ratio = Math.min(PANE_MAX_RATIO, Math.max(PANE_MIN_RATIO, ratio));
     applySplitTemplate(element, split.axis, ratio);
     for (const key of paneSessions(split)) sessions.get(key)?.fit.fit();
   };
@@ -1634,6 +1708,20 @@ function movePaneFocus(direction: PaneDirection): void {
   if (!activeSessionKey) return;
   const next = focusPane(paneLayout, activeSessionKey, direction);
   if (next) activateSession(next);
+}
+
+/** Moves the active session into the neighbouring pane without reconnecting it. */
+function moveActivePane(direction: PaneDirection): void {
+  if (!activeSessionKey) return;
+  const neighbour = focusPane(paneLayout, activeSessionKey, direction);
+  if (!neighbour) return;
+  const swapped = swapPaneSessions(paneLayout, activeSessionKey, neighbour);
+  if (swapped === paneLayout) return;
+  paneLayout = swapped;
+  renderPaneLayout();
+  const session = sessions.get(activeSessionKey);
+  if (session) window.requestAnimationFrame(() => session.terminal.focus());
+  persistWorkspaces();
 }
 
 function resizeActivePane(axis: PaneAxis, delta: number): void {
@@ -1765,6 +1853,7 @@ function activateNextSession(): void {
  */
 function restoreTabs(): void {
   const { tabs, activeTab } = workspaces;
+  workspaceTabsRestored = true;
   if (tabs.length === 0) return;
   const keys: string[] = [];
   for (const savedRoute of tabs) {
@@ -1797,6 +1886,7 @@ async function openLocalTerminalDialog(): Promise<void> {
   try {
     localProfiles = await invoke<ShellProfile[]>('list_shell_profiles');
   } catch (error) {
+    pendingPaneSplit = null;
     toast(`shell profile を取得できません: ${String(error)}`);
     return;
   }
@@ -1817,6 +1907,9 @@ async function openLocalTerminalDialog(): Promise<void> {
 
 function closeLocalTerminalDialog(): void {
   ui.localTerminalDialog.classList.add('hidden');
+  // createLocalTerminal consumes a pending split before closing the dialog, so
+  // anything left here belongs to a cancelled dialog and must not split later.
+  pendingPaneSplit = null;
 }
 
 async function pickLocalWorkingDirectory(): Promise<void> {

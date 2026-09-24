@@ -116,6 +116,37 @@ export function parseWorkspaces(raw: string | null): WorkspaceState {
   return state;
 }
 
+/** A live tab as the workspace store sees it. */
+export interface WorkspaceTabSource {
+  key: string;
+  route: readonly string[];
+  /** Local shells hold process state and are never restored, so they never enter the store. */
+  restorable: boolean;
+}
+
+/**
+ * Captures the restorable tabs, the active tab, and the pane layout against the
+ * same filtered tab list, so indices stored for the layout and the active tab
+ * cannot drift when a local shell sits between SSH tabs.
+ */
+export function snapshotWorkspaceTabs(
+  tabs: readonly WorkspaceTabSource[],
+  activeKey: string | null,
+  layout: PaneLayout | null,
+): Pick<WorkspaceState, 'tabs' | 'activeTab' | 'paneLayout'> {
+  const kept = tabs
+    .filter((tab) => tab.restorable)
+    .map((tab) => ({ key: tab.key, route: sanitizeRoute([...tab.route]) }))
+    .filter((tab) => tab.route.length > 0)
+    .slice(0, MAX_RESTORED_TABS);
+  const keys = kept.map((tab) => tab.key);
+  return {
+    tabs: kept.map((tab) => tab.route),
+    activeTab: activeKey ? keys.indexOf(activeKey) : -1,
+    paneLayout: storePaneLayout(layout, keys),
+  };
+}
+
 export function storePaneLayout(layout: PaneLayout | null, sessionKeys: readonly string[]): StoredPaneLayout | null {
   if (!layout) return null;
   if (layout.type === 'leaf') {
