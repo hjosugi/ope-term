@@ -1,5 +1,6 @@
+use std::borrow::Cow;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -65,6 +66,24 @@ pub enum SearchMode {
 pub struct LogMatch {
     pub line: u64,
     pub text: String,
+}
+
+/// Where a search page stopped: the byte offset of the next unread line and
+/// that line's 1-based number, so paging never rescans from the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogCursor {
+    pub offset: u64,
+    pub line: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogSearchPage {
+    pub matches: Vec<LogMatch>,
+    /// Present only when the page filled up before the end of the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<LogCursor>,
 }
 
 pub fn configure(input: LogInput, directory: PathBuf, host: &str, user: &str) -> Result<LogConfig> {
@@ -170,17 +189,24 @@ fn write_loop(
     }
     let mut line_start = true;
     while let Some(bytes) = receiver.blocking_recv() {
-        let encoded = if config.timestamps {
-            timestamp_lines(&bytes, &mut line_start)
+        let line_start_before = line_start;
+        let mut encoded: Cow<'_, [u8]> = if config.timestamps {
+            Cow::Owned(timestamp_lines(&bytes, &mut line_start))
         } else {
-            bytes
+            Cow::Borrowed(&bytes)
         };
         if size > 0 && size.saturating_add(encoded.len() as u64) > config.rotation_bytes {
             drop(file);
             rotate(&path, config.retained_files)?;
             file = open_log(&path)?;
             size = 0;
-            line_start = true;
+            // Re-stamp the chunk for the fresh file: its first line always
+            // carries a timestamp, and `line_start` keeps the state after this
+            // chunk instead of being reset to "start of line" mid-line.
+            if config.timestamps && !line_start_before {
+                line_start = true;
+                encoded = Cow::Owned(timestamp_lines(&bytes, &mut line_start));
+            }
         }
         file.write_all(&encoded)?;
         file.flush()?;
@@ -306,7 +332,8 @@ pub fn search(
     name: &str,
     query: &str,
     mode: SearchMode,
-) -> Result<Vec<LogMatch>> {
+    cursor: Option<LogCursor>,
+) -> Result<LogSearchPage> {
     validate_file_name(name)?;
     if !is_log_file_name(name) {
         bail!(".log file とその rotation 世代だけを検索できます");
@@ -323,11 +350,18 @@ pub fn search(
         SearchMode::Regex => Some(Regex::new(query).context("正規表現が不正です")?),
         _ => None,
     };
-    let mut reader = BufReader::with_capacity(64 * 1024, open_log_for_read(&path)?);
+    let mut file = open_log_for_read(&path)?;
+    let start = cursor.unwrap_or(LogCursor { offset: 0, line: 1 });
+    validate_cursor(&mut file, start)?;
+    file.seek(SeekFrom::Start(start.offset))
+        .context("log file の検索位置へ移動できません")?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     let mut results = Vec::new();
-    let mut line_number = 0_u64;
-    while let Some(bytes) = read_bounded_line(&mut reader)? {
+    let mut offset = start.offset;
+    let mut line_number = start.line - 1;
+    while let Some((bytes, consumed)) = read_bounded_line(&mut reader)? {
         line_number += 1;
+        offset += consumed;
         let text = String::from_utf8_lossy(&bytes)
             .trim_end_matches(['\r', '\n'])
             .to_owned();
@@ -342,22 +376,59 @@ pub fn search(
                 text,
             });
             if results.len() >= MAX_RESULTS {
-                break;
+                // Only report a cursor when something is left to read.
+                let more = !reader.fill_buf()?.is_empty();
+                return Ok(LogSearchPage {
+                    matches: results,
+                    next: more.then_some(LogCursor {
+                        offset,
+                        line: line_number + 1,
+                    }),
+                });
             }
         }
     }
-    Ok(results)
+    Ok(LogSearchPage {
+        matches: results,
+        next: None,
+    })
 }
 
-fn read_bounded_line(reader: &mut impl BufRead) -> Result<Option<Vec<u8>>> {
+/// A cursor must point at the start of a line inside the file; anything else
+/// was not produced by a previous page and is rejected rather than guessed.
+fn validate_cursor(file: &mut File, cursor: LogCursor) -> Result<()> {
+    if cursor.line == 0 {
+        bail!("log cursor の行番号が不正です");
+    }
+    let length = file.metadata()?.len();
+    if cursor.offset > length {
+        bail!("log cursor が file の末尾を超えています");
+    }
+    if cursor.offset == 0 {
+        if cursor.line != 1 {
+            bail!("log cursor の行番号が不正です");
+        }
+        return Ok(());
+    }
+    let mut previous = [0_u8; 1];
+    file.seek(SeekFrom::Start(cursor.offset - 1))?;
+    std::io::Read::read_exact(file, &mut previous)?;
+    if previous[0] != b'\n' {
+        bail!("log cursor が行頭を指していません");
+    }
+    Ok(())
+}
+
+/// Reads one line of at most `MAX_LINE_BYTES`, returning it with the number of
+/// bytes consumed from the file (the whole line, even past the cap).
+fn read_bounded_line(reader: &mut impl BufRead) -> Result<Option<(Vec<u8>, u64)>> {
     let mut line = Vec::new();
-    let mut saw_bytes = false;
+    let mut total = 0_u64;
     loop {
         let available = reader.fill_buf()?;
         if available.is_empty() {
-            return Ok(saw_bytes.then_some(line));
+            return Ok((total > 0).then_some((line, total)));
         }
-        saw_bytes = true;
         let consumed = available
             .iter()
             .position(|byte| *byte == b'\n')
@@ -366,8 +437,9 @@ fn read_bounded_line(reader: &mut impl BufRead) -> Result<Option<Vec<u8>>> {
         line.extend_from_slice(&available[..consumed.min(remaining)]);
         let complete = available[..consumed].ends_with(b"\n");
         reader.consume(consumed);
+        total += consumed as u64;
         if complete {
-            return Ok(Some(line));
+            return Ok(Some((line, total)));
         }
     }
 }
@@ -434,8 +506,6 @@ fn is_log_file_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Seek, SeekFrom};
-
     use super::*;
 
     #[test]
@@ -522,15 +592,29 @@ mod tests {
         content.extend_from_slice(b" needle end\nsecond Error 42\n");
         fs::write(&path, content).expect("log");
         assert_eq!(
-            search(directory.path(), "test.log", "needle", SearchMode::Exact)
-                .expect("exact")
-                .len(),
+            search(
+                directory.path(),
+                "test.log",
+                "needle",
+                SearchMode::Exact,
+                None
+            )
+            .expect("exact")
+            .matches
+            .len(),
             0
         );
         assert_eq!(
-            search(directory.path(), "test.log", "serr42", SearchMode::Fuzzy)
-                .expect("fuzzy")
-                .len(),
+            search(
+                directory.path(),
+                "test.log",
+                "serr42",
+                SearchMode::Fuzzy,
+                None
+            )
+            .expect("fuzzy")
+            .matches
+            .len(),
             1
         );
         assert_eq!(
@@ -538,9 +622,11 @@ mod tests {
                 directory.path(),
                 "test.log",
                 r"Error \d+",
-                SearchMode::Regex
+                SearchMode::Regex,
+                None
             )
             .expect("regex")
+            .matches
             .len(),
             1
         );
@@ -574,7 +660,16 @@ mod tests {
         let link = directory.path().join("link.log");
         symlink(&target, &link).expect("symlink");
         assert!(open_log(&link).is_err());
-        assert!(search(directory.path(), "link.log", "sentinel", SearchMode::Exact).is_err());
+        assert!(
+            search(
+                directory.path(),
+                "link.log",
+                "sentinel",
+                SearchMode::Exact,
+                None
+            )
+            .is_err()
+        );
         assert_eq!(fs::read(&target).expect("target"), b"unchanged");
     }
 
@@ -588,13 +683,157 @@ mod tests {
         file.write_all(b"\nunique-search-marker\n").expect("marker");
         drop(file);
 
-        let matches = search(
+        let page = search(
             directory.path(),
             "session-large.log",
             "unique-search-marker",
             SearchMode::Exact,
+            None,
         )
         .expect("search");
-        assert_eq!(matches.len(), 1);
+        assert_eq!(page.matches.len(), 1);
+        assert!(page.next.is_none());
+    }
+
+    #[test]
+    fn pages_through_every_line_with_a_cursor() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("paged.log");
+        let total = MAX_RESULTS * 2 + 7;
+        let content = (1..=total)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        fs::write(&path, content).expect("log");
+
+        let mut cursor = None;
+        let mut seen = Vec::new();
+        loop {
+            let page =
+                search(directory.path(), "paged.log", "", SearchMode::Fuzzy, cursor).expect("page");
+            assert!(page.matches.len() <= MAX_RESULTS);
+            seen.extend(
+                page.matches
+                    .iter()
+                    .map(|entry| (entry.line, entry.text.clone())),
+            );
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), total);
+        for (index, (line, text)) in seen.iter().enumerate() {
+            assert_eq!(*line, index as u64 + 1);
+            assert_eq!(text, &format!("line {}", index + 1));
+        }
+    }
+
+    #[test]
+    fn a_page_that_ends_exactly_at_eof_has_no_cursor() {
+        let directory = tempfile::tempdir().expect("directory");
+        let content = (1..=MAX_RESULTS)
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+        fs::write(directory.path().join("exact.log"), content).expect("log");
+        let page =
+            search(directory.path(), "exact.log", "", SearchMode::Fuzzy, None).expect("page");
+        assert_eq!(page.matches.len(), MAX_RESULTS);
+        assert!(page.next.is_none());
+    }
+
+    #[test]
+    fn rejects_cursors_that_a_previous_page_could_not_have_produced() {
+        let directory = tempfile::tempdir().expect("directory");
+        fs::write(directory.path().join("cursor.log"), b"first\nsecond\n").expect("log");
+        let search_at = |offset, line| {
+            search(
+                directory.path(),
+                "cursor.log",
+                "",
+                SearchMode::Fuzzy,
+                Some(LogCursor { offset, line }),
+            )
+        };
+        assert!(search_at(3, 2).is_err(), "mid-line offset");
+        assert!(search_at(999, 2).is_err(), "past the end");
+        assert!(search_at(0, 5).is_err(), "line number at offset 0");
+        assert!(search_at(6, 0).is_err(), "line zero");
+        let page = search_at(6, 2).expect("second line");
+        assert_eq!(page.matches.len(), 1);
+        assert_eq!(page.matches[0].line, 2);
+        assert_eq!(page.matches[0].text, "second");
+    }
+
+    #[test]
+    fn pages_from_the_middle_of_a_100_mib_file_without_rescanning() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("paged-large.log");
+        let mut file = File::create(&path).expect("file");
+        let offset = 100 * 1024 * 1024;
+        file.set_len(offset).expect("sparse fixture");
+        file.seek(SeekFrom::End(-1)).expect("seek");
+        file.write_all(b"\n").expect("line end");
+        file.write_all(b"tail-one\ntail-two\n").expect("tail");
+        drop(file);
+
+        let page = search(
+            directory.path(),
+            "paged-large.log",
+            "tail",
+            SearchMode::Exact,
+            Some(LogCursor { offset, line: 2 }),
+        )
+        .expect("search");
+        assert_eq!(
+            page.matches
+                .iter()
+                .map(|entry| (entry.line, entry.text.as_str()))
+                .collect::<Vec<_>>(),
+            [(2, "tail-one"), (3, "tail-two")]
+        );
+    }
+
+    #[test]
+    fn every_line_keeps_one_timestamp_across_a_rotation() {
+        let directory = tempfile::tempdir().expect("directory");
+        let config = LogConfig {
+            directory: directory.path().to_path_buf(),
+            file_name: "stamped.log".to_owned(),
+            timestamps: true,
+            rotation_bytes: MIN_ROTATION_BYTES,
+            retained_files: 2,
+        };
+        let (sender, receiver) = mpsc::channel(LOG_QUEUE_CAPACITY);
+        let (ready_sender, _ready_receiver) = oneshot::channel();
+        let writer = std::thread::spawn(move || write_loop(config, receiver, ready_sender));
+        // A chunk that leaves a line open, then enough bytes to force a
+        // rotation in the middle of that line, then the rest of it.
+        sender.blocking_send(b"open line ".to_vec()).expect("first");
+        let filler = format!("{}\n", "x".repeat(MIN_ROTATION_BYTES as usize));
+        sender.blocking_send(filler.into_bytes()).expect("filler");
+        sender
+            .blocking_send(b"after\nnext ".to_vec())
+            .expect("after");
+        sender.blocking_send(b"done\n".to_vec()).expect("done");
+        drop(sender);
+        writer.join().expect("writer thread").expect("writer");
+
+        let current = fs::read_to_string(directory.path().join("stamped.log")).expect("current");
+        let rotated = fs::read_to_string(directory.path().join("stamped.log.1")).expect("rotated");
+        for (name, content) in [("current", &current), ("rotated", &rotated)] {
+            for line in content.lines().filter(|line| !line.is_empty()) {
+                assert!(
+                    line.starts_with("[20"),
+                    "{name} line lacks a stamp: {line:.40}"
+                );
+                assert_eq!(
+                    line.matches("] ").count(),
+                    1,
+                    "{name} line stamped twice: {line:.60}"
+                );
+            }
+        }
+        assert!(current.contains("] after\n"));
+        assert!(current.contains("next done\n"));
     }
 }

@@ -506,7 +506,8 @@ pub async fn run(
                     input,
                     directory,
                     &target.alias,
-                    target.user.as_deref().unwrap_or("unknown"),
+                    // The same effective user authentication will log in as.
+                    &target.user.clone().unwrap_or_else(default_username),
                 )?)
                 .await?,
             )

@@ -9,7 +9,7 @@ picker で選択するまで有効化できません。
 | 変数 | 値 | 例 |
 |---|---|---|
 | `{host}` | SSH の最終 alias、local terminal は `local` | `prod-db` |
-| `{user}` | SSH config の user、または local OS user | `operator` |
+| `{user}` | 認証に使う SSH user（config の `User`、無ければ OS user）、または local OS user | `operator` |
 | `{date}` | 接続開始時の UTC date | `2026-08-13` |
 | `{time}` | 接続開始時の UTC time | `09-15-30Z` |
 
@@ -30,7 +30,8 @@ templateは `.log` で終える必要があります。host/user の危険文字
 - disk、permission、rotationなどのI/O失敗でwriterが停止した場合はterminalとtoastへ一度通知し、
   記録だけを無効化して開いているterminalは継続します。
 - active file が上限を超えると `.log.1` へ移し、古い世代を順送りして上限世代を削除します。
-- timestamp は行頭へ RFC 3339 UTC で付与します。
+- timestamp は行頭へ RFC 3339 UTC で付与します。rotation 直後の新しい file は、行の途中から
+  始まる場合も先頭に timestamp を付け、次の chunk の行頭判定は rotation で狂いません。
 
 ## Viewer
 
@@ -38,9 +39,15 @@ viewer は選択 directory の `.log` と `.log.N` だけを一覧・検索し�
 一致、exact は substring、regex は Rust `regex` の線形時間 engine を使用します。
 directory 一覧は 10,000 entries で停止します。
 
-file は全読み込みせず 64 KiB の reader buffer で先頭から走査します。1行の保持は 4 KiB、結果は
-500 件に制限するため、100 MiB 以上でも file size に比例した memory を確保しません。100 MiB の
-sparse fixture を最後まで検索する regression test があります。readerもopen時にsymlinkと
+file は全読み込みせず 64 KiB の reader buffer で走査します。1行の保持は 4 KiB、1 回の結果は
+500 件に制限するため、100 MiB 以上でも file size に比例した memory を確保しません。
+
+500 件に達して file が残っている場合、viewer は表示件数と未検索の行番号を示し、
+`さらに読み込む` で続きを表示します。Rust core は次に読む行の byte offset と行番号を cursor
+として返し、次の page はその offset へ seek して走査を再開します。先頭から読み直さないため、
+query が空の場合は 100 MiB 超の file 全体を 500 行ずつ表示できます。cursor は行頭を指し、
+file 長を超えないものだけを受け付けます。100 MiB の sparse fixture を最後まで検索する test と、
+その末尾から cursor で page する test があります。readerもopen時にsymlinkと
 通常file以外を拒否し、同時検索は4件までに制限します。
 
 ## 秘密情報の境界

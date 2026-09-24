@@ -417,6 +417,7 @@ h1 { margin: 0; font-size: var(--font-display); letter-spacing: var(--tracking-d
 .log-results { min-height: 0; overflow: auto; border-top: var(--border-width) solid var(--line-soft); font: var(--font-xs)/1.5 var(--mono); }
 .log-result { display: grid; grid-template-columns: var(--log-line-column-width) minmax(0, 1fr); gap: var(--space-3); padding: var(--space-1) var(--dialog-gutter); border-bottom: var(--border-width) solid var(--line-soft); }
 .log-result span { color: var(--muted); text-align: right; }
+.log-more { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--dialog-gutter); color: var(--muted); font: var(--font-2xs) var(--mono); }
 .log-result code { overflow-wrap: anywhere; color: #cbd2da; white-space: pre-wrap; }
 
 .host-key-overlay { z-index: 40; display: grid; place-items: center; padding: var(--space-5); background: rgba(0, 0, 0, .72); }

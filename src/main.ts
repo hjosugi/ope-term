@@ -108,6 +108,24 @@ interface LogMatch {
   text: string;
 }
 
+/** Byte offset and 1-based line number of the next unread line; opaque to the UI. */
+interface LogCursor {
+  offset: number;
+  line: number;
+}
+
+interface LogSearchPage {
+  matches: LogMatch[];
+  next?: LogCursor;
+}
+
+interface LogSearchRequest {
+  token: string;
+  name: string;
+  query: string;
+  mode: string;
+}
+
 interface SessionUi {
   /** Stable UI identity that survives reconnects. */
   key: string;
@@ -263,6 +281,9 @@ let localProfiles: ShellProfile[] = [];
 let selectedLocalDirectory: LocalDirectory | null = null;
 const logDirectories = new Map<string, LocalDirectory>();
 let logViewerDirectory: LocalDirectory | null = null;
+/** Where "load more" resumes the last search; cleared by any new search or file change. */
+let logSearchContinuation: { request: LogSearchRequest; cursor: LogCursor; shown: number } | null = null;
+let logSearchGeneration = 0;
 let logPolicies = loadLogPolicies();
 let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
@@ -2041,6 +2062,8 @@ async function refreshLogFiles(directory?: LocalDirectory | null): Promise<void>
   const selected = directory ?? (editingLogTarget ? logDirectories.get(editingLogTarget) : logViewerDirectory);
   ui.logFile.replaceChildren();
   ui.logResults.replaceChildren();
+  logSearchContinuation = null;
+  logSearchGeneration += 1;
   if (!selected) return;
   try {
     const files = await invoke<LogFile[]>('log_list', { token: selected.token });
@@ -2055,23 +2078,34 @@ async function refreshLogFiles(directory?: LocalDirectory | null): Promise<void>
   }
 }
 
-async function searchLogs(): Promise<void> {
-  const directory = editingLogTarget ? logDirectories.get(editingLogTarget) : logViewerDirectory;
-  const name = ui.logFile.value;
-  if (!directory || !name) {
-    toast('検索する directory と log file を選択してください。');
-    return;
+/**
+ * Searches one page (at most 500 lines) of a log. `more` resumes from the byte
+ * cursor of the previous page, so a 100 MiB file is displayed page by page
+ * without rescanning or loading it whole.
+ */
+async function searchLogs(more = false): Promise<void> {
+  let request: LogSearchRequest;
+  let cursor: LogCursor | null = null;
+  let shown = 0;
+  if (more && logSearchContinuation) {
+    ({ request, cursor, shown } = logSearchContinuation);
+  } else {
+    const directory = editingLogTarget ? logDirectories.get(editingLogTarget) : logViewerDirectory;
+    const name = ui.logFile.value;
+    if (!directory || !name) {
+      toast('検索する directory と log file を選択してください。');
+      return;
+    }
+    request = { token: directory.token, name, query: ui.logQuery.value, mode: ui.logSearchMode.value };
   }
+  const generation = ++logSearchGeneration;
   ui.logSearch.disabled = true;
   try {
-    const results = await invoke<LogMatch[]>('log_search', {
-      token: directory.token,
-      name,
-      query: ui.logQuery.value,
-      mode: ui.logSearchMode.value,
-    });
-    ui.logResults.replaceChildren();
-    for (const match of results) {
+    const page = await invoke<LogSearchPage>('log_search', { ...request, cursor });
+    if (generation !== logSearchGeneration) return;
+    if (!more) ui.logResults.replaceChildren();
+    ui.logResults.querySelector('.log-more')?.remove();
+    for (const match of page.matches) {
       const row = document.createElement('div');
       row.className = 'log-result';
       const line = document.createElement('span');
@@ -2081,16 +2115,33 @@ async function searchLogs(): Promise<void> {
       row.append(line, text);
       ui.logResults.append(row);
     }
-    if (results.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'command-empty';
-      empty.textContent = '一致する行はありません';
-      ui.logResults.append(empty);
+    shown += page.matches.length;
+    if (page.next) {
+      logSearchContinuation = { request, cursor: page.next, shown };
+      const footer = document.createElement('div');
+      footer.className = 'log-more';
+      const note = document.createElement('span');
+      note.textContent = `${shown} 件を表示中。${page.next.line} 行目以降は未検索です。`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'secondary-button';
+      button.textContent = 'さらに読み込む';
+      button.addEventListener('click', () => void searchLogs(true));
+      footer.append(note, button);
+      ui.logResults.append(footer);
+    } else {
+      logSearchContinuation = null;
+      if (shown === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'command-empty';
+        empty.textContent = '一致する行はありません';
+        ui.logResults.append(empty);
+      }
     }
   } catch (error) {
-    toast(`log 検索に失敗しました: ${String(error)}`);
+    if (generation === logSearchGeneration) toast(`log 検索に失敗しました: ${String(error)}`);
   } finally {
-    ui.logSearch.disabled = false;
+    if (generation === logSearchGeneration) ui.logSearch.disabled = false;
   }
 }
 

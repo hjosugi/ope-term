@@ -23,3 +23,8 @@ Labels: priority:P2, area:terminal, enhancement
 - viewer は `.log` / `.log.N` のみ、64 KiB reader / 4 KiB line / 500 results の上限で逐次走査。
 - readerはopen時にもsymlink / 非通常fileを拒否し、同時検索は4件で停止する。
 - 100 MiB sparse fixture の末尾 exact search、巨大1行、fuzzy、regex、rotation を Rust test で検証。
+- 検索は500件ごとのpageにし、次の行のbyte offsetと行番号をcursorとして返す。viewerは
+  `さらに読み込む`で続きをseekして表示し、先頭から読み直さない（100 MiB sparse fixtureの
+  途中からのpagingをtest）。行頭以外・file長超過のcursorは拒否する。
+- rotation後の最初の行にもtimestampを付け、行頭状態をrotationでリセットしない。
+- `{user}`は認証と同じ実効user（configの`User`、無ければOS user）で展開する。

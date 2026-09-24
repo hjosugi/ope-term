@@ -458,15 +458,16 @@ mod application {
         name: String,
         query: String,
         mode: crate::session_log::SearchMode,
+        cursor: Option<crate::session_log::LogCursor>,
         state: State<'_, AppState>,
-    ) -> Result<Vec<crate::session_log::LogMatch>, String> {
+    ) -> Result<crate::session_log::LogSearchPage, String> {
         let permit = acquire_log_search_slot(&state.log_search_slots)?;
         let directory = crate::local_files::resolve_directory(&state.local_scopes, &token)
             .await
             .map_err(|error| format!("{error:#}"))?;
         tauri::async_runtime::spawn_blocking(move || {
             let _permit = permit;
-            crate::session_log::search(&directory, &name, &query, mode)
+            crate::session_log::search(&directory, &name, &query, mode, cursor)
         })
         .await
         .map_err(|error| format!("log search task が失敗しました: {error}"))?
