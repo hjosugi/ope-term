@@ -79,9 +79,10 @@ jobs:
           StrictModes no
           PidFile $soak/sshd.pid
           CONFIG
-          sudo mkdir -p /run/sshd
-          sudo /usr/sbin/sshd -t -f "$soak/sshd_config"
-          sudo /usr/sbin/sshd -f "$soak/sshd_config" -E "$soak/sshd.log"
+          # Unprivileged sshd: it can only log in as this user, and it does not
+          # apply the root-only locked-account check that rejects `runner`.
+          /usr/sbin/sshd -t -f "$soak/sshd_config"
+          /usr/sbin/sshd -f "$soak/sshd_config" -E "$soak/sshd.log"
           # ope-term resolves the route from ~/.ssh/config; the proxy fronts sshd.
           cat >>"$HOME/.ssh/config" <<CONFIG
           Host ope-term-soak
@@ -101,6 +102,9 @@ jobs:
           unset SSH_AUTH_SOCK
           SOAK_BIN="$PWD/src-tauri/target/release/examples/reliability_soak" \
             scripts/reliability-soak ope-term-soak 127.0.0.1 2022
+      - name: Keep the sshd log with the reports
+        if: always()
+        run: cp "$RUNNER_TEMP/soak-sshd/sshd.log" "$OUT/" 2>/dev/null || true
       - name: Upload soak reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
