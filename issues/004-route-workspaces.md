@@ -13,5 +13,9 @@ Labels: priority:P1, area:ui, enhancement
 - [x] 接続は自動実行せず、復元後にユーザーが開始する
 - [x] config 変更で alias が消えた場合に安全な degraded state を表示する
 
+local terminalは復元対象外とし、tab・選択中tab・pane layoutのindexは同じ絞り込み後の
+SSH tab一覧から計算する（local tabを挟んでもindexがずれない）。起動時のtab復元が終わるまで
+保存はtab stateを上書きしない。palette経由の`Workspace`もmissing aliasを表示し、tabを作る前に拒否する。
+
 workspace storeはJSON parse / write前に1 MiBで停止し、破損・無効・quota不足のstorageは
 terminal操作を止めず現在の起動中だけのstateへdegradeする。

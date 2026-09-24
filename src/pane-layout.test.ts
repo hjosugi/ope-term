@@ -8,7 +8,9 @@ import {
   replacePaneSession,
   resizePane,
   setSplitRatio,
+  splitAtPath,
   splitPane,
+  swapPaneSessions,
 } from './pane-layout';
 
 describe('pane layout', () => {
@@ -61,5 +63,28 @@ describe('pane layout', () => {
     if (layout.type !== 'split') return;
     const moved = setSplitRatio(layout, layout, 0.99);
     if (moved?.type === 'split') expect(moved.ratio).toBe(0.85);
+  });
+
+  it('swaps two visible sessions without touching the split tree', () => {
+    const layout = splitPane(splitPane(paneLeaf('a'), 'a', 'b', 'horizontal'), 'b', 'c', 'vertical');
+    const swapped = swapPaneSessions(layout, 'a', 'c');
+    expect(paneSessions(swapped)).toEqual(['c', 'b', 'a']);
+    expect(swapped?.type === 'split' && layout.type === 'split' ? swapped.ratio : 0).toBe(0.5);
+    expect(focusPane(swapped, 'a', 'up')).toBe('b');
+    expect(swapPaneSessions(layout, 'a', 'missing')).toBe(layout);
+    expect(swapPaneSessions(layout, 'a', 'a')).toBe(layout);
+    expect(swapPaneSessions(null, 'a', 'b')).toBeNull();
+  });
+
+  it('addresses nested splits by their first/second path', () => {
+    const layout = splitPane(splitPane(paneLeaf('a'), 'a', 'b', 'horizontal'), 'b', 'c', 'vertical');
+    expect(splitAtPath(layout, '')).toBe(layout);
+    const nested = splitAtPath(layout, '2');
+    expect(nested?.axis).toBe('vertical');
+    expect(paneSessions(nested)).toEqual(['b', 'c']);
+    expect(splitAtPath(layout, '1')).toBeNull();
+    expect(splitAtPath(layout, '22')).toBeNull();
+    expect(splitAtPath(layout, 'x')).toBeNull();
+    expect(splitAtPath(null, '')).toBeNull();
   });
 });

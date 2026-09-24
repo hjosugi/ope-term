@@ -58,6 +58,8 @@ Host が多い config では先頭 200 件までを描画し、残りは件数�
 - 保存済みルートは `読み込む` で ROUTE WORKBENCH へ戻すか、`接続` で直接つなぎます。
   Command Palette からは `Workspace` として検索できます。
 - 終了時のタブ、選択中のタブ、pane の分割方向と比率を記録し、次の起動で復元します。
+  local terminal は shell process の状態を持つため復元対象から外し、SSH タブの順番・選択・
+  pane 配置だけを同じ基準で保存します。
 
 !!! note "復元しただけでは接続しません"
 
@@ -67,7 +69,8 @@ Host が多い config では先頭 200 件までを描画し、残りは件数�
 - 切断済みのタブは同じタブのまま `再接続`（`Ctrl+Shift+Enter`）できます。
   scrollback とタブ位置は保持します。
 - config から alias が消えた場合は degraded 表示になります。該当ルートとピースを
-  赤く示し、接続ボタンを無効にして、消えた Host 名を表示します。
+  赤く示し、接続ボタンを無効にして、消えた Host 名を表示します。Command Palette の
+  `Workspace` 項目にも消えた Host を表示し、選んでもタブを作らずに接続を拒否します。
 - private modeやquota不足でWebView storageへ保存できない場合も、terminal操作は中断しません。
   UIに警告を表示し、workspaceやshortcutの変更は現在の起動中だけ保持します。
 
@@ -78,7 +81,11 @@ session、または新しく組み立てる route を選べます。既存 sessi
 SSH 接続を作り直さず、その DOM を pane へ移します。
 
 - pane 内をクリックするか focus command で操作対象を切り替えます。
-- divider を pointer で drag するか resize command で比率を変更します。最小比率は 15% です。
+- divider を pointer で drag するか resize command で比率を変更します。divider に Tab で
+  focus し、矢印キー（左右分割は ← →、上下分割は ↑ ↓）で 5% ずつ、Home / End で端まで
+  動かすこともできます。最小比率は 15% です。
+- `Ctrl+Shift+Alt+Arrow` は表示中の session を指定方向の pane と入れ替えます。xterm と接続は
+  そのまま移動し、再接続しません。
 - hopbar の `×` または `Pane: 現在の pane を閉じる` は表示だけを閉じます。session と接続は
   tab に残るため、tab を選ぶと現在の pane へ戻せます。
 - tab 自体の `×` または `Ctrl+W` は session を終了します。
@@ -175,6 +182,7 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+K Ctrl+ArrowRight` | 右に分割 |
 | `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
 | `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |
+| `Ctrl+Shift+Alt+Arrow` | 表示中の session を指定方向の pane と入れ替える |
 | `Ctrl+K Ctrl+X` | 現在の pane を閉じる（session は残す） |
 | `Ctrl+K Ctrl+Shift+Arrow` | 現在の pane を広げる / 狭める |
 | `Ctrl+K Ctrl+K` | Keyboard Shortcuts |
