@@ -12,6 +12,7 @@ import {
   sanitizeName,
   sanitizeRoute,
   saveWorkspaces,
+  snapshotWorkspaceTabs,
   suggestRouteName,
   storePaneLayout,
   upsertSavedRoute,
@@ -141,5 +142,50 @@ describe('workspace persistence', () => {
       { saved: [], tabs: [], activeTab: -1, paneLayout: null },
       { setItem: () => { throw new Error('quota'); } },
     )).toBe(false);
+  });
+
+  it('stores the active tab and layout against restorable tabs only', () => {
+    // [local, A, B] with local|A split and A focused: indices must not shift when
+    // the local shell is dropped from the store.
+    const layout = splitPane(paneLeaf('local'), 'local', 'a', 'horizontal');
+    const snapshot = snapshotWorkspaceTabs(
+      [
+        { key: 'local', route: [], restorable: false },
+        { key: 'a', route: ['bastion', 'app'], restorable: true },
+        { key: 'b', route: ['db'], restorable: true },
+      ],
+      'a',
+      layout,
+    );
+    expect(snapshot).toEqual({
+      tabs: [['bastion', 'app'], ['db']],
+      activeTab: 0,
+      paneLayout: { type: 'leaf', tab: 0 },
+    });
+
+    const restored = parseWorkspaces(JSON.stringify({ saved: [], ...snapshot }));
+    expect(restorePaneLayout(restored.paneLayout, ['A', 'B'])).toEqual(paneLeaf('A'));
+    expect(restored.activeTab).toBe(0);
+  });
+
+  it('keeps a split between two SSH tabs and reports no active tab for a local shell', () => {
+    const layout = splitPane(paneLeaf('a'), 'a', 'b', 'vertical');
+    const snapshot = snapshotWorkspaceTabs(
+      [
+        { key: 'shell', route: [], restorable: false },
+        { key: 'a', route: ['a'], restorable: true },
+        { key: 'b', route: ['b'], restorable: true },
+      ],
+      'shell',
+      layout,
+    );
+    expect(snapshot.activeTab).toBe(-1);
+    expect(snapshot.paneLayout).toEqual({
+      type: 'split',
+      axis: 'vertical',
+      ratio: 0.5,
+      first: { type: 'leaf', tab: 0 },
+      second: { type: 'leaf', tab: 1 },
+    });
   });
 });

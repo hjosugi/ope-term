@@ -24,8 +24,8 @@ interface Rect {
   height: number;
 }
 
-const MIN_RATIO = 0.15;
-const MAX_RATIO = 0.85;
+export const PANE_MIN_RATIO = 0.15;
+export const PANE_MAX_RATIO = 0.85;
 
 export function paneLeaf(sessionKey: string): PaneLeaf {
   return { type: 'leaf', sessionKey };
@@ -93,6 +93,40 @@ export function removePaneSession(layout: PaneLayout | null, sessionKey: string)
   return first === layout.first && second === layout.second ? layout : { ...layout, first, second };
 }
 
+/**
+ * Exchanges the sessions shown in two panes, keeping the split tree intact.
+ *
+ * The session views are only re-parented by the caller, so the xterm instance
+ * and its connection move with the session instead of reconnecting.
+ */
+export function swapPaneSessions(layout: PaneLayout | null, first: string, second: string): PaneLayout | null {
+  if (!layout || first === second) return layout;
+  if (!containsPaneSession(layout, first) || !containsPaneSession(layout, second)) return layout;
+  function visit(node: PaneLayout): PaneLayout {
+    if (node.type === 'leaf') {
+      if (node.sessionKey === first) return paneLeaf(second);
+      if (node.sessionKey === second) return paneLeaf(first);
+      return node;
+    }
+    const nextFirst = visit(node.first);
+    const nextSecond = visit(node.second);
+    return nextFirst === node.first && nextSecond === node.second
+      ? node
+      : { ...node, first: nextFirst, second: nextSecond };
+  }
+  return visit(layout);
+}
+
+/** Finds a split by its path from the root: `'1'` steps into `first`, `'2'` into `second`. */
+export function splitAtPath(layout: PaneLayout | null, path: string): PaneSplit | null {
+  let node = layout;
+  for (const step of path) {
+    if (!node || node.type === 'leaf') return null;
+    node = step === '1' ? node.first : step === '2' ? node.second : null;
+  }
+  return node?.type === 'split' ? node : null;
+}
+
 /** Increase or decrease the active pane along its nearest matching split. */
 export function resizePane(
   layout: PaneLayout | null,
@@ -112,7 +146,7 @@ export function resizePane(
   if (layout.axis !== axis) return layout;
 
   const signedDelta = firstContains ? delta : -delta;
-  const ratio = Math.min(MAX_RATIO, Math.max(MIN_RATIO, layout.ratio + signedDelta));
+  const ratio = Math.min(PANE_MAX_RATIO, Math.max(PANE_MIN_RATIO, layout.ratio + signedDelta));
   return ratio === layout.ratio ? layout : { ...layout, ratio };
 }
 
@@ -123,7 +157,7 @@ export function setSplitRatio(
 ): PaneLayout | null {
   if (!layout || layout.type === 'leaf') return layout;
   if (layout === target) {
-    const clamped = Math.min(MAX_RATIO, Math.max(MIN_RATIO, ratio));
+    const clamped = Math.min(PANE_MAX_RATIO, Math.max(PANE_MIN_RATIO, ratio));
     return clamped === layout.ratio ? layout : { ...layout, ratio: clamped };
   }
   const first = setSplitRatio(layout.first, target, ratio);
