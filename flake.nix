@@ -87,7 +87,7 @@
           ];
           pnpmDeps = pkgs.fetchPnpmDeps {
             pname = "ope-term";
-            version = "0.1.1";
+            version = "0.2.0";
             src = applicationSource;
             pnpm = pkgs.pnpm_10;
             fetcherVersion = 4;
@@ -100,7 +100,7 @@
           };
           cargoCommonArgs = {
             pname = "ope-term";
-            version = "0.1.1";
+            version = "0.2.0";
             src = applicationSource;
             cargoLock = ./src-tauri/Cargo.lock;
             cargoToml = ./src-tauri/Cargo.toml;
@@ -138,7 +138,7 @@
           );
           frontend = pkgs.stdenvNoCC.mkDerivation {
             pname = "ope-term-frontend";
-            version = "0.1.1";
+            version = "0.2.0";
             src = source;
             inherit pnpmDeps;
             nativeBuildInputs = [

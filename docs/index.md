@@ -4,7 +4,7 @@
 
 `~/.ssh/config` の Host をピースのように並べ、踏み台から接続先までを組み立てます。Host を 1 台だけ置いた場合は `ProxyJump` を自動展開し、明示的に複数台を置いた場合はその順番で `direct-tcpip` トンネルを作ります。
 
-!!! warning "v0.1.1 alpha"
+!!! warning "v0.2.0 alpha"
 
     主要な SSH 認証、strict `known_hosts` 検証、自動再接続に対応していますが、OpenSSH config の全ディレクティブと24時間実機運用の検証は未完了です。日常運用へ投入する前に制約を確認してください。
 

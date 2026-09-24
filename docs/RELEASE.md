@@ -42,7 +42,7 @@ workflow artifact は OS / bundle ごとの directory から、重複 basename �
 
 ```bash
 just version-check
-just version-check --tag v0.1.1
+just version-check --tag v0.2.0
 just release-policy  # icon、bundle matrix、署名 gate、supply-chain step
 ```
 
