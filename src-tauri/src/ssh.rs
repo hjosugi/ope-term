@@ -384,6 +384,9 @@ async fn session_loop(
     mut log: Option<LogSink>,
 ) -> Result<CloseReason> {
     let mut sftp_session: Option<Arc<SftpSession>> = None;
+    // Set by a failed transfer so the next one reopens the subsystem instead
+    // of reusing a channel that may have died underneath the cached session.
+    let sftp_stale = Arc::new(AtomicBool::new(false));
     let transfers = Arc::new(Mutex::new(HashMap::<String, ActiveSftpTransfer>::new()));
     let listing_slots = Arc::new(Semaphore::new(MAX_ACTIVE_SFTP_LISTINGS));
     loop {
@@ -433,10 +436,19 @@ async fn session_loop(
                             let _ = reply.send(Err(format!("{error:#}")));
                             continue;
                         }
-                        let session = match open_sftp(handle, &mut sftp_session).await {
-                            Ok(session) => session,
-                            Err(error) => {
+                        let session = match tokio::time::timeout(
+                            CONNECTION_SETUP_TIMEOUT,
+                            open_sftp(handle, &mut sftp_session, &sftp_stale),
+                        )
+                        .await
+                        {
+                            Ok(Ok(session)) => session,
+                            Ok(Err(error)) => {
                                 let _ = reply.send(Err(format!("{error:#}")));
+                                continue;
+                            }
+                            Err(_) => {
+                                let _ = reply.send(Err("SFTP subsystemの開始が30秒でtimeoutしました".to_owned()));
                                 continue;
                             }
                         };
@@ -455,10 +467,15 @@ async fn session_loop(
                             continue;
                         }
                         let registry = Arc::clone(&transfers);
+                        let stale = Arc::clone(&sftp_stale);
                         tokio::spawn(async move {
+                            let was_cancelled = Arc::clone(&cancelled);
                             let result = crate::sftp::transfer(session, request, progress, cancelled)
                                 .await
                                 .map_err(|error| format!("{error:#}"));
+                            if result.is_err() && !was_cancelled.load(Ordering::Relaxed) {
+                                stale.store(true, Ordering::Relaxed);
+                            }
                             registry.lock().await.remove(&transfer_id);
                             let _ = reply.send(result);
                         });
@@ -585,7 +602,12 @@ fn register_transfer(
 async fn open_sftp(
     handle: &mut client::Handle<HostVerifier>,
     current: &mut Option<Arc<SftpSession>>,
+    stale: &AtomicBool,
 ) -> Result<Arc<SftpSession>> {
+    if stale.swap(false, Ordering::Relaxed) {
+        // Transfers still running keep their own handle; only new ones reopen.
+        *current = None;
+    }
     if let Some(session) = current {
         return Ok(Arc::clone(session));
     }

@@ -17,6 +17,10 @@ const MAX_REMOTE_NAME_BYTES: usize = 4 * 1024;
 const MAX_REMOTE_PATH_BYTES: usize = 32 * 1024;
 const MAX_TRANSFER_ID_BYTES: usize = 64;
 const MAX_LIST_ENTRIES: usize = 10_000;
+/// A fresh copy never grants group/other write, setuid, setgid, or sticky.
+const NEW_COPY_MODE_MASK: u32 = 0o755;
+/// Used when the source reports no mode: owner-only is the safe default.
+const UNKNOWN_SOURCE_MODE: u32 = 0o600;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -243,6 +247,7 @@ async fn upload(
             bail!("通常 file 以外は上書きできません");
         }
         if !request.overwrite {
+            emit(progress, &request.transfer_id, "conflict", 0, 0);
             bail!("remote file は既に存在します。上書き確認が必要です");
         }
     }
@@ -254,13 +259,18 @@ async fn upload(
     if remote_lstat(session, &temporary).await?.is_some() {
         bail!("upload 用の一時 file が既に存在します");
     }
-    let attributes = existing
-        .as_ref()
-        .map(|metadata| FileAttributes {
-            permissions: metadata.permissions,
-            ..FileAttributes::empty()
-        })
-        .unwrap_or_else(FileAttributes::empty);
+    // Replacing keeps the mode the remote owner already chose; a new file
+    // never becomes wider than the local source.
+    let permissions = match &existing {
+        Some(metadata) => metadata.permissions.map(replacement_mode),
+        None => local_source_mode(&local)
+            .await
+            .map(|mode| new_copy_mode(Some(mode))),
+    };
+    let attributes = FileAttributes {
+        permissions,
+        ..FileAttributes::empty()
+    };
     let mut remote = session
         .open_with_flags_and_attributes(
             temporary.clone(),
@@ -306,6 +316,30 @@ async fn upload(
     )
     .await?;
     Ok(transferred)
+}
+
+#[cfg(unix)]
+async fn local_source_mode(file: &fs::File) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = file.metadata().await.ok()?;
+    Some(metadata.permissions().mode())
+}
+
+#[cfg(not(unix))]
+async fn local_source_mode(_file: &fs::File) -> Option<u32> {
+    // Windows has no POSIX mode; let the server apply its own default.
+    None
+}
+
+/// Mode for a newly created copy of a file whose mode is `source`.
+pub(crate) fn new_copy_mode(source: Option<u32>) -> u32 {
+    source.map_or(UNKNOWN_SOURCE_MODE, |mode| mode & NEW_COPY_MODE_MASK)
+}
+
+/// Mode for a file that replaces `existing`: keep the operator's choice, but
+/// never carry setuid, setgid, or sticky bits through a transfer.
+pub(crate) fn replacement_mode(existing: u32) -> u32 {
+    existing & 0o777
 }
 
 async fn open_upload_source(path: &Path) -> Result<(fs::File, u64)> {
@@ -363,6 +397,7 @@ async fn download(
             bail!("通常 file 以外は上書きできません");
         }
         if !request.overwrite {
+            emit(progress, &request.transfer_id, "conflict", 0, 0);
             bail!("local file は既に存在します。上書き確認が必要です");
         }
     }
@@ -371,9 +406,13 @@ async fn download(
         .filter(|path| !path.as_os_str().is_empty())
         .ok_or_else(|| anyhow!("download 先の親 directory がありません"))?;
     let temporary = parent.join(format!(".ope-term-download-{}.part", request.transfer_id));
-    let mut local = OpenOptions::new()
-        .create_new(true)
-        .write(true)
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    // Owner-only until the final mode is applied, so a partially written copy
+    // of a private remote file is never readable by other local users.
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut local = options
         .open(&temporary)
         .await
         .context("download 用の一時 file を作成できません")?;
@@ -408,6 +447,20 @@ async fn download(
         return Err(error.context("download に失敗しました"));
     }
     drop(local);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = match &existing {
+            Some(current) => replacement_mode(current.permissions().mode()),
+            None => new_copy_mode(metadata.permissions),
+        };
+        if let Err(error) =
+            fs::set_permissions(&temporary, std::fs::Permissions::from_mode(mode)).await
+        {
+            let _ = fs::remove_file(&temporary).await;
+            return Err(error).context("download file の permission を設定できません");
+        }
+    }
     replace_local_file(
         &temporary,
         &target,
@@ -628,6 +681,25 @@ mod tests {
         }
         assert!(validate_remote_name("report 2026.txt").is_ok());
         assert!(validate_remote_path(&"x".repeat(MAX_REMOTE_PATH_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn new_copies_never_widen_the_source_mode() {
+        // A private file stays private, executables stay executable.
+        assert_eq!(new_copy_mode(Some(0o100600)), 0o600);
+        assert_eq!(new_copy_mode(Some(0o100755)), 0o755);
+        // Group/other write and setuid/setgid/sticky never propagate.
+        assert_eq!(new_copy_mode(Some(0o100666)), 0o644);
+        assert_eq!(new_copy_mode(Some(0o107777)), 0o755);
+        // A server that reports no mode gets the owner-only default.
+        assert_eq!(new_copy_mode(None), 0o600);
+    }
+
+    #[test]
+    fn replacements_keep_the_existing_mode_without_special_bits() {
+        assert_eq!(replacement_mode(0o100600), 0o600);
+        assert_eq!(replacement_mode(0o100775), 0o775);
+        assert_eq!(replacement_mode(0o104755), 0o755);
     }
 
     #[test]

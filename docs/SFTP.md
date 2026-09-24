@@ -10,14 +10,18 @@ SFTP は最終 hop の認証済み SSH handle に subsystem channel を追加し
 ## 操作
 
 1. `LOCAL` で操作を許可する local directory を選びます。
-2. local / remote の directory はダブルクリックで移動し、`↑` で親へ、`↻` で再読込します。
+2. local / remote の directory はダブルクリックまたは Enter で移動し、`↑` で親へ、`↻` で再読込します。
 3. local file を選んで `UPLOAD →`、または remote file を選んで `← DOWNLOAD` を押します。
 4. 同名 file がある場合だけ上書き確認が出ます。転送は queue の先頭から 1 件ずつ実行します。
 5. 実行中は byte 数と進捗率を表示します。`CANCEL` は一時 file を削除し、`RETRY` は新しい
-   transfer ID で同じ項目を queue に戻します。
+   transfer ID で同じ項目を queue に戻します。転送先が既に存在して失敗した項目の `RETRY` は、
+   上書きを改めて確認し、承認した場合だけ上書きで再実行します。
+6. 待機中・完了・失敗・cancel済みの項目は `×` で queue から外せます。実行中の項目は先に
+   `CANCEL` します。
 
 queueは100件までです。完了履歴は最新20件だけを保持し、失敗・cancel済み項目は確認と
-`RETRY` のため自動削除しません。
+`RETRY` のため自動削除しません。cancel か失敗かは Rust core の進捗 status と操作者の cancel
+要求だけで判定し、error 文言には依存しません。
 
 現時点では file の upload / download が対象です。directory の再帰転送、rename、削除、作成、
 permission 変更は行いません。
@@ -33,9 +37,18 @@ permission 変更は行いません。
 - 転送先へ直接書かず、同じ directory の `.part` file へ stream した後に rename します。
   上書き時は既存 file を一時退避し、rename 失敗時は復元します。確定前の失敗では `.part` を
   削除し、まれに復元自体が失敗した場合は、残した backup path を error に明示します。
-- remote entry の permission を一覧に表示します。既存 remote file の上書き時は permission を
-  引き継ぎます。
+- remote entry の permission を一覧に表示します。permission は転送で広げません。
+  - 新規作成する file は転送元の mode から group / other の書き込みと setuid / setgid / sticky を
+    除いた値にします（remote `0600` は local でも `0600`、実行 bit は保持）。転送元が mode を
+    返さない場合は `0600` です。
+  - 上書きでは既存 file の mode（特殊 bit を除く）を引き継ぎます。local の `0600` file を
+    download で上書きしても `0644` に広がりません。
+  - download の `.part` は Unix で `0600` として作成し、確定直前に最終 mode を設定します。
+    Windows は POSIX mode を持たないため、upload の新規 file は server 既定に従います。
 - file 全体を memory に載せず 256 KiB chunk で stream します。
+- 失敗した transfer の後は、次の transfer で SFTP subsystem を開き直します。channel が
+  切れた cached session を使い続けて `RETRY` が失敗し続けることはありません。subsystem の
+  開始は 30 秒で timeout します。
 - UI queueは1件ずつ実行し、Rust coreも同一SSH sessionの同時transferを8件で拒否します。
   異なるIDでも同じlocalまたはremote fileを使う並行transferは拒否し、backup同士の競合を
   防ぎます。transfer IDはtaskや一時fileを作る前に長さと文字種を検証します。

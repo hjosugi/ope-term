@@ -30,3 +30,8 @@ Labels: priority:P1, area:files, area:ssh, enhancement
 - 一覧DOMは250件ずつframe分割し、世代が変わった古いrenderを中止する。
 - `just check`（frontend / Rust tests、clippy、production build）と`pnpm run security:policy`、
   `just docs` を通過。
+- permissionは転送で広げない。新規copyは転送元mode & 0755（不明時0600）、上書きは既存modeを
+  維持し、downloadの`.part`は0600で作成する。
+- 失敗したtransferの後はSFTP subsystemを開き直し、subsystem開始を30秒でtimeoutする。
+- queueの待機中・完了・失敗項目を`×`で外せる。既存targetで失敗した項目の`RETRY`は上書きを
+  再確認する。cancel判定はRustの進捗statusとcancel要求だけを使う。一覧行はEnterでも開ける。

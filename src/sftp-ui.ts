@@ -10,7 +10,13 @@ import {
 import { IncrementalRenderer } from './incremental-render';
 import {
   pruneCompletedTransfers,
+  removeTransfer,
+  retryNeedsOverwriteConfirmation,
+  settleFailedTransfer,
+  transferActions,
   transferQueueHasCapacity,
+  type TransferAction,
+  type TransferProgressStatus,
   type TransferQueueStatus,
 } from './transfer-queue';
 
@@ -48,7 +54,7 @@ interface LocalScope {
 
 interface TransferProgress {
   transferId: string;
-  status: TransferStatus;
+  status: TransferProgressStatus;
   transferred: number;
   total: number;
 }
@@ -70,6 +76,10 @@ interface TransferItem {
   transferred: number;
   total: number;
   error?: string;
+  /** The target existed and overwrite was not confirmed. */
+  conflict?: boolean;
+  cancelRequested?: boolean;
+  lastProgress?: TransferProgressStatus;
 }
 
 export interface SftpPanel {
@@ -236,6 +246,16 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
             onSelect(entry);
           });
           row.addEventListener('dblclick', () => onOpen(entry));
+          // Keyboard parity with double-click: Enter selects and opens a directory.
+          row.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' || event.repeat) return;
+            event.preventDefault();
+            selectedRow?.classList.remove('selected');
+            row.classList.add('selected');
+            selectedRow = row;
+            onSelect(entry);
+            onOpen(entry);
+          });
           fragment.append(row);
         }
         container.append(fragment);
@@ -321,30 +341,19 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       const percent = transferPercent(item.transferred, item.total);
       state.textContent = item.status === 'running' ? `${percent}% · ${formatFileSize(item.transferred)}` : item.status;
       summary.append(direction, name, state);
-      const action = item.status === 'running' ? button('CANCEL') : item.status === 'failed' || item.status === 'cancelled' ? button('RETRY') : null;
-      if (action) {
-        action.addEventListener('click', () => {
-          if (item.status === 'running') {
-            const id = options.getConnectionId();
-            if (id === item.connectionId) {
-              void invoke('sftp_cancel', { sessionId: id, transferId: item.id });
-            }
-          } else {
-            const id = connectionId();
-            if (!id) return;
-            item.id = crypto.randomUUID();
-            item.connectionId = id;
-            item.status = 'queued';
-            item.transferred = 0;
-            item.total = 0;
-            item.error = undefined;
-            renderQueue();
-            void processQueue();
-          }
-        });
+      const actions = document.createElement('div');
+      actions.className = 'sftp-transfer-actions';
+      for (const kind of transferActions(item.status)) {
+        const action = kind === 'cancel'
+          ? button('CANCEL', '転送を中止')
+          : kind === 'retry'
+            ? button('RETRY', item.conflict && !item.overwrite ? '上書きを確認して再試行' : '再試行')
+            : button('×', 'queue から外す');
+        action.addEventListener('click', () => runTransferAction(item, kind));
+        actions.append(action);
       }
       row.append(summary);
-      if (action) row.append(action);
+      if (actions.childElementCount > 0) row.append(actions);
       if (item.error) {
         const error = document.createElement('p');
         error.textContent = item.error;
@@ -352,6 +361,39 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       }
       queueList.append(row);
     }
+  }
+
+  function runTransferAction(item: TransferItem, kind: TransferAction): void {
+    if (kind === 'cancel') {
+      const id = options.getConnectionId();
+      if (item.status === 'running' && id === item.connectionId) {
+        item.cancelRequested = true;
+        void invoke('sftp_cancel', { sessionId: id, transferId: item.id });
+      }
+      return;
+    }
+    if (kind === 'remove') {
+      if (removeTransfer(queue, item.id)) renderQueue();
+      return;
+    }
+    const id = connectionId();
+    if (!id) return;
+    if (retryNeedsOverwriteConfirmation(item)) {
+      const side = item.direction === 'upload' ? 'remote' : 'local';
+      if (!window.confirm(`${item.remoteName} は ${side} に存在します。上書きして再試行しますか？`)) return;
+      item.overwrite = true;
+    }
+    item.id = crypto.randomUUID();
+    item.connectionId = id;
+    item.status = 'queued';
+    item.transferred = 0;
+    item.total = 0;
+    item.error = undefined;
+    item.conflict = false;
+    item.cancelRequested = false;
+    item.lastProgress = undefined;
+    renderQueue();
+    void processQueue();
   }
 
   let queueRenderPending = false;
@@ -389,6 +431,11 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     const progress = new Channel<TransferProgress>();
     progress.onmessage = (event) => {
       if (event.transferId !== item.id) return;
+      item.lastProgress = event.status;
+      if (event.status === 'conflict') {
+        item.conflict = true;
+        return;
+      }
       item.status = event.status;
       item.transferred = event.transferred;
       item.total = event.total;
@@ -412,7 +459,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
       item.status = 'completed';
       await Promise.all([loadLocal(), loadRemote()]);
     } catch (error) {
-      item.status = String(error).includes('キャンセル') ? 'cancelled' : 'failed';
+      item.status = settleFailedTransfer(item.lastProgress, item.cancelRequested === true);
       item.error = String(error);
     } finally {
       processing = false;
@@ -427,7 +474,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     if (!id) return;
     pruneCompletedTransfers(queue);
     if (!transferQueueHasCapacity(queue)) {
-      options.notify('SFTP transfer queue は100件までです。失敗またはcancel済み項目を再試行してください。');
+      options.notify('SFTP transfer queue は100件までです。不要な項目を × で queue から外してください。');
       return;
     }
     queue.push({ ...item, id: crypto.randomUUID(), connectionId: id, status: 'queued', transferred: 0, total: 0 });
