@@ -1,0 +1,27 @@
+# Weekly 24 h fault-injection soak for the CachyOS lab machine (user unit).
+#
+# Install (as the lab user, not root):
+#   install -Dm644 contrib/systemd/ope-term-reliability-soak.{service,timer} -t ~/.config/systemd/user/
+#   systemctl --user edit ope-term-reliability-soak.service   # set the Environment= lines below
+#   systemctl --user enable --now ope-term-reliability-soak.timer
+#   loginctl enable-linger "$USER"                           # keep running without a login session
+[Unit]
+Description=ope-term 24 h SSH reliability soak with fault injection
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Required: the checkout, the soak route alias, and the real sshd behind the proxy.
+Environment=OPE_TERM_CHECKOUT=%h/src/ope-term
+Environment=SOAK_ROUTE=ope-term-soak
+Environment=SOAK_UPSTREAM=ssh.example.com
+Environment=SOAK_UPSTREAM_PORT=22
+Environment=DURATION=86400
+Environment=FAULT_EVERY=900
+Environment=FAULT_MODE=alternate
+WorkingDirectory=%h
+ExecStartPre=/usr/bin/env bash -c 'cd "$OPE_TERM_CHECKOUT" && cargo build --locked --release --manifest-path src-tauri/Cargo.toml --example reliability_soak'
+ExecStart=/usr/bin/env bash -c 'cd "$OPE_TERM_CHECKOUT" && OUT="artifacts/reliability/$(date -u +%%Y%%m%%dT%%H%%M%%SZ)" exec scripts/reliability-soak "$SOAK_ROUTE" "$SOAK_UPSTREAM" "$SOAK_UPSTREAM_PORT"'
+TimeoutStartSec=26h
+Nice=10

@@ -15,3 +15,15 @@ keepalive はあるが、切断後の再接続や screen/tmux への復帰を扱
   - inputは256 KiB chunk、sessionごとの未送信合計は4 MiB、backend queueは64件で停止する
 - [x] tmux/screen へ再 attach する opt-in workflow を設計する（固定argv、毎回確認、入力再送なし）
 - [ ] 24 h soak test とネットワーク断 fault injection を CI 外の定期検証で回す
+  - 無人soak driver（`--example reliability_soak`、製品と同じ`ssh::run`とUI同等の再接続方針、
+    heartbeatでreplay検出）、fault proxyの`drop` / `blackhole` / `alternate`、client report gate、
+    `scripts/reliability-soak`を実装済み
+  - 週次のscheduled workflow（30分・CI profile）とlab machine用systemd user timer（24時間）を用意。
+    24時間の完走記録（lab machineへのtimer導入と実行）は未完了
+
+## 切断理由
+
+`transport`は`cause`で`timeout`（keepalive / inactivity / TCP timer）と`network`（reset・EOF・
+network変更）を区別し、失敗したhopを表示する。serverの`SSH_MSG_DISCONNECT`は`remote` /
+`server_disconnect`として自動再接続しない。再接続中に経路がまだ回復していない`failed`
+（`network` / `timeout`）はbackoffを継続する。

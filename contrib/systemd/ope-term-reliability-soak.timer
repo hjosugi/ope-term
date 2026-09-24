@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the ope-term 24 h reliability soak weekly
+
+[Timer]
+OnCalendar=Sat *-*-* 01:00:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

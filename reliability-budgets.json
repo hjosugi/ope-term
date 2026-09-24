@@ -2,5 +2,13 @@
   "schemaVersion": 1,
   "minimumDurationSeconds": 86400,
   "minimumFaultEvents": 10,
-  "minimumTransferredBytes": 1
+  "minimumTransferredBytes": 1,
+  "minimumHeartbeatAckRatio": 0.95,
+  "profiles": {
+    "ci": {
+      "minimumDurationSeconds": 1500,
+      "minimumFaultEvents": 10,
+      "minimumHeartbeatAckRatio": 0.9
+    }
+  }
 }

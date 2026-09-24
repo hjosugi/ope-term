@@ -52,6 +52,16 @@ export interface AuthPrompt {
  */
 export type CloseReason = 'local' | 'remote' | 'transport' | 'failed';
 
+/**
+ * What ended an established SSH session, reported with the hop it happened on.
+ *
+ * - `timeout`: keepalive / inactivity / TCP timer expired — the path went silent.
+ * - `network`: the socket failed (reset, unreachable, EOF, local network change).
+ * - `server_disconnect`: the server sent SSH_MSG_DISCONNECT (reported as `remote`).
+ * - `shell_exit`: the remote shell closed its channel (reported as `remote`).
+ */
+export type DisconnectCause = 'timeout' | 'network' | 'server_disconnect' | 'shell_exit';
+
 export type SessionEvent =
   | { type: 'chain'; hops: HopStatus[] }
   | { type: 'hop'; hop: HopStatus }
@@ -59,7 +69,7 @@ export type SessionEvent =
   | { type: 'auth_prompt'; prompt: AuthPrompt }
   | { type: 'ready' }
   | { type: 'error'; message: string }
-  | { type: 'closed'; reason: CloseReason };
+  | { type: 'closed'; reason: CloseReason; cause?: DisconnectCause; hop?: string };
 
 export interface ConnectRequest {
   sessionId: string;

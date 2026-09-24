@@ -121,12 +121,14 @@ regex を切り替えて逐次検索できます。固定変数と秘密情報�
 | 理由 | 例 | 自動再接続 |
 |---|---|---|
 | `local` | タブを閉じた、`Ctrl+W` | しない |
-| `remote` | `exit` した、リモート側で kill された | しない |
-| `transport` | keepalive timeout、ネットワーク切替、接続断 | **する** |
+| `remote` | `exit` した、リモート側で kill された、server が SSH 接続を終了した | しない |
+| `transport` | keepalive timeout（`timeout`）、ネットワーク切替・接続断（`network`） | **する** |
 | `failed` | config・ホスト鍵・認証で shell に到達しなかった | しない |
 
-`transport` の場合だけ、1 秒 → 2 秒 → 4 秒 → 8 秒 → 16 秒（上限 30 秒）の
-exponential backoff で最大 5 回まで自動再接続します。hopbar に残り秒数と試行回数を出し、
+terminal には原因と失敗した hop（例: `応答が途絶えたため切断しました（keepalive timeout）（bastion）`）
+を表示します。`transport` の場合だけ、1 秒 → 2 秒 → 4 秒 → 8 秒 → 16 秒（上限 30 秒）の
+exponential backoff で最大 5 回まで自動再接続します。再接続中に経路がまだ戻らず接続できない
+場合も、残りの回数だけ backoff を続けます。hopbar に残り秒数と試行回数を出し、
 `今すぐ` で即時再試行、`自動再接続を停止` で打ち切れます。接続に成功すると試行回数は
 リセットされます。
 

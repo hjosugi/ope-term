@@ -1212,11 +1212,14 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
       discardPendingInput(session);
       const message = session.kind === 'local' && event.reason === 'remote'
         ? 'local shell が終了しました'
-        : closeMessage(event.reason);
+        : closeMessage(event.reason, event.cause, event.hop);
       session.terminal.writeln(
         `\r\n\x1b[38;2;127;137;150m[ope-term] ${message} · 再起動は Ctrl+Shift+Enter\x1b[0m`,
       );
-      if (session.kind === 'ssh' && shouldAutoRetry(event.reason, session.retryAttempt + 1)) {
+      if (
+        session.kind === 'ssh' &&
+        shouldAutoRetry(event.reason, session.retryAttempt + 1, event.cause, session.retryAttempt > 0)
+      ) {
         scheduleRetry(session);
       } else {
         clearRetryTimers(session);

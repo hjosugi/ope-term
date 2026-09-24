@@ -45,4 +45,29 @@ describe('reconnect policy', () => {
       expect(closeMessage(reason)).not.toBe('');
     }
   });
+
+  it('names the cause and the hop of a lost connection', () => {
+    expect(closeMessage('transport', 'timeout', 'bastion')).toContain('keepalive timeout');
+    expect(closeMessage('transport', 'timeout', 'bastion')).toContain('bastion');
+    expect(closeMessage('transport', 'network', 'db')).toContain('ネットワーク');
+    expect(closeMessage('remote', 'server_disconnect', 'db')).toContain('サーバー');
+    expect(closeMessage('remote', 'shell_exit', 'db')).toBe(closeMessage('remote'));
+    expect(closeMessage('transport')).toBe('接続が切断されました');
+  });
+
+  it('never retries a server that ended the connection on purpose', () => {
+    // The backend reports SSH_MSG_DISCONNECT as a remote close.
+    expect(shouldAutoRetry('remote', 1)).toBe(false);
+  });
+
+  it('keeps backing off while the path is still down during a reconnect', () => {
+    expect(shouldAutoRetry('failed', 2, 'network', true)).toBe(true);
+    expect(shouldAutoRetry('failed', 3, 'timeout', true)).toBe(true);
+    expect(shouldAutoRetry('failed', MAX_AUTO_RETRIES + 1, 'network', true)).toBe(false);
+    // A first connection that fails is the operator's to retry.
+    expect(shouldAutoRetry('failed', 1, 'network', false)).toBe(false);
+    // Authentication / host-key / config refusals carry no transport cause.
+    expect(shouldAutoRetry('failed', 2, undefined, true)).toBe(false);
+    expect(shouldAutoRetry('remote', 2, 'server_disconnect', true)).toBe(false);
+  });
 });

@@ -26,6 +26,7 @@ static AUTH_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const HOST_KEY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 const CONNECTION_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
+const DISCONNECT_RECORD_WAIT: Duration = Duration::from_secs(1);
 const MAX_AUTH_PROMPTS: usize = 32;
 const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
@@ -94,13 +95,29 @@ pub struct AuthPrompt {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {
-    Chain { hops: Vec<HopStatus> },
-    Hop { hop: HopStatus },
-    HostKeyPrompt { prompt: HostKeyPrompt },
-    AuthPrompt { prompt: AuthPrompt },
+    Chain {
+        hops: Vec<HopStatus>,
+    },
+    Hop {
+        hop: HopStatus,
+    },
+    HostKeyPrompt {
+        prompt: HostKeyPrompt,
+    },
+    AuthPrompt {
+        prompt: AuthPrompt,
+    },
     Ready,
-    Error { message: String },
-    Closed { reason: CloseReason },
+    Error {
+        message: String,
+    },
+    Closed {
+        reason: CloseReason,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cause: Option<DisconnectCause>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hop: Option<String>,
+    },
 }
 
 /// Why a session ended, so the UI can retry a lost link without retrying a
@@ -117,6 +134,274 @@ pub enum CloseReason {
     Transport,
     /// The session never reached a shell: config, host key, or authentication.
     Failed,
+}
+
+/// What ended an established SSH session, finer than [`CloseReason`] so the
+/// operator can tell a silent path from a broken socket from a server that
+/// hung up. The retry policy still keys on [`CloseReason`] alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisconnectCause {
+    /// A keepalive, inactivity, or TCP retransmission timer expired: the peer
+    /// or the path between us went silent.
+    Timeout,
+    /// The socket failed underneath SSH: a reset, an unreachable route, an EOF
+    /// without `SSH_MSG_DISCONNECT`, or a changed local network.
+    Network,
+    /// The server ended the SSH connection with `SSH_MSG_DISCONNECT`.
+    ServerDisconnect,
+    /// The remote shell sent EOF or closed its channel.
+    ShellExit,
+}
+
+/// The close reason plus, for SSH, which hop failed and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEnd {
+    pub reason: CloseReason,
+    pub cause: Option<DisconnectCause>,
+    pub hop: Option<String>,
+}
+
+impl From<CloseReason> for SessionEnd {
+    fn from(reason: CloseReason) -> Self {
+        Self {
+            reason,
+            cause: None,
+            hop: None,
+        }
+    }
+}
+
+/// A session that never reached a shell. `cause` is set only when the path
+/// failed (a socket error or timer inside the SSH transport, or a tunnel the
+/// previous hop could not open), never for config, host-key, or auth refusals,
+/// so the UI keeps backing off through an outage without retrying a rejection.
+#[derive(Debug)]
+pub struct SessionFailure {
+    pub error: anyhow::Error,
+    pub cause: Option<DisconnectCause>,
+    pub hop: Option<String>,
+}
+
+impl From<anyhow::Error> for SessionFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            cause: None,
+            hop: None,
+        }
+    }
+}
+
+/// A russh failure after every hop authenticated (opening the shell channel)
+/// keeps its transport cause; the failing hop is the last one but unnamed.
+impl From<russh::Error> for SessionFailure {
+    fn from(error: russh::Error) -> Self {
+        let error = anyhow::Error::from(error);
+        let cause = transport_cause(&error);
+        Self {
+            error,
+            cause,
+            hop: None,
+        }
+    }
+}
+
+impl SessionFailure {
+    fn transport(error: anyhow::Error, hop: &str, cause: DisconnectCause) -> Self {
+        Self {
+            error,
+            cause: Some(cause),
+            hop: Some(hop.to_owned()),
+        }
+    }
+
+    /// Keeps a transport cause only when russh itself failed underneath.
+    fn setup(error: anyhow::Error, hop: &str) -> Self {
+        let cause = transport_cause(&error);
+        Self {
+            error,
+            cause,
+            hop: cause.map(|_| hop.to_owned()),
+        }
+    }
+
+    pub fn end(&self) -> SessionEnd {
+        SessionEnd {
+            reason: CloseReason::Failed,
+            cause: self.cause,
+            hop: self.hop.clone(),
+        }
+    }
+}
+
+/// The transport cause of a setup error, if the failure came from the socket
+/// or russh's timers rather than from our own host-key or auth decisions.
+pub fn transport_cause(error: &anyhow::Error) -> Option<DisconnectCause> {
+    let io_cause = |io: &std::io::Error| {
+        if io.kind() == std::io::ErrorKind::TimedOut {
+            DisconnectCause::Timeout
+        } else {
+            DisconnectCause::Network
+        }
+    };
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<russh::Error>() {
+            return match error {
+                russh::Error::KeepaliveTimeout
+                | russh::Error::InactivityTimeout
+                | russh::Error::ConnectionTimeout => Some(DisconnectCause::Timeout),
+                russh::Error::IO(io) => Some(io_cause(io)),
+                russh::Error::Disconnect | russh::Error::HUP => Some(DisconnectCause::Network),
+                _ => None,
+            };
+        }
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return Some(io_cause(io));
+        }
+    }
+    None
+}
+
+/// The first hop whose SSH connection ended, and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisconnectRecord {
+    pub hop: String,
+    pub cause: DisconnectCause,
+}
+
+/// Collects the first disconnect across every hop of one route.
+///
+/// When a bastion link dies, the bastion's SSH task reports first and only
+/// then drops the tunnel under the next hop, so the first record names the
+/// hop that actually failed rather than every hop stacked on top of it.
+#[derive(Clone, Default)]
+pub struct DisconnectLog {
+    first: Arc<std::sync::Mutex<Option<DisconnectRecord>>>,
+    recorded: Arc<tokio::sync::Notify>,
+}
+
+impl DisconnectLog {
+    pub fn record(&self, hop: &str, cause: DisconnectCause) {
+        let mut first = self
+            .first
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if first.is_none() {
+            *first = Some(DisconnectRecord {
+                hop: hop.to_owned(),
+                cause,
+            });
+            self.recorded.notify_waiters();
+        }
+    }
+
+    pub fn get(&self) -> Option<DisconnectRecord> {
+        self.first
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Waits briefly for a record, because a channel can report its end a
+    /// moment before the SSH task that owns it runs the disconnect handler.
+    pub async fn wait(&self, limit: Duration) -> Option<DisconnectRecord> {
+        let notified = self.recorded.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if let Some(record) = self.get() {
+            return Some(record);
+        }
+        let _ = tokio::time::timeout(limit, notified).await;
+        self.get()
+    }
+}
+
+/// Records how a hop's SSH connection ended, then hands russh back the error
+/// (if any) so the connection task's join result still carries it.
+pub fn record_disconnect(
+    log: &DisconnectLog,
+    hop: &str,
+    reason: client::DisconnectReason<anyhow::Error>,
+) -> Result<()> {
+    log.record(hop, classify_disconnect(&reason));
+    match reason {
+        client::DisconnectReason::ReceivedDisconnect(_) => Ok(()),
+        client::DisconnectReason::Error(error) => Err(error),
+    }
+}
+
+/// Maps russh's view of a finished connection onto an operator-facing cause.
+pub fn classify_disconnect(reason: &client::DisconnectReason<anyhow::Error>) -> DisconnectCause {
+    match reason {
+        client::DisconnectReason::ReceivedDisconnect(_) => DisconnectCause::ServerDisconnect,
+        client::DisconnectReason::Error(error) => classify_error(error),
+    }
+}
+
+fn classify_error(error: &anyhow::Error) -> DisconnectCause {
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<russh::Error>() {
+            match error {
+                russh::Error::KeepaliveTimeout
+                | russh::Error::InactivityTimeout
+                | russh::Error::ConnectionTimeout => {
+                    return DisconnectCause::Timeout;
+                }
+                russh::Error::IO(io) if io.kind() == std::io::ErrorKind::TimedOut => {
+                    return DisconnectCause::Timeout;
+                }
+                _ => {}
+            }
+        }
+        if let Some(io) = cause.downcast_ref::<std::io::Error>()
+            && io.kind() == std::io::ErrorKind::TimedOut
+        {
+            return DisconnectCause::Timeout;
+        }
+    }
+    DisconnectCause::Network
+}
+
+/// Turns the shell loop's outcome and the first recorded hop disconnect into
+/// the reason the UI retries on.
+///
+/// A server that sent `SSH_MSG_DISCONNECT` ended the session on purpose, so
+/// it is a remote close and is not retried automatically. A timeout or a
+/// socket failure on any hop is a transport loss and is.
+pub fn resolve_session_end(
+    outcome: CloseReason,
+    final_hop: &str,
+    recorded: Option<DisconnectRecord>,
+) -> SessionEnd {
+    match outcome {
+        CloseReason::Local | CloseReason::Failed => outcome.into(),
+        CloseReason::Remote => SessionEnd {
+            reason: CloseReason::Remote,
+            cause: Some(DisconnectCause::ShellExit),
+            hop: Some(final_hop.to_owned()),
+        },
+        CloseReason::Transport => match recorded {
+            Some(DisconnectRecord {
+                hop,
+                cause: DisconnectCause::ServerDisconnect,
+            }) => SessionEnd {
+                reason: CloseReason::Remote,
+                cause: Some(DisconnectCause::ServerDisconnect),
+                hop: Some(hop),
+            },
+            Some(DisconnectRecord { hop, cause }) => SessionEnd {
+                reason: CloseReason::Transport,
+                cause: Some(cause),
+                hop: Some(hop),
+            },
+            None => SessionEnd {
+                reason: CloseReason::Transport,
+                cause: Some(DisconnectCause::Network),
+                hop: None,
+            },
+        },
+    }
 }
 
 pub enum SessionCommand {
@@ -203,7 +488,7 @@ pub async fn run(
     commands: mpsc::Receiver<SessionCommand>,
     host_key_answers: mpsc::Receiver<HostKeyAnswer>,
     auth_answers: mpsc::Receiver<AuthAnswer>,
-) -> Result<CloseReason> {
+) -> std::result::Result<SessionEnd, SessionFailure> {
     let route = request.route.clone();
     let chain = tokio::task::spawn_blocking(move || {
         let blocks = ssh_config::load_default()?;
@@ -246,6 +531,7 @@ pub async fn run(
     let mut handles = Vec::with_capacity(chain.len());
     let mut tunnel = None;
     let known_hosts_path = host_keys::default_path()?;
+    let disconnects = DisconnectLog::default();
     let host_key_answers = Arc::new(Mutex::new(host_key_answers));
     let auth_prompter = UiAuthPrompter {
         events: events.clone(),
@@ -274,6 +560,7 @@ pub async fn run(
             known_hosts_path: known_hosts_path.clone(),
             events: events.clone(),
             answers: Arc::clone(&host_key_answers),
+            disconnects: disconnects.clone(),
         };
         let config = Arc::new(client::Config {
             inactivity_timeout: Some(Duration::from_secs(30)),
@@ -290,11 +577,16 @@ pub async fn run(
             )
             .await
             .map_err(|_| {
-                anyhow!(
-                    "{} へのSSH handshakeが30秒でtimeoutしました",
-                    endpoint.alias
+                SessionFailure::transport(
+                    anyhow!(
+                        "{} へのSSH handshakeが30秒でtimeoutしました",
+                        endpoint.alias
+                    ),
+                    &endpoint.alias,
+                    DisconnectCause::Timeout,
                 )
-            })??
+            })?
+            .map_err(|error| SessionFailure::setup(error, &endpoint.alias))?
         } else {
             tokio::time::timeout(
                 CONNECTION_SETUP_TIMEOUT,
@@ -302,15 +594,22 @@ pub async fn run(
             )
             .await
             .map_err(|_| {
-                anyhow!(
-                    "{}:{} への接続が30秒でtimeoutしました",
-                    endpoint.hostname,
-                    endpoint.port
+                SessionFailure::transport(
+                    anyhow!(
+                        "{}:{} への接続が30秒でtimeoutしました",
+                        endpoint.hostname,
+                        endpoint.port
+                    ),
+                    &endpoint.alias,
+                    DisconnectCause::Timeout,
                 )
             })?
-            .with_context(|| format!("{}:{} へ接続できません", endpoint.hostname, endpoint.port))?
+            .with_context(|| format!("{}:{} へ接続できません", endpoint.hostname, endpoint.port))
+            .map_err(|error| SessionFailure::setup(error, &endpoint.alias))?
         };
-        authenticate(&mut handle, endpoint, &auth_prompter).await?;
+        authenticate(&mut handle, endpoint, &auth_prompter)
+            .await
+            .map_err(|error| SessionFailure::setup(error, &endpoint.alias))?;
         send(
             &events,
             SessionEvent::Hop {
@@ -328,12 +627,22 @@ pub async fn run(
                 handle.channel_open_direct_tcpip(&next.hostname, next.port.into(), "127.0.0.1", 0),
             )
             .await
-            .map_err(|_| anyhow!("{} へのtunnel openが30秒でtimeoutしました", next.alias))?
+            .map_err(|_| {
+                SessionFailure::transport(
+                    anyhow!("{} へのtunnel openが30秒でtimeoutしました", next.alias),
+                    &next.alias,
+                    DisconnectCause::Timeout,
+                )
+            })?
             .with_context(|| {
                 format!(
                     "{} から {} へのトンネルを開けません",
                     endpoint.alias, next.alias
                 )
+            })
+            // The previous hop could not reach the next one: the route is down.
+            .map_err(|error| {
+                SessionFailure::transport(error, &next.alias, DisconnectCause::Network)
             })?;
             tunnel = Some(channel.into_stream());
         }
@@ -359,20 +668,28 @@ pub async fn run(
     send(&events, SessionEvent::Ready);
 
     let outcome = session_loop(&mut channel, final_handle, commands, &events, &data, log).await;
+    let outcome = match outcome {
+        Ok(reason) => reason,
+        Err(error) => {
+            // The shell was already running, so a failure here is a lost link
+            // rather than a rejected connection. Report it and let the UI retry.
+            event_error(&events, &error);
+            CloseReason::Transport
+        }
+    };
+    // Read the hop that failed before our own disconnects below add records.
+    let recorded = if outcome == CloseReason::Transport {
+        disconnects.wait(DISCONNECT_RECORD_WAIT).await
+    } else {
+        None
+    };
     for handle in handles.iter_mut().rev() {
         let _ = handle
             .disconnect(Disconnect::ByApplication, "ope-term closed", "en")
             .await;
     }
-    match outcome {
-        Ok(reason) => Ok(reason),
-        Err(error) => {
-            // The shell was already running, so a failure here is a lost link
-            // rather than a rejected connection. Report it and let the UI retry.
-            event_error(&events, &error);
-            Ok(CloseReason::Transport)
-        }
-    }
+    let final_hop = chain.last().map_or("", |endpoint| endpoint.alias.as_str());
+    Ok(resolve_session_end(outcome, final_hop, recorded))
 }
 
 async fn session_loop(
@@ -640,10 +957,18 @@ struct HostVerifier {
     known_hosts_path: PathBuf,
     events: Channel<SessionEvent>,
     answers: Arc<Mutex<mpsc::Receiver<HostKeyAnswer>>>,
+    disconnects: DisconnectLog,
 }
 
 impl client::Handler for HostVerifier {
     type Error = anyhow::Error;
+
+    async fn disconnected(
+        &mut self,
+        reason: client::DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        record_disconnect(&self.disconnects, &self.hop, reason)
+    }
 
     async fn check_server_key(
         &mut self,
@@ -1162,8 +1487,15 @@ pub fn event_error(channel: &Channel<SessionEvent>, error: &anyhow::Error) {
     );
 }
 
-pub fn event_closed(channel: &Channel<SessionEvent>, reason: CloseReason) {
-    send(channel, SessionEvent::Closed { reason });
+pub fn event_closed(channel: &Channel<SessionEvent>, end: SessionEnd) {
+    send(
+        channel,
+        SessionEvent::Closed {
+            reason: end.reason,
+            cause: end.cause,
+            hop: end.hop,
+        },
+    );
 }
 
 #[cfg(test)]
@@ -1551,6 +1883,331 @@ sJWR7W+cGvJ/vLsw==
         assert!(!error.to_string().contains("never-print-this-secret"));
     }
 
+    /// A client handler that records disconnects exactly like `HostVerifier`.
+    struct RecordingClient {
+        hop: &'static str,
+        log: DisconnectLog,
+    }
+
+    impl client::Handler for RecordingClient {
+        type Error = anyhow::Error;
+
+        async fn check_server_key(
+            &mut self,
+            _server_public_key: &ssh_key::PublicKey,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+
+        async fn disconnected(
+            &mut self,
+            reason: client::DisconnectReason<Self::Error>,
+        ) -> Result<(), Self::Error> {
+            record_disconnect(&self.log, self.hop, reason)
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum RelayMode {
+        Forward,
+        /// Keep both sockets open but stop delivering bytes: a silent path.
+        Blackhole,
+        /// Close both sockets: a reset or a vanished route.
+        Drop,
+    }
+
+    /// A one-connection TCP relay whose path can go silent or break on demand.
+    async fn fault_relay(
+        target: std::net::SocketAddr,
+    ) -> (std::net::SocketAddr, tokio::sync::watch::Sender<RelayMode>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (mode_tx, mut mode_rx) = tokio::sync::watch::channel(RelayMode::Forward);
+        tokio::spawn(async move {
+            let (mut inbound, _) = listener.accept().await.unwrap();
+            let mut outbound = tokio::net::TcpStream::connect(target).await.unwrap();
+            let mut from_client = vec![0_u8; 32 * 1024];
+            let mut from_server = vec![0_u8; 32 * 1024];
+            loop {
+                tokio::select! {
+                    changed = mode_rx.changed() => {
+                        if changed.is_err() || *mode_rx.borrow() == RelayMode::Drop {
+                            return;
+                        }
+                    }
+                    read = inbound.read(&mut from_client) => {
+                        let Ok(read @ 1..) = read else { return };
+                        if *mode_rx.borrow() == RelayMode::Forward
+                            && outbound.write_all(&from_client[..read]).await.is_err()
+                        {
+                            return;
+                        }
+                    }
+                    read = outbound.read(&mut from_server) => {
+                        let Ok(read @ 1..) = read else { return };
+                        if *mode_rx.borrow() == RelayMode::Forward
+                            && inbound.write_all(&from_server[..read]).await.is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        (address, mode_tx)
+    }
+
+    /// Connects and authenticates a recording client to the password test
+    /// server through a fault relay, returning the server session handle too.
+    async fn recorded_session(
+        keepalive: Option<Duration>,
+    ) -> (
+        client::Handle<RecordingClient>,
+        DisconnectLog,
+        tokio::sync::watch::Sender<RelayMode>,
+        server::Handle,
+    ) {
+        let server_config = Arc::new(server::Config {
+            inactivity_timeout: None,
+            auth_rejection_time: Duration::from_millis(1),
+            auth_rejection_time_initial: Some(Duration::from_millis(1)),
+            keys: vec![
+                russh::keys::decode_secret_key(ENCRYPTED_ED25519_KEY, Some("test")).unwrap(),
+            ],
+            ..Default::default()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_address = listener.local_addr().unwrap();
+        let (handle_tx, handle_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await?;
+            let running = server::run_stream(
+                server_config,
+                socket,
+                TestAuthServer {
+                    mode: ServerAuthMode::Password,
+                },
+            )
+            .await?;
+            let _ = handle_tx.send(running.handle());
+            running.await
+        });
+        let (relay_address, relay) = fault_relay(server_address).await;
+        let log = DisconnectLog::default();
+        let config = client::Config {
+            inactivity_timeout: None,
+            keepalive_interval: keepalive,
+            keepalive_max: 2,
+            ..Default::default()
+        };
+        let mut client = client::connect(
+            Arc::new(config),
+            relay_address,
+            RecordingClient {
+                hop: "bastion",
+                log: log.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let authenticated = client
+            .authenticate_password("operator", "password-value")
+            .await
+            .unwrap();
+        assert!(authenticated.success());
+        let server_handle = handle_rx.await.unwrap();
+        (client, log, relay, server_handle)
+    }
+
+    #[tokio::test]
+    async fn a_silent_path_is_reported_as_a_timeout() {
+        let (_client, log, relay, _server) =
+            recorded_session(Some(Duration::from_millis(100))).await;
+        relay.send(RelayMode::Blackhole).unwrap();
+        let record = log.wait(Duration::from_secs(10)).await.expect("disconnect");
+        assert_eq!(
+            record,
+            DisconnectRecord {
+                hop: "bastion".to_owned(),
+                cause: DisconnectCause::Timeout,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_broken_socket_is_reported_as_a_network_loss() {
+        let (_client, log, relay, _server) = recorded_session(None).await;
+        relay.send(RelayMode::Drop).unwrap();
+        let record = log.wait(Duration::from_secs(10)).await.expect("disconnect");
+        assert_eq!(record.cause, DisconnectCause::Network);
+        assert_eq!(record.hop, "bastion");
+    }
+
+    #[tokio::test]
+    async fn a_server_disconnect_is_reported_as_a_deliberate_remote_close() {
+        let (_client, log, _relay, server) = recorded_session(None).await;
+        server
+            .disconnect(
+                Disconnect::ByApplication,
+                "maintenance".to_owned(),
+                "en".to_owned(),
+            )
+            .await
+            .unwrap();
+        let record = log.wait(Duration::from_secs(10)).await.expect("disconnect");
+        assert_eq!(record.cause, DisconnectCause::ServerDisconnect);
+        let end = resolve_session_end(CloseReason::Transport, "db", Some(record));
+        assert_eq!(end.reason, CloseReason::Remote);
+        assert_eq!(end.hop.as_deref(), Some("bastion"));
+    }
+
+    #[test]
+    fn classifies_timeouts_separately_from_socket_failures() {
+        let error =
+            |error: russh::Error| client::DisconnectReason::Error(anyhow::Error::from(error));
+        assert_eq!(
+            classify_disconnect(&error(russh::Error::KeepaliveTimeout)),
+            DisconnectCause::Timeout
+        );
+        assert_eq!(
+            classify_disconnect(&error(russh::Error::InactivityTimeout)),
+            DisconnectCause::Timeout
+        );
+        assert_eq!(
+            classify_disconnect(&error(russh::Error::IO(std::io::Error::from(
+                std::io::ErrorKind::TimedOut
+            )))),
+            DisconnectCause::Timeout
+        );
+        assert_eq!(
+            classify_disconnect(&error(russh::Error::IO(std::io::Error::from(
+                std::io::ErrorKind::ConnectionReset
+            )))),
+            DisconnectCause::Network
+        );
+        assert_eq!(
+            classify_disconnect(&error(russh::Error::Disconnect)),
+            DisconnectCause::Network
+        );
+        let wrapped = client::DisconnectReason::Error(
+            anyhow::Error::from(russh::Error::KeepaliveTimeout).context("hop 0"),
+        );
+        assert_eq!(classify_disconnect(&wrapped), DisconnectCause::Timeout);
+    }
+
+    #[test]
+    fn setup_failures_separate_an_unreachable_path_from_a_refusal() {
+        let refused = anyhow::Error::from(russh::Error::IO(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )))
+        .context("bastion:22 へ接続できません");
+        let failure = SessionFailure::setup(refused, "bastion");
+        assert_eq!(
+            failure.end(),
+            SessionEnd {
+                reason: CloseReason::Failed,
+                cause: Some(DisconnectCause::Network),
+                hop: Some("bastion".to_owned()),
+            }
+        );
+        let timed_out = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        assert_eq!(transport_cause(&timed_out), Some(DisconnectCause::Timeout));
+
+        // Host-key and authentication refusals are ours, not the network's.
+        let rejected = anyhow!("未知のホスト鍵を信頼しなかったため、接続を中止しました");
+        let failure = SessionFailure::setup(rejected, "bastion");
+        assert_eq!(failure.end(), SessionEnd::from(CloseReason::Failed));
+        assert_eq!(
+            transport_cause(&anyhow::Error::from(russh::Error::NotAuthenticated)),
+            None
+        );
+    }
+
+    #[test]
+    fn resolves_the_close_reason_the_retry_policy_sees() {
+        let record = |cause| {
+            Some(DisconnectRecord {
+                hop: "bastion".to_owned(),
+                cause,
+            })
+        };
+        assert_eq!(
+            resolve_session_end(
+                CloseReason::Transport,
+                "db",
+                record(DisconnectCause::Timeout)
+            ),
+            SessionEnd {
+                reason: CloseReason::Transport,
+                cause: Some(DisconnectCause::Timeout),
+                hop: Some("bastion".to_owned()),
+            }
+        );
+        assert_eq!(
+            resolve_session_end(CloseReason::Transport, "db", None),
+            SessionEnd {
+                reason: CloseReason::Transport,
+                cause: Some(DisconnectCause::Network),
+                hop: None,
+            }
+        );
+        assert_eq!(
+            resolve_session_end(CloseReason::Remote, "db", None),
+            SessionEnd {
+                reason: CloseReason::Remote,
+                cause: Some(DisconnectCause::ShellExit),
+                hop: Some("db".to_owned()),
+            }
+        );
+        assert_eq!(
+            resolve_session_end(CloseReason::Local, "db", record(DisconnectCause::Network)),
+            SessionEnd::from(CloseReason::Local)
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_the_first_hop_that_failed() {
+        let log = DisconnectLog::default();
+        let waiter = {
+            let log = log.clone();
+            tokio::spawn(async move { log.wait(Duration::from_secs(5)).await })
+        };
+        tokio::task::yield_now().await;
+        log.record("bastion", DisconnectCause::Timeout);
+        log.record("db", DisconnectCause::Network);
+        let first = waiter.await.unwrap().expect("record");
+        assert_eq!(first.hop, "bastion");
+        assert_eq!(log.get().unwrap().cause, DisconnectCause::Timeout);
+        assert!(
+            DisconnectLog::default()
+                .wait(Duration::from_millis(10))
+                .await
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn closed_events_carry_the_cause_and_hop() {
+        let event = serde_json::to_value(SessionEvent::Closed {
+            reason: CloseReason::Transport,
+            cause: Some(DisconnectCause::Timeout),
+            hop: Some("bastion".to_owned()),
+        })
+        .unwrap();
+        assert_eq!(event["reason"], "transport");
+        assert_eq!(event["cause"], "timeout");
+        assert_eq!(event["hop"], "bastion");
+        for (cause, expected) in [
+            (DisconnectCause::Network, "network"),
+            (DisconnectCause::ServerDisconnect, "server_disconnect"),
+            (DisconnectCause::ShellExit, "shell_exit"),
+        ] {
+            assert_eq!(serde_json::to_value(cause).unwrap(), expected);
+        }
+    }
+
     #[test]
     fn close_reasons_keep_the_wire_names_the_ui_switches_on() {
         for (reason, expected) in [
@@ -1559,9 +2216,16 @@ sJWR7W+cGvJ/vLsw==
             (CloseReason::Transport, "transport"),
             (CloseReason::Failed, "failed"),
         ] {
-            let event = serde_json::to_value(SessionEvent::Closed { reason }).unwrap();
+            let event = serde_json::to_value(SessionEvent::Closed {
+                reason,
+                cause: None,
+                hop: None,
+            })
+            .unwrap();
             assert_eq!(event["type"], "closed");
             assert_eq!(event["reason"], expected);
+            assert!(event.get("cause").is_none());
+            assert!(event.get("hop").is_none());
         }
     }
 }

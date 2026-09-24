@@ -8,6 +8,9 @@ mod local_files;
 mod local_terminal;
 #[cfg(feature = "app")]
 mod name_sort;
+/// Headless soak driver behind `cargo run --example reliability_soak`.
+#[cfg(feature = "app")]
+pub mod reliability;
 #[cfg(feature = "app")]
 mod session_log;
 #[cfg(feature = "app")]
@@ -171,7 +174,7 @@ mod application {
 
         let registry = Arc::clone(&state.terminals);
         tauri::async_runtime::spawn(async move {
-            let reason = match ssh::run(
+            let end = match ssh::run(
                 request,
                 log_directory,
                 on_event.clone(),
@@ -182,15 +185,15 @@ mod application {
             )
             .await
             {
-                Ok(reason) => reason,
-                Err(error) => {
-                    // Nothing reached a shell, so retrying would only repeat a
-                    // config, host key, or authentication failure.
-                    ssh::event_error(&on_event, &error);
-                    CloseReason::Failed
+                Ok(end) => end,
+                Err(failure) => {
+                    // Nothing reached a shell. The UI retries this only while it
+                    // is already reconnecting and the path itself was down.
+                    ssh::event_error(&on_event, &failure.error);
+                    failure.end()
                 }
             };
-            ssh::event_closed(&on_event, reason);
+            ssh::event_closed(&on_event, end);
             registry.lock().await.remove(&session_id);
         });
         Ok(())
@@ -308,7 +311,7 @@ mod application {
                     CloseReason::Failed
                 }
             };
-            ssh::event_closed(&on_event, reason);
+            ssh::event_closed(&on_event, reason.into());
             registry.lock().await.remove(&session_id);
         });
         Ok(())

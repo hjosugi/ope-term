@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Runs an unattended fault-injection soak: the fault proxy between ope-term's
+# SSH core and a real sshd, the headless soak driver through the proxy, and the
+# reliability gate over both reports.
+#
+# Usage: scripts/reliability-soak <route-alias[,alias...]> <upstream-host> [upstream-port]
+#
+# The route's SSH config must point its last hop at 127.0.0.1:$LISTEN_PORT with
+# HostKeyAlias set to the real host (see docs/RELIABILITY.md).
+set -euo pipefail
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 <route-alias[,alias...]> <upstream-host> [upstream-port]" >&2
+  exit 2
+fi
+
+route="$1"
+upstream_host="$2"
+upstream_port="${3:-22}"
+duration="${DURATION:-86400}"
+fault_every="${FAULT_EVERY:-900}"
+fault_mode="${FAULT_MODE:-alternate}"
+listen_port="${LISTEN_PORT:-2222}"
+heartbeat="${HEARTBEAT_SECONDS:-10}"
+profile="${PROFILE:-}"
+out="${OUT:-artifacts/reliability/$(date -u +%Y%m%dT%H%M%SZ)}"
+repository="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+soak_bin="${SOAK_BIN:-${CARGO_TARGET_DIR:-${repository}/src-tauri/target}/release/examples/reliability_soak}"
+
+for value in "$duration" "$fault_every" "$listen_port" "$heartbeat" "$upstream_port"; do
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "numeric settings must be positive integers: $value" >&2
+    exit 2
+  fi
+done
+if [[ ! -x "$soak_bin" ]]; then
+  echo "soak driver not found: $soak_bin" >&2
+  echo "build it with: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --example reliability_soak" >&2
+  exit 2
+fi
+
+# Stop injecting faults two minutes before the end: a blackholed link needs the
+# client's keepalive budget (about a minute) plus backoff to come back.
+quiet_after=$((duration > 240 ? duration - 120 : duration / 2))
+mkdir -p "$out"
+# The proxy outlives the driver slightly so the driver never sees it stop.
+node "${repository}/scripts/fault-proxy.mjs" \
+  --upstream-host "$upstream_host" \
+  --upstream-port "$upstream_port" \
+  --listen-port "$listen_port" \
+  --duration-seconds "$((duration + 120))" \
+  --fault-every-seconds "$fault_every" \
+  --fault-mode "$fault_mode" \
+  --quiet-after-seconds "$quiet_after" \
+  --report "$out/proxy.json" >"$out/proxy.log" 2>&1 &
+proxy_pid=$!
+cleanup() {
+  if kill -0 "$proxy_pid" 2>/dev/null; then
+    kill -TERM "$proxy_pid"
+    wait "$proxy_pid" || true
+  fi
+}
+trap cleanup EXIT
+
+for _ in $(seq 1 50); do
+  if grep -q "Fault proxy listening" "$out/proxy.log" 2>/dev/null; then break; fi
+  sleep 0.1
+done
+
+driver_status=0
+"$soak_bin" \
+  --route "$route" \
+  --duration-seconds "$duration" \
+  --heartbeat-seconds "$heartbeat" \
+  --report "$out/client.json" >"$out/client.log" 2>&1 || driver_status=$?
+cleanup
+trap - EXIT
+
+if [[ $driver_status -ne 0 ]]; then
+  echo "soak driver failed with status $driver_status; see $out/client.log" >&2
+  exit "$driver_status"
+fi
+
+gate_args=("$out/proxy.json" "$out/client.json")
+if [[ -n "$profile" ]]; then gate_args+=(--profile "$profile"); fi
+node "${repository}/scripts/reliability-gate.mjs" "${gate_args[@]}" | tee "$out/gate.txt"

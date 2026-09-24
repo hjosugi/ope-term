@@ -20,7 +20,7 @@ lint:
     ./scripts/run-cached pnpm run release:policy
     ./scripts/run-cached actionlint
     ./scripts/run-cached buildifier -mode=check BUILD.bazel MODULE.bazel REPO.bazel
-    ./scripts/run-cached shellcheck -x -P scripts scripts/cache-env.sh scripts/nix-local scripts/run-bazel scripts/run-cached scripts/run-fuzz
+    ./scripts/run-cached shellcheck -x -P scripts scripts/cache-env.sh scripts/nix-local scripts/reliability-soak scripts/run-bazel scripts/run-cached scripts/run-fuzz
     ./scripts/run-cached nixfmt --check flake.nix
     ./scripts/run-cached cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
     ./scripts/run-cached cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
@@ -116,8 +116,14 @@ reliability-soak upstream upstream_port="22" listen_port="2222" duration="86400"
         --fault-every-seconds {{fault_every}} \
         --report {{report}}
 
-reliability-gate report:
-    ./scripts/run-cached node scripts/reliability-gate.mjs {{report}}
+reliability-gate report client="":
+    ./scripts/run-cached node scripts/reliability-gate.mjs {{report}} {{client}}
+
+reliability-driver:
+    ./scripts/run-cached cargo build --locked --release --manifest-path src-tauri/Cargo.toml --example reliability_soak
+
+reliability-soak-auto route upstream upstream_port="22": reliability-driver
+    ./scripts/run-cached scripts/reliability-soak {{route}} {{upstream}} {{upstream_port}}
 
 nix:
     ./scripts/nix-local flake check
