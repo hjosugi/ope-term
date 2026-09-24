@@ -51,7 +51,7 @@ Host が多い config では先頭 200 件までを描画し、残りは件数�
 
 毎日同じ踏み台と接続先を組み直さないために、ルートに名前を付けて保存できます。
 
-- SAVED ROUTES に名前を入力して `ルートを保存`（`Ctrl+K Ctrl+S`）で保存します。
+- SAVED ROUTES に名前を入力して `ルートを保存`（`Ctrl+Shift+K Ctrl+S`）で保存します。
   名前を省略すると接続先の alias を使います。
 - 保存するのは `~/.ssh/config` の alias だけです。hostname / user / port / ProxyJump は
   複製せず、接続時に毎回 config を解決します。
@@ -88,7 +88,7 @@ SSH 接続を作り直さず、その DOM を pane へ移します。
   そのまま移動し、再接続しません。
 - hopbar の `×` または `Pane: 現在の pane を閉じる` は表示だけを閉じます。session と接続は
   tab に残るため、tab を選ぶと現在の pane へ戻せます。
-- tab 自体の `×` または `Ctrl+W` は session を終了します。
+- tab 自体の `×` または `Ctrl+Shift+W` は session を終了します。
 - 非表示 tab を選ぶと、focus 中の pane の内容だけをその session へ入れ替えます。
 
 分割レイアウトの復元時も接続は自動開始しません。各 pane は前回の route を表示した idle
@@ -120,7 +120,7 @@ regex を切り替えて逐次検索できます。固定変数と秘密情報�
 
 | 理由 | 例 | 自動再接続 |
 |---|---|---|
-| `local` | タブを閉じた、`Ctrl+W` | しない |
+| `local` | タブを閉じた、`Ctrl+Shift+W` | しない |
 | `remote` | `exit` した、リモート側で kill された、server が SSH 接続を終了した | しない |
 | `transport` | keepalive timeout（`timeout`）、ネットワーク切替・接続断（`network`） | **する** |
 | `failed` | config・ホスト鍵・認証で shell に到達しなかった | しない |
@@ -167,40 +167,63 @@ keyboard-interactive は、password と OTP のような複数質問および複
 
 | 既定キー | コマンド |
 |---|---|
-| `Ctrl+Shift+P` | Command Palette |
+| `Ctrl+Shift+P` | Command Palette を開く / 閉じる |
 | `Ctrl+K` | Host 検索 |
 | `Ctrl+Enter` | 現在のルート、または選択中タブへ接続 |
 | `Ctrl+Backspace` | ルートをクリア |
 | `Ctrl+N` | 新しいルート |
-| `Ctrl+K Ctrl+S` | 現在のルートを保存 |
+| `Ctrl+Shift+K Ctrl+S` | 現在のルートを保存 |
 | `Ctrl+Shift+R` | SSH config を再読み込み |
-| `Ctrl+W` | 現在のセッションを閉じる |
+| `Ctrl+Shift+W` | 現在のセッションを閉じる |
 | `Ctrl+Tab` | 次のセッション |
 | `Ctrl+Shift+Enter` | 現在のセッションへ接続 / 再接続 |
 | `Ctrl+Shift+F` | SFTP file manager を開く / 閉じる |
 | `Ctrl+Shift+L` | 新しい local terminal を開く |
 | `Ctrl+Shift+G` | 現在の host / profile の session log を設定 |
 | `Ctrl+Alt+G` | Session log viewer |
-| `Ctrl+K Ctrl+ArrowRight` | 右に分割 |
-| `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
+| `Ctrl+Shift+K Ctrl+ArrowRight` | 右に分割 |
+| `Ctrl+Shift+K Ctrl+ArrowDown` | 下に分割 |
 | `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |
 | `Ctrl+Shift+Alt+Arrow` | 表示中の session を指定方向の pane と入れ替える |
 | `Ctrl+ArrowUp` / `Ctrl+ArrowDown` | 前 / 次の command へ移動（local terminal の OSC 133 opt-in 時） |
-| `Ctrl+K Ctrl+X` | 現在の pane を閉じる（session は残す） |
-| `Ctrl+K Ctrl+Shift+Arrow` | 現在の pane を広げる / 狭める |
-| `Ctrl+K Ctrl+K` | Keyboard Shortcuts |
+| `Ctrl+Shift+K Ctrl+X` | 現在の pane を閉じる（session は残す） |
+| `Ctrl+Shift+K Ctrl+Shift+Arrow` | 現在の pane を広げる / 狭める |
+| `Ctrl+Shift+K Ctrl+K` | Keyboard Shortcuts |
 
 Command Palette で `Keyboard Shortcuts` を開き、キー欄をクリックして新しい組み合わせを
 入力できます。multi-chord は続けて入力し、最後の入力から1.2秒後に確定します。最大4 chord
 まで設定できます。変更は Tauri WebView のローカルストレージへ保存されます。
 
-macOS では既定の `Ctrl` を `Cmd` として表示・実行し、Linux / Windows では `Ctrl` を使います。
-別OSで保存したJSONを読み込むと primary modifier を現在のOSへ移行します。旧v1設定は、
-macOSで初めて開いたときに既定値だけをCmdへ移し、明示的なCtrl customizationは保持します。
+表は Linux / Windows の既定値です。macOS では primary modifier に `Cmd` を使い、multi-chord は
+`Cmd+K` で始まります（例: `Cmd+K Cmd+S`）。`Cmd+Tab` は OS の app 切替なので、次の session は
+macOS でも `Ctrl+Tab` です。Windows では Meta キーを `Win` と表示します。
 
-各commandには `terminalFocus`、`routeFocus`、`paletteOpen`、`shortcutEditorOpen` の context keyを
-組み合わせた `when` 条件があります。同じkey sequenceでも同時に成立しないcontextなら共存でき、
-同時に成立する割り当てはeditorで赤い競合警告を表示します。
+Linux / Windows の shell は `Ctrl+W`（単語削除）、`Ctrl+K`（行末まで削除）、`Ctrl+N` / `Ctrl+P`
+（履歴）などの素の `Ctrl+<key>` を使います。terminal に keyboard focus がある間は、これらを
+shortcut として奪わず shell へ渡します。そのため terminal 内で使う command の既定値は
+`Ctrl+Shift+W` や `Ctrl+Shift+K` で始まる chord にしています。`Ctrl+K`（Host 検索）や `Ctrl+N` は
+route 画面など terminal 以外で動きます。以前の既定値（`Ctrl+W`、`Ctrl+K ...`）のまま保存されて
+いた割り当ては、起動時に新しい既定値へ移行します。独自に変更した割り当ては保持します。
+
+別OSで書き出したJSONを読み込むと、その OS の既定値のままの割り当ては現在の OS の既定値にし、
+独自の割り当ては `Ctrl` と `Cmd` を入れ替えて移行します（両方向、`Ctrl+Tab` は維持）。旧v1設定は、
+macOSで初めて開いたときに既定値だけをCmdへ移し、明示的なCtrl customizationは保持します。
+書き出しは native の保存 dialog で行い、Rust core が version 付き shortcut JSON であることを確認して
+から書き込みます。読み込み時は不正なキーの件数と競合の件数を通知します。
+
+各commandには `terminalFocus`（terminal pane の表示中）、`routeFocus`（route 画面の表示中）、
+`paletteOpen`（Command Palette の表示中）、`shortcutEditorOpen` の context keyを組み合わせた
+`when` 条件があります。Command Palette の表示中も修飾キー付きの shortcut は `paletteOpen` を
+真として評価するため、`Ctrl+Shift+P` で palette を閉じられ、`!paletteOpen` の command は
+palette の入力を妨げません。同じkey sequenceでも同時に成立しないcontextなら共存できます。
+
+editor は次を警告します。
+
+- 赤: 同時に成立する context で同じ sequence を持つ割り当て（競合）
+- 黄: 別の command の先頭 chord と同じ sequence（1.2 秒待ってから実行される）
+- 黄: 修飾キーの無い最初の chord（入力欄や terminal の文字を奪う。記録時は拒否し、F1–F24 は可）
+- 黄: OS が先に使うキー（macOS の `Cmd+Q` / `Cmd+Tab` / `Cmd+H` など）や、terminal 専用 command に
+  割り当てた shell 用の `Ctrl+<key>`
 
 footerの `JSON を保存` / `JSON を読込` でversion付き設定を持ち運べます。読込は64 KiBに制限し、
 未知commandを無視して不足項目を現在OSの既定値で補います。

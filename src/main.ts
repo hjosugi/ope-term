@@ -345,9 +345,9 @@ const commands: CommandDefinition[] = [
   {
     id: 'workbench.action.showCommands',
     category: 'View',
-    label: 'Command Palette を表示',
-    when: '!paletteOpen && !shortcutEditorOpen',
-    run: () => commandUi.openPalette(),
+    label: 'Command Palette を表示 / 閉じる',
+    when: '!shortcutEditorOpen',
+    run: () => commandUi.togglePalette(),
   },
   {
     id: 'workbench.action.quickOpenHost',
@@ -469,6 +469,10 @@ commandUi = new CommandUi({
     terminalFocus: !ui.terminalStage.classList.contains('hidden'),
     routeFocus: !ui.builder.classList.contains('hidden'),
   }),
+  terminalInputFocused: () =>
+    document.activeElement instanceof HTMLElement &&
+    document.activeElement.closest('.xterm') !== null,
+  saveExport: (contents) => invoke<boolean>('export_keybindings', { contents }),
   toast,
 });
 

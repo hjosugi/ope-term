@@ -358,9 +358,11 @@ h1 { margin: 0; font-size: var(--font-display); letter-spacing: var(--tracking-d
 .shortcut-list { overflow-y: auto; }
 .shortcut-row { min-height: var(--control-lg); padding: var(--space-2) var(--dialog-gutter); border-bottom: var(--border-width) solid var(--line-soft); }
 .shortcut-row.conflict { box-shadow: inset var(--space-1) 0 var(--red); }
+.shortcut-row.warning { box-shadow: inset var(--space-1) 0 var(--amber); }
 .shortcut-command strong { display: block; font-size: var(--font-md); font-weight: 500; }
 .shortcut-command small { display: block; color: var(--muted); font: var(--font-2xs) var(--mono); }
 .shortcut-command .shortcut-conflict { margin-top: var(--space-1); color: var(--red); }
+.shortcut-command .shortcut-warning { margin-top: var(--space-1); color: var(--amber); }
 .shortcut-capture { justify-self: start; min-width: var(--shortcut-capture-min-width); border: var(--border-width) solid var(--line); background: var(--panel); color: #b9c0ca; padding: var(--space-2); cursor: pointer; font: var(--font-xs) var(--mono); }
 .shortcut-capture.recording { border-color: var(--amber); color: var(--amber); box-shadow: 0 0 0 var(--focus-ring-width) var(--amber-soft); }
 .shortcut-reset-one { border: 0; background: transparent; color: var(--muted); cursor: pointer; }

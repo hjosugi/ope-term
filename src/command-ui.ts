@@ -5,8 +5,11 @@ import {
   eventToChord,
   exportKeybindings,
   findKeybindingConflicts,
+  findKeybindingWarnings,
   formatKeySequence,
   importKeybindings,
+  isBareChord,
+  isTerminalReservedChord,
   loadKeybindings,
   resolveKeybinding,
   saveKeybindings,
@@ -53,6 +56,10 @@ interface CommandUiOptions {
   operatingSystem: OperatingSystem;
   additionalItems: () => PaletteItem[];
   baseContext: () => Pick<CommandContext, 'terminalFocus' | 'routeFocus'>;
+  /** True while keyboard focus is inside an xterm, where the shell owns plain Ctrl keys. */
+  terminalInputFocused: () => boolean;
+  /** Saves an export through the native save dialog; resolves false when cancelled. */
+  saveExport?: (contents: string) => Promise<boolean>;
   toast: (message: string) => void;
 }
 
@@ -62,6 +69,8 @@ export class CommandUi {
   readonly #operatingSystem: OperatingSystem;
   readonly #additionalItems: () => PaletteItem[];
   readonly #baseContext: () => Pick<CommandContext, 'terminalFocus' | 'routeFocus'>;
+  readonly #terminalInputFocused: () => boolean;
+  readonly #saveExport: ((contents: string) => Promise<boolean>) | undefined;
   readonly #toast: (message: string) => void;
   readonly #defaultBindings: Record<CommandId, string>;
   #bindings: Record<CommandId, string>;
@@ -79,6 +88,8 @@ export class CommandUi {
     this.#operatingSystem = options.operatingSystem;
     this.#additionalItems = options.additionalItems;
     this.#baseContext = options.baseContext;
+    this.#terminalInputFocused = options.terminalInputFocused;
+    this.#saveExport = options.saveExport;
     this.#toast = options.toast;
     this.#defaultBindings = defaultKeybindings(options.operatingSystem);
     this.#bindings = loadKeybindings(localStorage, options.operatingSystem);
@@ -97,6 +108,11 @@ export class CommandUi {
 
   closePalette(): void {
     this.#elements.palette.classList.add('hidden');
+  }
+
+  togglePalette(): void {
+    if (this.#elements.palette.classList.contains('hidden')) this.openPalette();
+    else this.closePalette();
   }
 
   openShortcutEditor(): void {
@@ -150,9 +166,22 @@ export class CommandUi {
       this.closeShortcutEditor();
       return true;
     }
-    if (!this.#elements.palette.classList.contains('hidden')) return false;
     const chord = eventToChord(event);
-    if (!chord || !this.#runKeybinding(chord)) return false;
+    if (!chord) return false;
+    const paletteOpen = !this.#elements.palette.classList.contains('hidden');
+    // The palette input owns plain typing and navigation keys; only modified
+    // chords are evaluated there, with `paletteOpen` true in the context.
+    if (paletteOpen && isBareChord(chord)) return false;
+    // The shell owns plain Ctrl keys while a terminal has focus (Linux/Windows).
+    if (
+      this.#pendingKeyChords.length === 0 &&
+      !paletteOpen &&
+      this.#terminalInputFocused() &&
+      isTerminalReservedChord(chord, this.#operatingSystem)
+    ) {
+      return false;
+    }
+    if (!this.#runKeybinding(chord)) return false;
     event.preventDefault();
     event.stopPropagation();
     return true;
@@ -222,15 +251,11 @@ export class CommandUi {
 
   #renderShortcuts(): void {
     this.syncKeybindingLabels();
-    const conflicts = findKeybindingConflicts(this.#bindings, this.#commands);
-    const conflictsByCommand = new Map<CommandId, CommandId[]>();
-    for (const conflict of conflicts) {
-      for (const commandId of conflict.commands) {
-        conflictsByCommand.set(
-          commandId,
-          conflict.commands.filter((candidate) => candidate !== commandId),
-        );
-      }
+    const warningsByCommand = new Map<CommandId, { kind: string; message: string }[]>();
+    for (const warning of findKeybindingWarnings(this.#bindings, this.#commands, this.#operatingSystem)) {
+      const existing = warningsByCommand.get(warning.commandId) ?? [];
+      existing.push(warning);
+      warningsByCommand.set(warning.commandId, existing);
     }
     const visible = fuzzyFilter(this.#elements.shortcutQuery.value, [...this.#commands], (command) =>
       `${command.category} ${command.label} ${command.id} ${this.#bindings[command.id]} ${command.when ?? ''}`,
@@ -238,8 +263,9 @@ export class CommandUi {
     this.#elements.shortcutList.replaceChildren();
     for (const command of visible) {
       const row = document.createElement('div');
-      const commandConflicts = conflictsByCommand.get(command.id) ?? [];
-      row.className = `shortcut-row${commandConflicts.length > 0 ? ' conflict' : ''}`;
+      const commandWarnings = warningsByCommand.get(command.id) ?? [];
+      const hasConflict = commandWarnings.some((warning) => warning.kind === 'conflict');
+      row.className = `shortcut-row${hasConflict ? ' conflict' : commandWarnings.length > 0 ? ' warning' : ''}`;
       const copy = document.createElement('span');
       copy.className = 'shortcut-command';
       const label = document.createElement('strong');
@@ -247,10 +273,10 @@ export class CommandUi {
       const id = document.createElement('small');
       id.textContent = `${command.id}${command.when ? ` · when ${command.when}` : ''}`;
       copy.append(label, id);
-      if (commandConflicts.length > 0) {
+      for (const commandWarning of commandWarnings) {
         const warning = document.createElement('small');
-        warning.className = 'shortcut-conflict';
-        warning.textContent = `競合: ${commandConflicts.join(', ')}`;
+        warning.className = commandWarning.kind === 'conflict' ? 'shortcut-conflict' : 'shortcut-warning';
+        warning.textContent = commandWarning.message;
         copy.append(warning);
       }
       const capture = document.createElement('button');
@@ -332,6 +358,10 @@ export class CommandUi {
 
   #recordShortcutChord(chord: string): void {
     if (!this.#recordingCommand) return;
+    if (this.#recordingChords.length === 0 && isBareChord(chord)) {
+      this.#toast('最初のキーには Ctrl / Alt / Cmd を含めてください（F1–F24 は単独で使えます）。');
+      return;
+    }
     this.#recordingChords.push(chord);
     if (this.#recordingChords.length >= 4) {
       this.#finishShortcutRecording();
@@ -372,11 +402,15 @@ export class CommandUi {
     return saved;
   }
 
-  #downloadShortcuts(): void {
-    const blob = new Blob(
-      [exportKeybindings(this.#bindings, this.#operatingSystem)],
-      { type: 'application/json' },
-    );
+  async #exportShortcuts(): Promise<void> {
+    const contents = exportKeybindings(this.#bindings, this.#operatingSystem);
+    if (this.#saveExport) {
+      // WebKitGTK / WKWebView ignore <a download>, so the desktop app saves
+      // through the native dialog and Rust writes the file.
+      if (await this.#saveExport(contents)) this.#toast('Keyboard Shortcuts を書き出しました。');
+      return;
+    }
+    const blob = new Blob([contents], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -395,7 +429,10 @@ export class CommandUi {
     const migration = imported.migratedFrom
       ? ` ${imported.migratedFrom} の Ctrl/Cmd を ${this.#operatingSystem} 向けに移行しました。`
       : '';
-    if (saved) this.#toast(`Keyboard Shortcuts を読み込みました。${migration}`);
+    const invalid = imported.invalid > 0 ? ` 不正なキー ${imported.invalid} 件は既定値のままです。` : '';
+    const conflicts = findKeybindingConflicts(this.#bindings, this.#commands).length;
+    const conflictNote = conflicts > 0 ? ` 競合が ${conflicts} 件あります。赤い行を確認してください。` : '';
+    if (saved) this.#toast(`Keyboard Shortcuts を読み込みました。${migration}${invalid}${conflictNote}`);
   }
 
   #bindEvents(): void {
@@ -434,7 +471,11 @@ export class CommandUi {
       this.#persistBindings();
       this.#renderShortcuts();
     });
-    this.#elements.shortcutExport.addEventListener('click', () => this.#downloadShortcuts());
+    this.#elements.shortcutExport.addEventListener('click', () => {
+      void this.#exportShortcuts().catch((error: unknown) => {
+        this.#toast(`Keyboard Shortcuts を書き出せません: ${String(error)}`);
+      });
+    });
     this.#elements.shortcutImportButton.addEventListener('click', () => {
       this.#cancelShortcutRecording();
       this.#elements.shortcutImport.value = '';

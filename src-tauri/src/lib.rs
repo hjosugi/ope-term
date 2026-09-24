@@ -432,7 +432,7 @@ mod application {
         let (selected_sender, selected_receiver) = oneshot::channel();
         app.dialog()
             .file()
-            .set_title("SFTP で使用する local directory")
+            .set_title("ope-term で使用する local directory を選択")
             .pick_folder(move |selected| {
                 let _ = selected_sender.send(selected);
             });
@@ -449,6 +449,61 @@ mod application {
             .await
             .map(Some)
             .map_err(|error| format!("{error:#}"))
+    }
+
+    const MAX_KEYBINDINGS_EXPORT_BYTES: usize = 64 * 1024;
+
+    /// Accepts only the versioned shortcut export the frontend produces, so the
+    /// save command can never be used to write arbitrary content.
+    fn validate_keybindings_export(contents: &str) -> Result<(), String> {
+        if contents.len() > MAX_KEYBINDINGS_EXPORT_BYTES {
+            return Err("shortcut 設定は 64 KiB 以下にしてください".to_owned());
+        }
+        let value: serde_json::Value = serde_json::from_str(contents)
+            .map_err(|_| "shortcut 設定が JSON ではありません".to_owned())?;
+        let valid = value.get("version").and_then(serde_json::Value::as_u64) == Some(2)
+            && value
+                .get("platform")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|platform| matches!(platform, "linux" | "macos" | "windows"))
+            && value
+                .get("bindings")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|bindings| bindings.values().all(serde_json::Value::is_string));
+        if valid {
+            Ok(())
+        } else {
+            Err("対応している shortcut JSON（version 2）ではありません".to_owned())
+        }
+    }
+
+    /// Writes the shortcut export where the operator picks in the native save
+    /// dialog. WebKitGTK and WKWebView do not handle `<a download>`.
+    #[tauri::command]
+    async fn export_keybindings(app: AppHandle, contents: String) -> Result<bool, String> {
+        validate_keybindings_export(&contents)?;
+        let (selected_sender, selected_receiver) = oneshot::channel();
+        app.dialog()
+            .file()
+            .set_title("Keyboard Shortcuts を書き出す")
+            .set_file_name("ope-term-keybindings.json")
+            .add_filter("JSON", &["json"])
+            .save_file(move |selected| {
+                let _ = selected_sender.send(selected);
+            });
+        let selected = selected_receiver
+            .await
+            .map_err(|_| "保存先の選択画面が応答せず終了しました".to_owned())?;
+        let Some(selected) = selected else {
+            return Ok(false);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|error| format!("保存先を path に変換できません: {error}"))?;
+        tokio::fs::write(&path, contents)
+            .await
+            .map_err(|error| format!("{} へ書き出せません: {error}", path.display()))?;
+        Ok(true)
     }
 
     #[tauri::command]
@@ -582,6 +637,7 @@ mod application {
                 local_list,
                 log_list,
                 log_search,
+                export_keybindings,
                 close_session,
                 answer_host_key,
                 answer_auth,
@@ -693,6 +749,27 @@ mod application {
             let started = tokio::time::Instant::now();
             assert!(!close_all_terminals(&terminals, std::time::Duration::from_millis(100)).await);
             assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        }
+
+        #[test]
+        fn exports_only_versioned_shortcut_json() {
+            let valid =
+                r#"{"version":2,"platform":"linux","bindings":{"route.connect":"Ctrl+Enter"}}"#;
+            assert!(validate_keybindings_export(valid).is_ok());
+            for invalid in [
+                "not json",
+                r#"{"version":1,"platform":"linux","bindings":{}}"#,
+                r#"{"version":2,"platform":"beos","bindings":{}}"#,
+                r#"{"version":2,"platform":"linux","bindings":{"route.connect":42}}"#,
+                r#"{"version":2,"platform":"linux"}"#,
+            ] {
+                assert!(validate_keybindings_export(invalid).is_err(), "{invalid}");
+            }
+            let oversized = format!(
+                r#"{{"version":2,"platform":"linux","bindings":{{"x":"{}"}}}}"#,
+                "a".repeat(MAX_KEYBINDINGS_EXPORT_BYTES)
+            );
+            assert!(validate_keybindings_export(&oversized).is_err());
         }
 
         #[test]
