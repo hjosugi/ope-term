@@ -1,9 +1,10 @@
 use std::env;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{ChildKiller, CommandBuilder, ExitStatus, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tokio::sync::mpsc;
@@ -13,6 +14,12 @@ use crate::ssh::{CloseReason, SessionEvent};
 
 pub(crate) const MAX_INPUT_BYTES: usize = 256 * 1024;
 const PTY_WRITE_QUEUE_CAPACITY: usize = 64;
+/// How long a shell gets to exit after SIGHUP before its process group is killed.
+const SHELL_EXIT_GRACE: Duration = Duration::from_secs(2);
+/// Upper bound for reaping after SIGKILL, so a close can never hang forever.
+const SHELL_REAP_LIMIT: Duration = Duration::from_secs(5);
+
+type ExitTask = tokio::task::JoinHandle<std::io::Result<ExitStatus>>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,8 +143,12 @@ pub async fn run(
         .with_context(|| format!("{} を PTY で起動できません", profile.program))?;
     drop(pair.slave);
     let mut killer = child.clone_killer();
-    let mut reader = pair.master.try_clone_reader()?;
-    let mut writer = pair.master.take_writer()?;
+    // portable-pty starts the shell with setsid(), so its pid also names the
+    // process group that holds its foreground jobs.
+    let process_group = child.process_id();
+    let master = pair.master;
+    let mut reader = master.try_clone_reader()?;
+    let mut writer = master.take_writer()?;
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(PTY_WRITE_QUEUE_CAPACITY);
     if let Err(error) = std::thread::Builder::new()
@@ -190,7 +201,7 @@ pub async fn run(
         return Err(error).context("local PTY reader thread を開始できません");
     }
 
-    let mut exit_task = tokio::task::spawn_blocking(move || child.wait());
+    let mut exit_task: ExitTask = tokio::task::spawn_blocking(move || child.wait());
     let _ = events.send(SessionEvent::Ready);
 
     loop {
@@ -206,33 +217,83 @@ pub async fn run(
                 Some(LocalCommand::Input(input)) => {
                     if input.len() > MAX_INPUT_BYTES {
                         drop(writer_tx);
-                        let _ = killer.kill();
-                        let _ = exit_task.await;
+                        terminate_shell(killer.as_mut(), process_group, &mut exit_task, SHELL_EXIT_GRACE).await;
+                        drop(master);
                         bail!("local terminal input が大きすぎます");
                     }
                     if writer_tx.send(input.into_bytes()).await.is_err() {
                         drop(writer_tx);
-                        let _ = killer.kill();
-                        let _ = exit_task.await;
+                        terminate_shell(killer.as_mut(), process_group, &mut exit_task, SHELL_EXIT_GRACE).await;
+                        drop(master);
                         bail!("local PTY input は終了しています");
                     }
                 }
                 Some(LocalCommand::Resize { cols, rows }) => {
-                    if let Err(error) = pair.master.resize(pty_size(cols, rows)) {
+                    if let Err(error) = master.resize(pty_size(cols, rows)) {
                         drop(writer_tx);
-                        let _ = killer.kill();
-                        let _ = exit_task.await;
+                        terminate_shell(killer.as_mut(), process_group, &mut exit_task, SHELL_EXIT_GRACE).await;
+                        drop(master);
                         return Err(error).context("local PTY のサイズを変更できません");
                     }
                 }
                 Some(LocalCommand::Close) | None => {
                     drop(writer_tx);
-                    let _ = killer.kill();
-                    let _ = exit_task.await;
+                    terminate_shell(killer.as_mut(), process_group, &mut exit_task, SHELL_EXIT_GRACE).await;
+                    // Closing the master also closes a Windows pseudoconsole,
+                    // which terminates every client still attached to it.
+                    drop(master);
                     return Ok(CloseReason::Local);
                 }
             }
         }
+    }
+}
+
+/// Ends a shell the way closing a terminal window does, then makes sure.
+///
+/// SIGHUP goes to the shell's whole process group so foreground jobs hang up
+/// with it (on Windows the killer terminates the shell). A shell or job that
+/// ignores the hangup is killed with SIGKILL after `grace`, and reaping is
+/// bounded so a close request can never wait forever. Jobs a user explicitly
+/// detached into another session (`nohup`, `setsid`, `disown`) are theirs.
+async fn terminate_shell(
+    killer: &mut (dyn ChildKiller + Send + Sync),
+    process_group: Option<u32>,
+    exit_task: &mut ExitTask,
+    grace: Duration,
+) {
+    if exit_task.is_finished() {
+        let _ = exit_task.await;
+        return;
+    }
+    #[cfg(unix)]
+    signal_process_group(process_group, libc::SIGHUP);
+    #[cfg(not(unix))]
+    let _ = process_group;
+    let _ = killer.kill();
+    if tokio::time::timeout(grace, &mut *exit_task).await.is_ok() {
+        return;
+    }
+    #[cfg(unix)]
+    signal_process_group(process_group, libc::SIGKILL);
+    let _ = killer.kill();
+    let _ = tokio::time::timeout(SHELL_REAP_LIMIT, &mut *exit_task).await;
+}
+
+/// Signals the process group led by the shell. The caller only does this
+/// before the shell is reaped, so the group id cannot have been reused.
+#[cfg(unix)]
+fn signal_process_group(process_group: Option<u32>, signal: libc::c_int) {
+    let Some(group) = process_group.and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
+        return;
+    };
+    // Never signal init, our own group, or "every process" (0 / 1 / negative).
+    if group <= 1 {
+        return;
+    }
+    // SAFETY: killpg only reads its two integer arguments.
+    unsafe {
+        libc::killpg(group, signal);
     }
 }
 
@@ -373,6 +434,84 @@ mod tests {
         assert!(status.success());
         #[cfg(windows)]
         let _ = status;
+    }
+
+    /// A shell whose whole process group ignores SIGHUP must still be gone,
+    /// grandchildren included, after a close: nothing is left orphaned.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn closing_kills_a_hangup_ignoring_process_group() {
+        let pair = native_pty_system()
+            .openpty(PtySize::default())
+            .expect("native PTY");
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args([
+            "-c",
+            "trap '' HUP; sleep 1000 & echo \"ope-term-grandchild=$!\"; wait",
+        ]);
+        let mut child = pair.slave.spawn_command(command).expect("spawn shell");
+        drop(pair.slave);
+        let mut killer = child.clone_killer();
+        let process_group = child.process_id();
+        let mut reader = pair.master.try_clone_reader().expect("reader");
+        let (pid_tx, pid_rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while let Ok(read) = reader.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                output.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&output);
+                if let Some(rest) = text.split("ope-term-grandchild=").nth(1)
+                    && let Some(pid) = rest.split_whitespace().next()
+                    && rest.contains('\n')
+                {
+                    let _ = pid_tx.send(pid.parse::<i32>().ok());
+                    return;
+                }
+            }
+            let _ = pid_tx.send(None);
+        });
+        let grandchild =
+            tokio::task::spawn_blocking(move || pid_rx.recv_timeout(Duration::from_secs(20)))
+                .await
+                .expect("join")
+                .expect("grandchild pid")
+                .expect("parse pid");
+        let mut exit_task: ExitTask = tokio::task::spawn_blocking(move || child.wait());
+
+        terminate_shell(
+            killer.as_mut(),
+            process_group,
+            &mut exit_task,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(exit_task.is_finished(), "shell was not reaped");
+        drop(pair.master);
+
+        // The grandchild is killed too; its zombie may linger until init reaps it.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = std::fs::read_to_string(format!("/proc/{grandchild}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit(')')
+                        .next()
+                        .map(|rest| rest.trim().chars().next())
+                })
+                .flatten();
+            if matches!(state, None | Some('Z')) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "grandchild {grandchild} survived: {state:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     #[cfg(unix)]

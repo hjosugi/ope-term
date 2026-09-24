@@ -49,7 +49,7 @@ mod application {
     use std::sync::Arc;
 
     use tauri::ipc::{Channel, Response};
-    use tauri::{AppHandle, State};
+    use tauri::{AppHandle, Manager, RunEvent, State};
     use tauri_plugin_dialog::DialogExt;
     use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
     use uuid::Uuid;
@@ -69,6 +69,10 @@ mod application {
 
     type TerminalMap = Arc<tokio::sync::Mutex<HashMap<String, TerminalControl>>>;
     const MAX_ACTIVE_TERMINALS: usize = 64;
+    /// How long app exit waits for every terminal task to finish closing. Local
+    /// shells need up to their SIGHUP grace plus reaping; SSH needs a disconnect.
+    const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(4);
+    const SHUTDOWN_SEND_LIMIT: std::time::Duration = std::time::Duration::from_millis(500);
     const TERMINAL_COMMAND_QUEUE_CAPACITY: usize = 64;
     const MAX_ACTIVE_LOG_SEARCHES: usize = 4;
 
@@ -114,6 +118,26 @@ mod application {
         Arc::clone(slots)
             .try_acquire_owned()
             .map_err(|_| format!("同時 log 検索は {MAX_ACTIVE_LOG_SEARCHES} 件までです"))
+    }
+
+    /// Asks every live terminal to close and waits, bounded, until their tasks
+    /// have removed themselves from the registry. Local shells are reaped by
+    /// their own task, so an emptied registry means no child is left behind.
+    async fn close_all_terminals(terminals: &TerminalMap, grace: std::time::Duration) -> bool {
+        let controls = terminals.lock().await.values().cloned().collect::<Vec<_>>();
+        for control in &controls {
+            let _ = tokio::time::timeout(SHUTDOWN_SEND_LIMIT, control.close()).await;
+        }
+        let deadline = tokio::time::Instant::now() + grace;
+        loop {
+            if terminals.lock().await.is_empty() {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
     }
 
     fn register_terminal(
@@ -562,8 +586,22 @@ mod application {
                 answer_host_key,
                 answer_auth,
             ])
-            .run(tauri::generate_context!())
-            .expect("failed to run ope-term");
+            .build(tauri::generate_context!())
+            .expect("failed to build ope-term")
+            .run(|app, event| {
+                if let RunEvent::Exit = event {
+                    // Closing the window must not orphan local shells or leave
+                    // SSH sessions half open: close every terminal before exit.
+                    let terminals = Arc::clone(&app.state::<AppState>().terminals);
+                    let closed = tauri::async_runtime::block_on(close_all_terminals(
+                        &terminals,
+                        SHUTDOWN_GRACE,
+                    ));
+                    if !closed {
+                        eprintln!("ope-term: some terminals did not close before exit");
+                    }
+                }
+            });
     }
 
     #[cfg(test)]
@@ -618,6 +656,43 @@ mod application {
                 .unwrap_err()
                 .contains(&MAX_ACTIVE_TERMINALS.to_string())
             );
+        }
+
+        #[tokio::test]
+        async fn closing_all_terminals_waits_for_every_task_to_finish() {
+            let terminals = TerminalMap::default();
+            for _ in 0..3 {
+                let key = Uuid::new_v4().hyphenated().to_string();
+                let (sender, mut receiver) = mpsc::channel(1);
+                terminals
+                    .lock()
+                    .await
+                    .insert(key.clone(), TerminalControl::Local(sender));
+                let registry = Arc::clone(&terminals);
+                tokio::spawn(async move {
+                    // Mirrors the connect task: finish the close, then deregister.
+                    if let Some(crate::local_terminal::LocalCommand::Close) = receiver.recv().await
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                        registry.lock().await.remove(&key);
+                    }
+                });
+            }
+            assert!(close_all_terminals(&terminals, std::time::Duration::from_secs(5)).await);
+            assert!(terminals.lock().await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn closing_all_terminals_is_bounded_when_a_task_never_finishes() {
+            let terminals = TerminalMap::default();
+            let (sender, _receiver) = mpsc::channel(1);
+            terminals.lock().await.insert(
+                Uuid::new_v4().hyphenated().to_string(),
+                TerminalControl::Local(sender),
+            );
+            let started = tokio::time::Instant::now();
+            assert!(!close_all_terminals(&terminals, std::time::Duration::from_millis(100)).await);
+            assert!(started.elapsed() < std::time::Duration::from_secs(3));
         }
 
         #[test]

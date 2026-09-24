@@ -104,7 +104,7 @@ queue、進捗、cancel、retry と安全上の制約は [SFTP file manager](SFT
 
 `Ctrl+Shift+L` で作成画面を開き、OS の既定 shell または検出済み profile と working directory を
 選びます。SSH と同じ tab / pane / resize / close lifecycle で動きます。shell integration は
-OSC 133 marker の受信だけを opt-in にできます。詳細は [Local terminal](LOCAL_TERMINAL.md) を
+opt-in で OSC 133 の command 境界を数え、prompt 間を移動できます。詳細は [Local terminal](LOCAL_TERMINAL.md) を
 参照してください。
 
 ## Session logs
@@ -185,6 +185,7 @@ keyboard-interactive は、password と OTP のような複数質問および複
 | `Ctrl+K Ctrl+ArrowDown` | 下に分割 |
 | `Ctrl+Alt+Arrow` | 指定方向の pane へ focus |
 | `Ctrl+Shift+Alt+Arrow` | 表示中の session を指定方向の pane と入れ替える |
+| `Ctrl+ArrowUp` / `Ctrl+ArrowDown` | 前 / 次の command へ移動（local terminal の OSC 133 opt-in 時） |
 | `Ctrl+K Ctrl+X` | 現在の pane を閉じる（session は残す） |
 | `Ctrl+K Ctrl+Shift+Arrow` | 現在の pane を広げる / 狭める |
 | `Ctrl+K Ctrl+K` | Keyboard Shortcuts |

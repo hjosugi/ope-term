@@ -23,3 +23,9 @@ Labels: priority:P1, area:terminal, enhancement
 - OSC 133 handler は opt-in。marker 数だけを表示し、command 内容を保存しない。
 - close、command channel 終了、reader / writer thread の起動失敗で child を kill + wait する。
   child waitは生成失敗し得る専用threadではなくTokio blocking taskで所有する。
+- closeはUnixでshellのprocess groupへSIGHUP、2秒後にSIGKILL、回収は5秒で打ち切る。HUPを
+  無視するshellと孫processが残らないことをLinux testで固定。最後にPTY masterを閉じる。
+- アプリ終了（`RunEvent::Exit`）で全terminalへcloseを送り、各taskの回収完了を最大4秒待つ。
+  接続処理中にtabを閉じた場合は登録完了後にcloseを送り直す。
+- OSC 133は`C`→`D`だけをcommandとして数え、失敗数とexit codeを表示する。prompt位置にxterm
+  markerを置き、`terminal.previousCommand` / `terminal.nextCommand`で移動できる。

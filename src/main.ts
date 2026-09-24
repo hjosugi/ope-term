@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { FitAddon } from '@xterm/addon-fit';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type IMarker } from '@xterm/xterm';
 import './style.css';
 
 import { clearAuthResponses, takeAndClearAuthResponses } from './auth-secrets';
@@ -49,6 +49,14 @@ import {
   saveLogPolicies,
 } from './session-log-settings';
 import { createSftpPanel, type SftpPanel } from './sftp-ui';
+import {
+  CommandBoundaryTracker,
+  MAX_PROMPT_MARKS,
+  formatCommandSummary,
+  nextPromptLine,
+  parseOsc133,
+  previousPromptLine,
+} from './shell-integration';
 import { readStorage } from './storage';
 import { boundedTerminalInputBytes, chunkTerminalInput } from './terminal-input';
 import type {
@@ -94,7 +102,9 @@ interface LocalSessionConfig {
   profileLabel: string;
   workingDirectory: LocalDirectory | null;
   shellIntegration: boolean;
-  commandBoundaries: number;
+  /** Present only when OSC 133 integration was opted in for this terminal. */
+  boundaries?: CommandBoundaryTracker;
+  promptMarkers: IMarker[];
 }
 
 interface LogFile {
@@ -399,6 +409,8 @@ const commands: CommandDefinition[] = [
   { id: 'pane.resizeNarrower', category: 'Pane', label: 'pane を横に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('horizontal', -0.05) },
   { id: 'pane.resizeTaller', category: 'Pane', label: 'pane を縦に広げる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', 0.05) },
   { id: 'pane.resizeShorter', category: 'Pane', label: 'pane を縦に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', -0.05) },
+  { id: 'terminal.previousCommand', category: 'Terminal', label: '前の command（OSC 133 prompt）へ移動', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => jumpToPrompt('previous') },
+  { id: 'terminal.nextCommand', category: 'Terminal', label: '次の command（OSC 133 prompt）へ移動', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => jumpToPrompt('next') },
   { id: 'pane.moveLeft', category: 'Pane', label: 'session を左の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('left') },
   { id: 'pane.moveRight', category: 'Pane', label: 'session を右の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('right') },
   { id: 'pane.moveUp', category: 'Pane', label: 'session を上の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('up') },
@@ -942,6 +954,11 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
       );
       await invoke('connect_session', { request, onEvent, onData });
     }
+    // The tab may have been closed or replaced while the backend was still
+    // registering this connection, when close_session could not find it yet.
+    if (!isCurrentConnection(session.connectionId, connectionId)) {
+      void invoke('close_session', { sessionId: connectionId }).catch(() => undefined);
+    }
   } catch (error) {
     handleSessionEvent(session, connectionId, { type: 'error', message: String(error) });
     handleSessionEvent(session, connectionId, { type: 'closed', reason: 'failed' });
@@ -1065,14 +1082,44 @@ function createSession(sessionRoute: string[], local?: LocalSessionConfig): Sess
   terminal.onData((data) => queueInput(session, data));
   terminal.onResize(({ cols, rows }) => queueResize(session, cols, rows));
   if (local?.shellIntegration) {
-    terminal.parser.registerOscHandler(133, () => {
-      local.commandBoundaries += 1;
-      renderHopbar(session);
+    const boundaries = new CommandBoundaryTracker();
+    local.boundaries = boundaries;
+    terminal.parser.registerOscHandler(133, (data) => {
+      const mark = parseOsc133(data);
+      // Unknown 133 sub-commands are consumed too, so they never render as text.
+      if (!mark) return true;
+      boundaries.record(mark);
+      if (mark.kind === 'prompt-start') rememberPrompt(local, terminal.registerMarker(0));
+      if (mark.kind === 'command-finished' || mark.kind === 'command-executed') renderHopbar(session);
       return true;
     });
   }
   renderHopbar(session);
   return session;
+}
+
+function rememberPrompt(local: LocalSessionConfig, marker: IMarker | undefined): void {
+  if (!marker) return;
+  local.promptMarkers = local.promptMarkers.filter((existing) => !existing.isDisposed);
+  local.promptMarkers.push(marker);
+  while (local.promptMarkers.length > MAX_PROMPT_MARKS) local.promptMarkers.shift()?.dispose();
+  marker.onDispose(() => {
+    local.promptMarkers = local.promptMarkers.filter((existing) => existing !== marker);
+  });
+}
+
+/** Scrolls to the previous / next OSC 133 prompt of the active local terminal. */
+function jumpToPrompt(direction: 'previous' | 'next'): void {
+  const session = activeSessionKey ? sessions.get(activeSessionKey) : undefined;
+  const local = session?.local;
+  if (!session || !local?.boundaries) {
+    if (session) toast('command 移動には local terminal の OSC 133 shell integration が必要です。');
+    return;
+  }
+  const lines = local.promptMarkers.filter((marker) => !marker.isDisposed).map((marker) => marker.line);
+  const top = session.terminal.buffer.active.viewportY;
+  const target = direction === 'previous' ? previousPromptLine(lines, top) : nextPromptLine(lines, top);
+  if (target !== null) session.terminal.scrollToLine(target);
 }
 
 function toggleActiveSftp(): void {
@@ -1463,10 +1510,10 @@ function renderHopbar(session: SessionUi): void {
   target.className = 'terminal-host';
   target.textContent = session.title;
   session.hopbar.append(target);
-  if (session.local?.shellIntegration) {
+  if (session.local?.boundaries) {
     const integration = document.createElement('span');
     integration.className = 'hop-retry';
-    integration.textContent = `OSC 133 · ${session.local.commandBoundaries} boundaries`;
+    integration.textContent = formatCommandSummary(session.local.boundaries.summary());
     session.hopbar.append(integration);
   }
   const closePaneButton = document.createElement('button');
@@ -1959,7 +2006,7 @@ async function createLocalTerminal(): Promise<void> {
     profileLabel: profile.label,
     workingDirectory: selectedLocalDirectory,
     shellIntegration: ui.localShellIntegration.checked,
-    commandBoundaries: 0,
+    promptMarkers: [],
   });
   sessions.set(session.key, session);
   const split = pendingPaneSplit;
