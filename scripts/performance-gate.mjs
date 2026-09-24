@@ -121,6 +121,18 @@ export function evaluatePerformanceReport(report, budgets) {
   };
 }
 
+/**
+ * Applies a named budget profile over the release budgets. Profiles exist for
+ * automated environments (e.g. software-rendered Xvfb in CI) whose absolute
+ * numbers are not comparable with a real machine but still catch regressions.
+ */
+export function selectPerformanceBudgets(budgets, profile) {
+  if (!profile) return budgets;
+  const overrides = budgets.profiles?.[profile];
+  requireValue(overrides && typeof overrides === "object", `Unknown performance budget profile: ${profile}`);
+  return { ...budgets, ...overrides };
+}
+
 async function readStandardInput() {
   let input = "";
   process.stdin.setEncoding("utf8");
@@ -129,9 +141,16 @@ async function readStandardInput() {
 }
 
 async function main() {
-  const reportPath = process.argv[2];
-  requireValue(reportPath, "Usage: node scripts/performance-gate.mjs <report.json>");
-  const budgets = JSON.parse(await readFile(resolve(root, "performance-budgets.json"), "utf8"));
+  const args = process.argv.slice(2);
+  const profileIndex = args.indexOf("--profile");
+  const profile = profileIndex >= 0 ? args[profileIndex + 1] : undefined;
+  if (profileIndex >= 0) args.splice(profileIndex, 2);
+  const reportPath = args[0];
+  requireValue(reportPath, "Usage: node scripts/performance-gate.mjs <report.json> [--profile name]");
+  const budgets = selectPerformanceBudgets(
+    JSON.parse(await readFile(resolve(root, "performance-budgets.json"), "utf8")),
+    profile,
+  );
   const reportSource =
     reportPath === "-" ? await readStandardInput() : await readFile(resolve(reportPath), "utf8");
   const result = evaluatePerformanceReport(JSON.parse(reportSource), budgets);

@@ -126,6 +126,49 @@ localStorage.removeItem('ope-term.performance.enabled');
 location.reload();
 ```
 
+### 自動計測（autorun）
+
+手順を人が操作しなくても同じ計測ができるよう、app に scripted measurement mode があります。
+`OPE_TERM_PERFORMANCE_REPORT` に絶対 path の `.json` を渡して起動した場合だけ有効になり、
+通常の起動では何もしません。WebView から report の保存先は指定できません。
+
+1. 起動直後に cold start を記録し、1.5 秒待って idle memory を測ります。
+2. 既定 shell の local terminal を 1 つ開き、shell が ready になってから 1 session の memory を
+   測ります。
+3. terminal の入力要素へ keydown を 120 回（2 frame 間隔）送り、keydown から次 frame までの
+   latency を記録します。入力した文字は `Ctrl+U` で消します。
+4. `node scripts/performance-fixture.mjs` を shell へ入力し、100 MiB が PTY → Rust → IPC Channel
+   → xterm を通り切るまで待ちます（上限 10 分）。
+5. report を書いて app を終了します。workspace / shortcut などの保存値は変更しません。
+
+memory は Linux で app process tree（WebKit の web / network process と PTY 子 process を含む）の
+RSS 合計を `/proc` から取ります。他 OS では未計測として gate が失敗するため、外部 tool で測った
+値を手動 report に記録してください。input latency は synthetic keydown から次 frame までで、
+OS / compositor の入力経路は含みません。この違いは report の `notes` に書かれます。
+
+```bash
+pnpm run bundle
+cargo build --locked --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol --bin ope-term
+node scripts/performance-autorun.mjs \
+  --app src-tauri/target/release/ope-term \
+  --output artifacts/performance/cachyos-wayland \
+  --renderers fallback,webgl \
+  --label "CachyOS Wayland"
+```
+
+runner は renderer ごとに app を起動し、各 report を gate へ通し、WebGL が実際に使えた場合は
+`performance-bundle` で WebGL / fallback の比較 bundle も作ります。実機では desktop session 上で、
+CI では `xvfb-run` の下で実行します。
+
+### CI gate（WebKitGTK / Xvfb）
+
+`.github/workflows/performance.yml` は push / pull request ごとに release build の app を Ubuntu
+runner の Xvfb 上で WebGL / fallback の両方について autorun し、report を artifact として保存します。
+GitHub-hosted runner の software rendering は実機と比較できないため、`performance-budgets.json` の
+`profiles.ci-linux-xvfb`（cold start、p99、memory、stall の上限を CI 向けに緩めたもの）で判定し、
+100 MiB の出力と 100 件以上の入力 sample は release budget と同じく必須です。桁が変わるような
+回帰を merge 前に止めるための gate で、release の合否は実機 report で決めます。
+
 ### Release gate
 
 thresholdの正本はrepository rootの`performance-budgets.json`です。reportを検証し、1項目でも
@@ -133,6 +176,7 @@ thresholdの正本はrepository rootの`performance-budgets.json`です。report
 
 ```bash
 just performance-gate artifacts/performance/cachyos-webkitgtk-webgl.json
+node scripts/performance-gate.mjs report.json --profile ci-linux-xvfb  # CI 用 profile
 ```
 
 最低100 input sample、100 MiB以上のoutputを要求します。gateはtimestamp、percentileの順序、
@@ -163,4 +207,7 @@ rendererごとの cold start、p99、memory、throughput、stall とdelta、お�
 
 WebKitGTK / WebView2 / WKWebView のWebGL・fallback比較、CachyOS/Wayland実測結果のartifact保存、
 24 h soak testは未完了です。report schema・100 MiB fixture・renderer固定・比較bundle・release
-gateは実装済みです。
+gate・自動計測runner・WebKitGTK（Xvfb）のCI gateは実装済みです。CachyOS Wayland実機では「自動計測」の
+autorun commandを負荷の無い状態で実行し、`artifacts/performance/cachyos-wayland/` を保存してください。
+WebView2 / WKWebViewはautorunがmemoryを測れないため、実機でmemoryを外部toolで補った手動reportが
+必要です。

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { evaluatePerformanceReport } from "./performance-gate.mjs";
+import { evaluatePerformanceReport, selectPerformanceBudgets } from "./performance-gate.mjs";
 
 const budgets = {
   schemaVersion: 1,
@@ -79,4 +79,19 @@ test("preserves the profiler warning signal when Long Tasks API is unavailable",
   const report = passingReport();
   report.output.longTaskObserverSupported = false;
   assert.equal(evaluatePerformanceReport(report, budgets).longTaskObserverSupported, false);
+});
+
+test("applies a named budget profile over the release budgets", () => {
+  const withProfiles = { ...budgets, profiles: { ci: { coldStartMs: 5_000, idleMemoryMiB: 900 } } };
+  const ci = selectPerformanceBudgets(withProfiles, "ci");
+  assert.equal(ci.coldStartMs, 5_000);
+  assert.equal(ci.idleMemoryMiB, 900);
+  assert.equal(ci.inputLatencyP99Ms, budgets.inputLatencyP99Ms);
+  assert.equal(selectPerformanceBudgets(withProfiles, undefined), withProfiles);
+  assert.throws(() => selectPerformanceBudgets(withProfiles, "nightly"), /Unknown performance budget profile/u);
+
+  const report = passingReport();
+  report.coldStartMs = 1_200;
+  assert.equal(evaluatePerformanceReport(report, budgets).passed, false);
+  assert.equal(evaluatePerformanceReport(report, ci).passed, true);
 });

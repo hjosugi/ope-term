@@ -19,6 +19,7 @@ import {
   type SessionState,
 } from './reconnect';
 import type { BrowserPerformanceHarness } from './performance';
+import type { AutorunConfig, AutorunSession } from './performance-autorun';
 import { loadRendererPreference } from './renderer-preference';
 import { PromptQueue } from './prompt-queue';
 import {
@@ -299,6 +300,8 @@ let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
 /** Until boot restores the stored tabs, persisting must not overwrite them. */
 let workspaceTabsRestored = false;
+/** A scripted performance run must never touch the operator's stored workspace. */
+let workspacePersistenceDisabled = false;
 let workspacePersistenceWarningShown = false;
 const operatingSystem = detectOperatingSystem();
 let commandUi: CommandUi;
@@ -315,7 +318,7 @@ const terminalFontFamily = cssTextToken(
 );
 const terminalFontSize = cssNumberToken(rootStyle, '--terminal-font-size', 13);
 const terminalLineHeight = cssNumberToken(rootStyle, '--terminal-line-height', 1.16);
-const rendererPreference = loadRendererPreference();
+let rendererPreference = loadRendererPreference();
 type WebglAddonConstructor = typeof import('@xterm/addon-webgl').WebglAddon;
 let WebglAddonClass: WebglAddonConstructor | undefined;
 let webglLoadError: unknown;
@@ -549,6 +552,7 @@ function renderRouteMap(): void {
 }
 
 function persistWorkspaces(): void {
+  if (workspacePersistenceDisabled) return;
   const tabs = workspaceTabsRestored
     ? snapshotWorkspaceTabs(
         [...sessions.values()].map((session) => ({
@@ -2311,13 +2315,105 @@ window.addEventListener('resize', () => {
   });
 });
 
+/**
+ * Switches this launch into the scripted measurement run requested through
+ * `OPE_TERM_PERFORMANCE_REPORT` (see scripts/performance-autorun.mjs).
+ */
+async function prepareAutorun(config: AutorunConfig): Promise<void> {
+  workspacePersistenceDisabled = true;
+  rendererPreference = config.renderer;
+  if (!performanceHarness) {
+    const { BrowserPerformanceHarness: Harness } = await import('./performance');
+    performanceHarness = new Harness();
+    performanceHarness.start();
+    window.__opeTermPerformance = performanceHarness;
+  }
+  if (config.renderer !== 'fallback' && !WebglAddonClass) {
+    await import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        WebglAddonClass = WebglAddon;
+      })
+      .catch((error: unknown) => {
+        webglLoadError = error;
+      });
+  }
+}
+
+async function openAutorunSession(): Promise<AutorunSession> {
+  const profiles = await invoke<ShellProfile[]>('list_shell_profiles');
+  const profile = profiles.find((candidate) => candidate.isDefault) ?? profiles[0];
+  if (!profile) throw new Error('local shell profile がありません');
+  const session = createSession([], {
+    profileId: profile.id,
+    profileLabel: profile.label,
+    workingDirectory: null,
+    shellIntegration: false,
+    promptMarkers: [],
+  });
+  sessions.set(session.key, session);
+  activateSession(session.key);
+  await startSession(session);
+  const deadline = performance.now() + 30_000;
+  while (session.state !== 'connected') {
+    if (session.state === 'closed' || performance.now() > deadline) {
+      throw new Error('local terminal が接続状態になりませんでした');
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  return {
+    pressKey: (key) => {
+      session.terminal.textarea?.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+      );
+    },
+    send: async (data) => {
+      if (session.connectionId) await invoke('session_input', { sessionId: session.connectionId, data });
+    },
+  };
+}
+
+async function runAutorun(config: AutorunConfig): Promise<void> {
+  void invoke('performance_autorun_progress', { stage: `started (${config.renderer})` }).catch(() => undefined);
+  const harness = performanceHarness;
+  let report: unknown;
+  try {
+    if (!harness) throw new Error('performance harness を読み込めませんでした');
+    const { runPerformanceAutorun } = await import('./performance-autorun');
+    report = await runPerformanceAutorun(config, {
+      harness,
+      memory: () => invoke<number | null>('performance_memory'),
+      openSession: openAutorunSession,
+      // A hidden or throttled WebView may never run animation frames; never hang on one.
+      nextFrame: () =>
+        new Promise((resolve) => {
+          const timer = window.setTimeout(resolve, 250);
+          window.requestAnimationFrame(() => {
+            window.clearTimeout(timer);
+            resolve();
+          });
+        }),
+      sleep: (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds)),
+      now: () => performance.now(),
+      progress: (stage) => void invoke('performance_autorun_progress', { stage }).catch(() => undefined),
+    });
+  } catch (error) {
+    // Still write a report and exit: the runner must never wait on a hung app,
+    // and this incomplete report fails the gate with the reason attached.
+    report = { schemaVersion: 1, environment: { renderer: 'unknown' }, error: String(error) };
+  }
+  await invoke('performance_autorun_finish', { report: JSON.stringify(report) });
+}
+
 async function boot(): Promise<void> {
+  const autorun = await invoke<AutorunConfig | null>('performance_autorun_config').catch(() => null);
+  if (autorun) await prepareAutorun(autorun);
   await Promise.all([performanceHarnessReady, rendererAddonReady]);
   commandUi.syncKeybindingLabels();
   await loadHosts();
   void loadConfigPath();
-  restoreTabs();
+  if (!autorun) restoreTabs();
   performanceHarness?.markReady();
+  if (autorun) void runAutorun(autorun);
 }
 
 void boot().catch((error: unknown) => {

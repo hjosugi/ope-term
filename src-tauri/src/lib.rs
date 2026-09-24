@@ -8,6 +8,8 @@ mod local_files;
 mod local_terminal;
 #[cfg(feature = "app")]
 mod name_sort;
+#[cfg(feature = "app")]
+mod performance;
 /// Headless soak driver behind `cargo run --example reliability_soak`.
 #[cfg(feature = "app")]
 pub mod reliability;
@@ -506,6 +508,41 @@ mod application {
         Ok(true)
     }
 
+    /// Settings of the scripted measurement run, or `None` in normal use.
+    #[tauri::command]
+    fn performance_autorun_config() -> Option<crate::performance::AutorunConfig> {
+        crate::performance::autorun_config(|key| std::env::var(key).ok())
+    }
+
+    /// Progress of a scripted run, on stderr so a CI log shows where it stopped.
+    #[tauri::command]
+    fn performance_autorun_progress(stage: String) {
+        if crate::performance::report_path().is_some() {
+            let stage = stage.chars().filter(|character| !character.is_control()).take(120).collect::<String>();
+            eprintln!("ope-term performance autorun: {stage}");
+        }
+    }
+
+    #[tauri::command]
+    fn performance_memory() -> Option<f64> {
+        crate::performance::memory_mib()
+    }
+
+    /// Writes the autorun report to the path from the environment and exits.
+    #[tauri::command]
+    async fn performance_autorun_finish(app: AppHandle, report: String) -> Result<(), String> {
+        let path = crate::performance::report_path()
+            .ok_or_else(|| "performance autorun は有効ではありません".to_owned())?;
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::performance::write_report(&path, &report)
+        })
+        .await
+        .map_err(|error| format!("report task が失敗しました: {error}"))?
+        .map_err(|error| format!("{error:#}"))?;
+        app.exit(0);
+        Ok(())
+    }
+
     #[tauri::command]
     async fn local_list(
         token: String,
@@ -638,6 +675,10 @@ mod application {
                 log_list,
                 log_search,
                 export_keybindings,
+                performance_autorun_config,
+                performance_memory,
+                performance_autorun_progress,
+                performance_autorun_finish,
                 close_session,
                 answer_host_key,
                 answer_auth,

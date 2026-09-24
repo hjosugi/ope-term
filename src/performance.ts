@@ -164,6 +164,11 @@ export class BrowserPerformanceHarness implements PerformanceHarnessApi {
     }
   }
 
+  /** Bytes received since the last reset, for scripted runs that wait on the fixture. */
+  outputByteCount(): number {
+    return this.outputBytes;
+  }
+
   resetOutput(): void {
     this.outputBytes = 0;
     this.outputStartedAt = undefined;

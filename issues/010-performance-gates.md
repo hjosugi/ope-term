@@ -11,7 +11,8 @@ Labels: priority:P0, performance, reliability
 - [x] 100 MB output fixture で throughput と main-thread stall を記録する
 - [ ] WebGL / fallback を WebKitGTK、WebView2、WKWebView で比較する
 - [ ] CachyOS Wayland 実機結果を artifact として保存する
-- [x] 基準超過を release gate で検出する（version付きJSONを `just performance-gate` で判定）
+- [x] 基準超過を CI または release gate で検出する（version付きJSONを `just performance-gate` で判定。
+  WebKitGTKはautorun + Xvfbの`performance.yml`で`ci-linux-xvfb` profileを毎push / PRで判定）
 
 ## 計測準備
 
@@ -26,3 +27,6 @@ Labels: priority:P0, performance, reliability
 - optional harness chunkのload失敗は通常起動を止めず、toastへ理由を表示する。
 - 残る2条件は WebKitGTK / WebView2 / WKWebView 実機測定と CachyOS Wayland での採取そのもの。
   未計測値は作らず、実機 report を保存してから check する。
+- `OPE_TERM_PERFORMANCE_REPORT`で起動したときだけ動くscripted measurement mode（cold start、
+  Linux procfsのprocess tree RSS、synthetic keydown latency、PTY経由の100 MiB fixture）と
+  `scripts/performance-autorun.mjs`（renderer別起動、gate、比較bundle）を追加。

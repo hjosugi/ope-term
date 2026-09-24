@@ -6,5 +6,14 @@
   "idleMemoryMiB": 150,
   "sessionIncrementMiB": 20,
   "minimumOutputBytes": 104857600,
-  "maximumMainThreadStallMs": 100
+  "maximumMainThreadStallMs": 100,
+  "profiles": {
+    "ci-linux-xvfb": {
+      "coldStartMs": 8000,
+      "inputLatencyP99Ms": 100,
+      "idleMemoryMiB": 1024,
+      "sessionIncrementMiB": 200,
+      "maximumMainThreadStallMs": 2000
+    }
+  }
 }
