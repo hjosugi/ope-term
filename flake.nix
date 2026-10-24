@@ -91,7 +91,7 @@
             src = applicationSource;
             pnpm = pkgs.pnpm_10;
             fetcherVersion = 4;
-            hash = "sha256-j+nnVMbRGq4Dx69nfm3SgKDPv7cjtpVan0GKFXoiAUs=";
+            hash = "sha256-bHMi3ROHcHN1y67PD8x/9m/4r8/ZOJJT6L/G63pPBXA=";
           };
           cargoVendorDir = craneLib.vendorCargoDeps {
             src = applicationSource;
