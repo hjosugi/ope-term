@@ -52,13 +52,14 @@
             "flake.nix"
             "MODULE.bazel"
             "MODULE.bazel.lock"
-            "README.md"
             "REPO.bazel"
             "SECURITY.md"
           ]
           && !nixpkgs.lib.hasPrefix ".venv" name
           && !nixpkgs.lib.hasPrefix "bazel-" name
-          && !nixpkgs.lib.hasPrefix "result-" name;
+          && !nixpkgs.lib.hasPrefix "result-" name
+          # GLib compiles its crate documentation with include_str!.
+          && (name != "README.md" || nixpkgs.lib.hasInfix "/src-tauri/vendor/" (toString path));
       };
       applicationSource = nixpkgs.lib.cleanSourceWith {
         src = source;
