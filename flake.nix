@@ -131,6 +131,7 @@
               dummySrc = craneLib.mkDummySrc {
                 inherit (cargoCommonArgs) src cargoLock cargoToml;
                 extraDummyScript = ''
+                  chmod -R u+w "$out/src-tauri/vendor/glib-0.18.5-patched"
                   cp -r ${./src-tauri/vendor/glib-0.18.5-patched}/. "$out/src-tauri/vendor/glib-0.18.5-patched/"
                 '';
               };
