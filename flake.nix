@@ -126,6 +126,14 @@
           cargoArtifacts = craneLib.buildDepsOnly (
             cargoCommonArgs
             // {
+              # Registry dependencies call GLib's macros and types. Keep this
+              # patched dependency real while Crane stubs the application.
+              dummySrc = craneLib.mkDummySrc {
+                inherit (cargoCommonArgs) src cargoLock cargoToml;
+                extraDummyScript = ''
+                  cp -r ${./src-tauri/vendor/glib-0.18.5-patched}/. "$out/src-tauri/vendor/glib-0.18.5-patched/"
+                '';
+              };
               buildPhaseCargoCommand = ''
                 cargoWithProfile build --manifest-path src-tauri/Cargo.toml --target ${cargoTarget} --bins --features tauri/custom-protocol --locked
               '';
