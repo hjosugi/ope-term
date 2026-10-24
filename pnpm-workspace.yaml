@@ -10,3 +10,7 @@ onlyBuiltDependencies:
 overrides:
   "@vitest/mocker@>=4.0.0 <4.1.12": "4.1.12"
   "source-map-js@>=1.0.0 <1.2.2": "1.2.2"
+
+# Allow only the audited security fix through the normal release-age window.
+minimumReleaseAgeExclude:
+  - "vite@8.3.5"

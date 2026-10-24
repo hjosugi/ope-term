@@ -90,6 +90,7 @@ Host prod-db
 | [セキュリティ方針](https://hjosugi.github.io/ope-term/SECURITY_POLICY/) | プロトコル、権限、秘密情報、永続化 |
 | [脅威モデル](https://hjosugi.github.io/ope-term/THREAT_MODEL/) | 資産、境界、統制、残存リスク |
 | [端末セキュリティレビュー](https://hjosugi.github.io/ope-term/TERMINAL_SECURITY/) | escape sequence、DOM/IPC境界、回帰テスト |
+| [依存のセキュリティ更新](https://hjosugi.github.io/ope-term/dependency-security/) | 固定版への更新、同梱パッチ、残存する依存の制約 |
 | [依存 advisory レビュー](https://hjosugi.github.io/ope-term/SECURITY_ADVISORIES/) | RustSec警告の評価、緩和策、更新方針 |
 | [ロードマップ](https://hjosugi.github.io/ope-term/ROADMAP/) | 実装済みの基盤とこれからの作業 |
 
