@@ -5,3 +5,8 @@ hoist: false
 
 onlyBuiltDependencies:
   - esbuild
+
+# Fixed versions for security advisories in the dependency tree.
+overrides:
+  "@vitest/mocker@>=4.0.0 <4.1.12": "4.1.12"
+  "source-map-js@>=1.0.0 <1.2.2": "1.2.2"

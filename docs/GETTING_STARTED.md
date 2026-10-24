@@ -6,7 +6,7 @@
 ## 前提
 
 - Node.js 22.12 以上
-- Rust 1.88 以上
+- Rust 1.89 以上
 - Tauri が各 OS で必要とするシステムパッケージ
 
 Linux の WebKitGTK を含む詳細は
