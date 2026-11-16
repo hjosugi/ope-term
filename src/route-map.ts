@@ -1,3 +1,4 @@
+import { hostAddress } from './route';
 import type { HostProfile } from './types';
 
 /**
@@ -103,7 +104,7 @@ function registerNode(
     alias,
     depth: profile ? Math.max(0, (profile.chain.length || 1) - 1) : index,
     chain: profile?.chain.length ? [...profile.chain] : chain.slice(0, index + 1),
-    address: profile ? `${profile.user ? `${profile.user}@` : ''}${profile.hostname}:${profile.port}` : '',
+    address: profile ? hostAddress(profile) : '',
     isJump: false,
     external: !profile,
   });

@@ -100,9 +100,7 @@ pub async fn list(scopes: &LocalScopes, token: &str, relative_path: &str) -> Res
         });
     }
     entries.sort_by(|left, right| {
-        entry_rank(left.kind)
-            .cmp(&entry_rank(right.kind))
-            .then_with(|| crate::name_sort::case_insensitive(&left.name, &right.name))
+        crate::name_sort::entry_order(left.kind, &left.name, right.kind, &right.name)
     });
     Ok(LocalListing {
         relative_path: display_relative(&relative),
@@ -145,14 +143,12 @@ pub async fn resolve(
 }
 
 pub async fn resolve_directory(scopes: &LocalScopes, token: &str) -> Result<PathBuf> {
-    validate_token(token)?;
-    let root = scopes
-        .lock()
-        .await
-        .iter()
-        .find(|(candidate, _)| candidate == token)
-        .map(|(_, path)| path.clone())
-        .ok_or_else(|| anyhow!("working directory の許可が期限切れです。選択し直してください"))?;
+    let root = lookup_scope(
+        scopes,
+        token,
+        "working directory の許可が期限切れです。選択し直してください",
+    )
+    .await?;
     let canonical = fs::canonicalize(&root)
         .await
         .context("working directory を解決できません")?;
@@ -168,17 +164,26 @@ async fn scoped_path(
     token: &str,
     raw_relative: &str,
 ) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    let root = lookup_scope(
+        scopes,
+        token,
+        "local directory の許可が期限切れです。選択し直してください",
+    )
+    .await?;
+    let relative = safe_relative(raw_relative)?;
+    let target = root.join(&relative);
+    Ok((root, relative, target))
+}
+
+async fn lookup_scope(scopes: &LocalScopes, token: &str, expired_message: &str) -> Result<PathBuf> {
     validate_token(token)?;
-    let root = scopes
+    scopes
         .lock()
         .await
         .iter()
         .find(|(candidate, _)| candidate == token)
         .map(|(_, path)| path.clone())
-        .ok_or_else(|| anyhow!("local directory の許可が期限切れです。選択し直してください"))?;
-    let relative = safe_relative(raw_relative)?;
-    let target = root.join(&relative);
-    Ok((root, relative, target))
+        .ok_or_else(|| anyhow!("{expired_message}"))
 }
 
 fn validate_token(token: &str) -> Result<()> {
@@ -225,15 +230,6 @@ fn display_relative(path: &Path) -> String {
         ".".to_owned()
     } else {
         path.to_string_lossy().into_owned()
-    }
-}
-
-fn entry_rank(kind: &str) -> u8 {
-    match kind {
-        "directory" => 0,
-        "file" => 1,
-        "symlink" => 2,
-        _ => 3,
     }
 }
 

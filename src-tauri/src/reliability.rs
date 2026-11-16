@@ -33,6 +33,8 @@ const BASE_RETRY_DELAY: Duration = Duration::from_secs(1);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const ACK_MARKER: &[u8] = b"ope-term-soak-ack-";
 const MAX_PENDING_OUTPUT: usize = 4 * 1024;
+const ACK_PREFIX_BYTES: usize = ACK_MARKER.len() - 1;
+const DA_QUERY_PREFIX_BYTES: usize = 3;
 const MAX_RECORDED_ERRORS: usize = 50;
 const MAX_LATENCY_SAMPLES: usize = 100_000;
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
@@ -106,12 +108,12 @@ impl AckScanner {
         let keep_from = incomplete.unwrap_or_else(|| {
             self.pending
                 .len()
-                .saturating_sub(ACK_MARKER.len() - 1)
+                .saturating_sub(ACK_PREFIX_BYTES)
                 .max(cursor)
         });
         self.pending.drain(..keep_from);
         if self.pending.len() > MAX_PENDING_OUTPUT {
-            let excess = self.pending.len() - (ACK_MARKER.len() - 1);
+            let excess = self.pending.len() - ACK_PREFIX_BYTES;
             self.pending.drain(..excess);
         }
         acks
@@ -151,7 +153,11 @@ impl DeviceAttributesQueries {
             }
         }
         // Keep only a possible query prefix that a later frame may complete.
-        let keep_from = self.tail.len().saturating_sub(3).max(consumed);
+        let keep_from = self
+            .tail
+            .len()
+            .saturating_sub(DA_QUERY_PREFIX_BYTES)
+            .max(consumed);
         self.tail.drain(..keep_from);
         count
     }

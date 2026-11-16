@@ -8,6 +8,7 @@ import {
   transferPercent,
 } from './sftp-paths';
 import { IncrementalRenderer } from './incremental-render';
+import type { LocalDirectory } from './types';
 import {
   pruneCompletedTransfers,
   removeTransfer,
@@ -45,11 +46,6 @@ interface LocalListing extends Listing<LocalEntry> {
 
 interface RemoteListing extends Listing<SftpEntry> {
   canonicalPath: string;
-}
-
-interface LocalScope {
-  token: string;
-  displayPath: string;
 }
 
 interface TransferProgress {
@@ -100,6 +96,10 @@ function button(label: string, title = label): HTMLButtonElement {
   node.textContent = label;
   node.title = title;
   return node;
+}
+
+function isDownloadableEntry(entry: { kind: string }): boolean {
+  return entry.kind === 'file' || entry.kind === 'symlink';
 }
 
 export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
@@ -172,7 +172,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
   queueSection.append(queueHeader, queueList);
   root.append(header, browsers, actions, queueSection);
 
-  let scope: LocalScope | null = null;
+  let scope: LocalDirectory | null = null;
   let localCurrent = '.';
   let remoteCurrent = '.';
   let localEntries: LocalEntry[] = [];
@@ -195,7 +195,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
 
   function updateActions(): void {
     uploadButton.disabled = !scope || selectedLocal?.kind !== 'file';
-    downloadButton.disabled = !scope || !selectedRemote || !['file', 'symlink'].includes(selectedRemote.kind);
+    downloadButton.disabled = !scope || !selectedRemote || !isDownloadableEntry(selectedRemote);
   }
 
   function renderEntries<T extends LocalEntry | SftpEntry>(
@@ -406,23 +406,24 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     });
   }
 
+  function failQueuedTransfer(item: TransferItem, error: string): void {
+    item.status = 'failed';
+    item.error = error;
+    renderQueue();
+    void processQueue();
+  }
+
   async function processQueue(): Promise<void> {
     if (processing) return;
     const item = queue.find((candidate) => candidate.status === 'queued');
     if (!item) return;
     const id = options.getConnectionId();
     if (!id) {
-      item.status = 'failed';
-      item.error = '接続が終了したため転送を開始しませんでした。接続後に RETRY してください。';
-      renderQueue();
-      void processQueue();
+      failQueuedTransfer(item, '接続が終了したため転送を開始しませんでした。接続後に RETRY してください。');
       return;
     }
     if (id !== item.connectionId) {
-      item.status = 'failed';
-      item.error = '接続が変わったため転送を開始しませんでした。内容を確認して RETRY してください。';
-      renderQueue();
-      void processQueue();
+      failQueuedTransfer(item, '接続が変わったため転送を開始しませんでした。内容を確認して RETRY してください。');
       return;
     }
     processing = true;
@@ -485,7 +486,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
   selectLocal.addEventListener('click', async () => {
     selectLocal.disabled = true;
     try {
-      const selected = await invoke<LocalScope | null>('pick_local_directory');
+      const selected = await invoke<LocalDirectory | null>('pick_local_directory');
       if (!selected) return;
       scope = selected;
       localCurrent = '.';
@@ -512,7 +513,7 @@ export function createSftpPanel(options: SftpPanelOptions): SftpPanel {
     });
   });
   downloadButton.addEventListener('click', () => {
-    if (!scope || !selectedRemote || !['file', 'symlink'].includes(selectedRemote.kind)) return;
+    if (!scope || !selectedRemote || !isDownloadableEntry(selectedRemote)) return;
     const overwrite = localEntries.some((entry) => entry.name === selectedRemote!.name);
     if (overwrite && !window.confirm(`${selectedRemote.name} は local に存在します。上書きしますか？`)) return;
     const followSymlink = selectedRemote.kind === 'symlink';

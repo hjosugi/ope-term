@@ -1,5 +1,10 @@
 import type { HostProfile } from './types';
 
+/** `user@hostname:port`, the same shape used by route-map nodes. */
+export function hostAddress(host: Pick<HostProfile, 'user' | 'hostname' | 'port'>): string {
+  return `${host.user ? `${host.user}@` : ''}${host.hostname}:${host.port}`;
+}
+
 export function routePreview(route: string[], hosts: HostProfile[]): string[] {
   if (route.length !== 1) return [...route];
   const selected = hosts.find((host) => host.alias === route[0]);

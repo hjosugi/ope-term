@@ -32,6 +32,9 @@ const MAX_AUTH_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_AUTH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_ACTIVE_SFTP_TRANSFERS: usize = 8;
 const MAX_ACTIVE_SFTP_LISTINGS: usize = 4;
+const AUTH_SECRET_ATTEMPTS: u32 = 3;
+const MAX_KEYBOARD_INTERACTIVE_ROUNDS: usize = 16;
+const MAX_PROMPT_TEXT_CHARS: usize = 4096;
 #[cfg(unix)]
 const MAX_AGENT_IDENTITIES: usize = 64;
 
@@ -892,15 +895,7 @@ fn register_transfer(
             "同時 SFTP transfer 数は session ごとに {MAX_ACTIVE_SFTP_TRANSFERS} 件までです"
         ));
     }
-    let remote_target = if request.remote_directory == "/" {
-        format!("/{}", request.remote_name)
-    } else {
-        format!(
-            "{}/{}",
-            request.remote_directory.trim_end_matches('/'),
-            request.remote_name
-        )
-    };
+    let remote_target = crate::sftp::join_remote(&request.remote_directory, &request.remote_name);
     if registry.values().any(|active| {
         active.local_path == request.local_path || active.remote_target == remote_target
     }) {
@@ -1251,7 +1246,7 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
             Ok(key) => Some(key),
             Err(russh::keys::Error::KeyIsEncrypted) => {
                 let mut decrypted = None;
-                for attempt in 1..=3 {
+                for attempt in 1..=AUTH_SECRET_ATTEMPTS {
                     let mut responses = ask_for_auth(
                         prompter,
                         auth_prompt(
@@ -1260,7 +1255,7 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
                             "key_passphrase",
                             "秘密鍵のパスフレーズ",
                             format!(
-                                "{} を復号します（{attempt}/3）。値は保存されません。",
+                                "{} を復号します（{attempt}/{AUTH_SECRET_ATTEMPTS}）。値は保存されません。",
                                 path.display()
                             ),
                             vec![AuthField {
@@ -1330,7 +1325,7 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
     }
 
     if methods.contains(&MethodKind::Password) {
-        for attempt in 1..=3 {
+        for attempt in 1..=AUTH_SECRET_ATTEMPTS {
             let mut responses = ask_for_auth(
                 prompter,
                 auth_prompt(
@@ -1338,7 +1333,10 @@ async fn authenticate<H: client::Handler, P: AuthPromptProvider>(
                     &username,
                     "password",
                     "SSH パスワード",
-                    format!("{username}@{} のパスワード（{attempt}/3）", endpoint.alias),
+                    format!(
+                        "{username}@{} のパスワード（{attempt}/{AUTH_SECRET_ATTEMPTS}）",
+                        endpoint.alias
+                    ),
                     vec![AuthField {
                         label: "Password".to_owned(),
                         echo: false,
@@ -1390,7 +1388,7 @@ async fn authenticate_keyboard_interactive<H: client::Handler, P: AuthPromptProv
     let mut response = handle
         .authenticate_keyboard_interactive_start(username.to_owned(), None)
         .await?;
-    for _round in 0..16 {
+    for _round in 0..MAX_KEYBOARD_INTERACTIVE_ROUNDS {
         match response {
             client::KeyboardInteractiveAuthResponse::Success => {
                 return Ok(AuthProgress::Success);
@@ -1409,7 +1407,7 @@ async fn authenticate_keyboard_interactive<H: client::Handler, P: AuthPromptProv
                 let fields = prompts
                     .into_iter()
                     .map(|prompt| AuthField {
-                        label: bounded_text(&prompt.prompt, 4096),
+                        label: bounded_text(&prompt.prompt, MAX_PROMPT_TEXT_CHARS),
                         echo: prompt.echo,
                     })
                     .collect();
@@ -1419,8 +1417,8 @@ async fn authenticate_keyboard_interactive<H: client::Handler, P: AuthPromptProv
                         endpoint,
                         username,
                         "keyboard_interactive",
-                        bounded_text(&name, 4096),
-                        bounded_text(&instructions, 4096),
+                        bounded_text(&name, MAX_PROMPT_TEXT_CHARS),
+                        bounded_text(&instructions, MAX_PROMPT_TEXT_CHARS),
                         fields,
                     ),
                 )
@@ -1474,9 +1472,7 @@ fn bounded_agent_identities<T>(identities: Vec<T>) -> impl Iterator<Item = T> {
 }
 
 fn default_username() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "root".into())
+    crate::ssh_config::default_username()
 }
 
 pub fn event_error(channel: &Channel<SessionEvent>, error: &anyhow::Error) {

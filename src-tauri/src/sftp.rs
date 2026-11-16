@@ -143,9 +143,7 @@ pub async fn list(session: &RawSftpSession, path: &str) -> Result<SftpListing> {
     read_result?;
     close_result.context("remote directory handleを閉じられません")?;
     entries.sort_by(|left, right| {
-        entry_rank(left.kind)
-            .cmp(&entry_rank(right.kind))
-            .then_with(|| crate::name_sort::case_insensitive(&left.name, &right.name))
+        crate::name_sort::entry_order(left.kind, &left.name, right.kind, &right.name)
     });
     Ok(SftpListing {
         canonical_path,
@@ -619,7 +617,7 @@ fn validate_remote_path(value: &str) -> Result<()> {
     reject_nul(value)
 }
 
-fn join_remote(directory: &str, name: &str) -> String {
+pub(crate) fn join_remote(directory: &str, name: &str) -> String {
     if directory == "/" {
         format!("/{name}")
     } else {
@@ -655,15 +653,6 @@ fn file_type_name(file_type: FileType) -> &'static str {
         FileType::File => "file",
         FileType::Symlink => "symlink",
         FileType::Other => "other",
-    }
-}
-
-fn entry_rank(kind: &str) -> u8 {
-    match kind {
-        "directory" => 0,
-        "file" => 1,
-        "symlink" => 2,
-        _ => 3,
     }
 }
 

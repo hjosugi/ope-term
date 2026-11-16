@@ -1,5 +1,10 @@
-import type { PaneLayout } from './pane-layout';
-import { readBoundedStorage, writeBoundedStorage } from './storage';
+import { PANE_MAX_RATIO, PANE_MIN_RATIO, type PaneLayout } from './pane-layout';
+import {
+  readBoundedStorage,
+  writeBoundedStorage,
+  type ReadableStorage,
+  type WritableStorage,
+} from './storage';
 
 /**
  * Route workspaces persist only `~/.ssh/config` alias references.
@@ -192,17 +197,17 @@ function sanitizeStoredPaneLayout(value: unknown, tabCount: number): StoredPaneL
     if (!first) return second;
     if (!second) return first;
     const rawRatio = typeof record.ratio === 'number' && Number.isFinite(record.ratio) ? record.ratio : 0.5;
-    const ratio = Math.min(0.85, Math.max(0.15, rawRatio));
+    const ratio = Math.min(PANE_MAX_RATIO, Math.max(PANE_MIN_RATIO, rawRatio));
     return { type: 'split', axis: record.axis, ratio, first, second };
   }
   return visit(value, 0);
 }
 
-export function loadWorkspaces(storage: Pick<Storage, 'getItem'> = localStorage): WorkspaceState {
+export function loadWorkspaces(storage: ReadableStorage = localStorage): WorkspaceState {
   return parseWorkspaces(readBoundedStorage(storage, STORAGE_KEY, MAX_STORAGE_BYTES));
 }
 
-export function saveWorkspaces(state: WorkspaceState, storage: Pick<Storage, 'setItem'> = localStorage): boolean {
+export function saveWorkspaces(state: WorkspaceState, storage: WritableStorage = localStorage): boolean {
   return writeBoundedStorage(storage, STORAGE_KEY, JSON.stringify(state), MAX_STORAGE_BYTES);
 }
 

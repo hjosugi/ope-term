@@ -40,7 +40,7 @@ import {
   type PaneLayout,
   type PaneSplit,
 } from './pane-layout';
-import { appendUnique, moveRouteItem, routePreview } from './route';
+import { appendUnique, hostAddress, moveRouteItem, routePreview } from './route';
 import { createRouteMapUi } from './route-map-ui';
 import {
   createLogPolicy,
@@ -57,7 +57,7 @@ import {
   parseOsc133,
   previousPromptLine,
 } from './shell-integration';
-import { readStorage } from './storage';
+import { readStorage, utf8ByteLength } from './storage';
 import { boundedTerminalInputBytes, chunkTerminalInput } from './terminal-input';
 import type {
   AuthPrompt,
@@ -66,6 +66,7 @@ import type {
   HopStatus,
   HostKeyPrompt,
   HostProfile,
+  LocalDirectory,
   SessionEvent,
   SessionLogInput,
 } from './types';
@@ -90,11 +91,6 @@ interface ShellProfile {
   label: string;
   program: string;
   isDefault: boolean;
-}
-
-interface LocalDirectory {
-  token: string;
-  displayPath: string;
 }
 
 interface LocalSessionConfig {
@@ -297,6 +293,38 @@ let logSearchGeneration = 0;
 let logPolicies = loadLogPolicies();
 let editingLogTarget: string | null = null;
 let workspaces: WorkspaceState = loadWorkspaces();
+
+function routeLabel(route: readonly string[]): string {
+  return routePreview([...route], hosts).join(' → ');
+}
+
+function isLiveState(state: SessionState): boolean {
+  return state === 'connecting' || state === 'connected';
+}
+
+const NOTICE_ACCENT = '\x1b[38;2;255;180;84m[ope-term]\x1b[0m';
+const NOTICE_MUTED = '\x1b[38;2;127;137;150m[ope-term]';
+const NOTICE_ERROR = '\x1b[38;2;242;125;136m[ope-term]';
+
+const CONNECTION_LABELS = {
+  idle: 'NOT CONNECTED',
+  connecting: 'CONNECTING',
+  connected: 'SSH CONNECTED',
+  closed: 'DISCONNECTED',
+} as const;
+
+const CONNECTION_COLORS = {
+  idle: 'var(--muted)',
+  connecting: 'var(--amber)',
+  connected: 'var(--green)',
+  closed: 'var(--red)',
+} as const;
+
+const WHEN_TERMINAL = 'terminalFocus && !paletteOpen && !shortcutEditorOpen';
+const WHEN_ROUTE = 'routeFocus && !paletteOpen && !shortcutEditorOpen';
+const WHEN_GLOBAL = '!paletteOpen && !shortcutEditorOpen';
+const PANE_KEYBOARD_STEP = 0.05;
+
 /** Until boot restores the stored tabs, persisting must not overwrite them. */
 let workspaceTabsRestored = false;
 let workspacePersistenceWarningShown = false;
@@ -353,73 +381,73 @@ const commands: CommandDefinition[] = [
     id: 'workbench.action.quickOpenHost',
     category: 'SSH',
     label: 'Host を検索',
-    when: '!paletteOpen && !shortcutEditorOpen',
+    when: WHEN_GLOBAL,
     run: focusHostSearch,
   },
-  { id: 'route.connect', category: 'Route', label: '現在のルートへ接続', when: 'routeFocus && !paletteOpen && !shortcutEditorOpen', run: () => void connectCurrent() },
-  { id: 'route.clear', category: 'Route', label: 'ルートをクリア', when: 'routeFocus && !paletteOpen && !shortcutEditorOpen', run: clearRoute },
-  { id: 'route.new', category: 'Route', label: '新しいルート', when: '!paletteOpen && !shortcutEditorOpen', run: showBuilder },
-  { id: 'route.save', category: 'Route', label: '現在のルートを保存', when: 'routeFocus && !paletteOpen && !shortcutEditorOpen', run: saveCurrentRoute },
-  { id: 'hosts.reload', category: 'SSH', label: 'SSH config を再読み込み', when: 'routeFocus && !paletteOpen && !shortcutEditorOpen', run: () => void reloadHosts() },
-  { id: 'session.close', category: 'Session', label: '現在のセッションを閉じる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: closeActiveSession },
-  { id: 'session.next', category: 'Session', label: '次のセッションへ移動', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: activateNextSession },
+  { id: 'route.connect', category: 'Route', label: '現在のルートへ接続', when: WHEN_ROUTE, run: () => void connectCurrent() },
+  { id: 'route.clear', category: 'Route', label: 'ルートをクリア', when: WHEN_ROUTE, run: clearRoute },
+  { id: 'route.new', category: 'Route', label: '新しいルート', when: WHEN_GLOBAL, run: showBuilder },
+  { id: 'route.save', category: 'Route', label: '現在のルートを保存', when: WHEN_ROUTE, run: saveCurrentRoute },
+  { id: 'hosts.reload', category: 'SSH', label: 'SSH config を再読み込み', when: WHEN_ROUTE, run: () => void reloadHosts() },
+  { id: 'session.close', category: 'Session', label: '現在のセッションを閉じる', when: WHEN_TERMINAL, run: closeActiveSession },
+  { id: 'session.next', category: 'Session', label: '次のセッションへ移動', when: WHEN_TERMINAL, run: activateNextSession },
   {
     id: 'session.reconnect',
     category: 'Session',
     label: '現在のセッションへ接続 / 再接続',
-    when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
+    when: WHEN_TERMINAL,
     run: () => void startActiveSession(),
   },
   {
     id: 'session.toggleSftp',
     category: 'Files',
     label: 'SFTP file manager を開く / 閉じる',
-    when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
+    when: WHEN_TERMINAL,
     run: toggleActiveSftp,
   },
   {
     id: 'session.newLocal',
     category: 'Terminal',
     label: '新しい local terminal を開く',
-    when: '!paletteOpen && !shortcutEditorOpen',
+    when: WHEN_GLOBAL,
     run: () => void openLocalTerminalDialog(),
   },
   {
     id: 'session.configureLogs',
     category: 'Logs',
     label: '現在の host / profile の session log を設定',
-    when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen',
+    when: WHEN_TERMINAL,
     run: () => void openLogDialog(true),
   },
   {
     id: 'workbench.openLogs',
     category: 'Logs',
     label: 'Session log viewer を開く',
-    when: '!paletteOpen && !shortcutEditorOpen',
+    when: WHEN_GLOBAL,
     run: () => void openLogDialog(false),
   },
-  { id: 'pane.splitRight', category: 'Pane', label: '右に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('horizontal') },
-  { id: 'pane.splitDown', category: 'Pane', label: '下に分割', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => openPanePicker('vertical') },
-  { id: 'pane.focusLeft', category: 'Pane', label: '左の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('left') },
-  { id: 'pane.focusRight', category: 'Pane', label: '右の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('right') },
-  { id: 'pane.focusUp', category: 'Pane', label: '上の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('up') },
-  { id: 'pane.focusDown', category: 'Pane', label: '下の pane へ focus', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => movePaneFocus('down') },
-  { id: 'pane.close', category: 'Pane', label: '現在の pane を閉じる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: closeActivePane },
-  { id: 'pane.resizeWider', category: 'Pane', label: 'pane を横に広げる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('horizontal', 0.05) },
-  { id: 'pane.resizeNarrower', category: 'Pane', label: 'pane を横に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('horizontal', -0.05) },
-  { id: 'pane.resizeTaller', category: 'Pane', label: 'pane を縦に広げる', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', 0.05) },
-  { id: 'pane.resizeShorter', category: 'Pane', label: 'pane を縦に狭める', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => resizeActivePane('vertical', -0.05) },
-  { id: 'terminal.previousCommand', category: 'Terminal', label: '前の command（OSC 133 prompt）へ移動', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => jumpToPrompt('previous') },
-  { id: 'terminal.nextCommand', category: 'Terminal', label: '次の command（OSC 133 prompt）へ移動', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => jumpToPrompt('next') },
-  { id: 'pane.moveLeft', category: 'Pane', label: 'session を左の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('left') },
-  { id: 'pane.moveRight', category: 'Pane', label: 'session を右の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('right') },
-  { id: 'pane.moveUp', category: 'Pane', label: 'session を上の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('up') },
-  { id: 'pane.moveDown', category: 'Pane', label: 'session を下の pane と入れ替える', when: 'terminalFocus && !paletteOpen && !shortcutEditorOpen', run: () => moveActivePane('down') },
+  { id: 'pane.splitRight', category: 'Pane', label: '右に分割', when: WHEN_TERMINAL, run: () => openPanePicker('horizontal') },
+  { id: 'pane.splitDown', category: 'Pane', label: '下に分割', when: WHEN_TERMINAL, run: () => openPanePicker('vertical') },
+  { id: 'pane.focusLeft', category: 'Pane', label: '左の pane へ focus', when: WHEN_TERMINAL, run: () => movePaneFocus('left') },
+  { id: 'pane.focusRight', category: 'Pane', label: '右の pane へ focus', when: WHEN_TERMINAL, run: () => movePaneFocus('right') },
+  { id: 'pane.focusUp', category: 'Pane', label: '上の pane へ focus', when: WHEN_TERMINAL, run: () => movePaneFocus('up') },
+  { id: 'pane.focusDown', category: 'Pane', label: '下の pane へ focus', when: WHEN_TERMINAL, run: () => movePaneFocus('down') },
+  { id: 'pane.close', category: 'Pane', label: '現在の pane を閉じる', when: WHEN_TERMINAL, run: closeActivePane },
+  { id: 'pane.resizeWider', category: 'Pane', label: 'pane を横に広げる', when: WHEN_TERMINAL, run: () => resizeActivePane('horizontal', PANE_KEYBOARD_STEP) },
+  { id: 'pane.resizeNarrower', category: 'Pane', label: 'pane を横に狭める', when: WHEN_TERMINAL, run: () => resizeActivePane('horizontal', -PANE_KEYBOARD_STEP) },
+  { id: 'pane.resizeTaller', category: 'Pane', label: 'pane を縦に広げる', when: WHEN_TERMINAL, run: () => resizeActivePane('vertical', PANE_KEYBOARD_STEP) },
+  { id: 'pane.resizeShorter', category: 'Pane', label: 'pane を縦に狭める', when: WHEN_TERMINAL, run: () => resizeActivePane('vertical', -PANE_KEYBOARD_STEP) },
+  { id: 'terminal.previousCommand', category: 'Terminal', label: '前の command（OSC 133 prompt）へ移動', when: WHEN_TERMINAL, run: () => jumpToPrompt('previous') },
+  { id: 'terminal.nextCommand', category: 'Terminal', label: '次の command（OSC 133 prompt）へ移動', when: WHEN_TERMINAL, run: () => jumpToPrompt('next') },
+  { id: 'pane.moveLeft', category: 'Pane', label: 'session を左の pane と入れ替える', when: WHEN_TERMINAL, run: () => moveActivePane('left') },
+  { id: 'pane.moveRight', category: 'Pane', label: 'session を右の pane と入れ替える', when: WHEN_TERMINAL, run: () => moveActivePane('right') },
+  { id: 'pane.moveUp', category: 'Pane', label: 'session を上の pane と入れ替える', when: WHEN_TERMINAL, run: () => moveActivePane('up') },
+  { id: 'pane.moveDown', category: 'Pane', label: 'session を下の pane と入れ替える', when: WHEN_TERMINAL, run: () => moveActivePane('down') },
   {
     id: 'preferences.openKeyboardShortcuts',
     category: 'Preferences',
     label: 'Keyboard Shortcuts を開く',
-    when: '!paletteOpen && !shortcutEditorOpen',
+    when: WHEN_GLOBAL,
     run: () => commandUi.openShortcutEditor(),
   },
 ];
@@ -444,7 +472,7 @@ commandUi = new CommandUi({
   additionalItems: () => [
     ...workspaces.saved.map((entry) => {
       const missing = missingAliases(entry.route, hostAliases());
-      const preview = routePreview(entry.route, hosts).join(' → ');
+      const preview = routeLabel(entry.route);
       return {
         id: `workspace.${entry.id}`,
         category: 'Workspace',
@@ -538,7 +566,7 @@ const routeMapUi = createRouteMapUi({
   isLive: (alias) =>
     [...sessions.values()].some(
       (session) =>
-        (session.state === 'connecting' || session.state === 'connected') &&
+        isLiveState(session.state) &&
         routePreview(session.route, hosts).includes(alias),
     ),
 });
@@ -627,7 +655,7 @@ function renderHosts(): void {
         alias.textContent = host.alias;
         const address = document.createElement('span');
         address.className = 'host-address';
-        address.textContent = `${host.user ? `${host.user}@` : ''}${host.hostname}:${host.port}`;
+        address.textContent = hostAddress(host);
         main.append(alias, address);
         const hops = document.createElement('span');
         hops.className = 'host-hops';
@@ -772,7 +800,7 @@ function renderWorkspaces(): void {
 
     const path = document.createElement('span');
     path.className = 'workspace-path';
-    path.textContent = routePreview(entry.route, hosts).join(' → ');
+    path.textContent = routeLabel(entry.route);
     card.append(head, path);
 
     if (missing.length > 0) {
@@ -892,7 +920,7 @@ async function connectRoute(): Promise<void> {
  * scrollback and tab position instead of creating a second tab.
  */
 async function startSession(session: SessionUi, resetRetries = true): Promise<void> {
-  if (session.state === 'connecting' || session.state === 'connected') return;
+  if (isLiveState(session.state)) return;
   const log = sessionLogInput(session);
   if (log?.enabled && !log.directoryToken) {
     toast('session log の保存先を選択してください。');
@@ -930,7 +958,7 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
   try {
     if (session.kind === 'local' && session.local) {
       session.terminal.writeln(
-        `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${session.local.profileLabel} を local PTY で起動中…`,
+        `${NOTICE_ACCENT} ${session.local.profileLabel} を local PTY で起動中…`,
       );
       await invoke('connect_local_session', {
         request: {
@@ -954,7 +982,7 @@ async function startSession(session: SessionUi, resetRetries = true): Promise<vo
         log,
       };
       session.terminal.writeln(
-        `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${routePreview(session.route, hosts).join(' → ')} へ接続中…`,
+        `${NOTICE_ACCENT} ${routeLabel(session.route)} へ接続中…`,
       );
       await invoke('connect_session', { request, onEvent, onData });
     }
@@ -1164,25 +1192,21 @@ function scheduleRetry(session: SessionUi): void {
   const delay = retryDelayMs(session.retryAttempt);
   session.retryAt = Date.now() + delay;
   session.terminal.writeln(
-    `\x1b[38;2;255;180;84m[ope-term]\x1b[0m ${Math.round(delay / 1000)} 秒後に再接続します（${session.retryAttempt}/${MAX_AUTO_RETRIES}）`,
+    `${NOTICE_ACCENT} ${Math.round(delay / 1000)} 秒後に再接続します（${session.retryAttempt}/${MAX_AUTO_RETRIES}）`,
   );
   session.retryTimer = window.setTimeout(() => {
     session.retryTimer = undefined;
     void startSession(session, false);
   }, delay);
   session.retryTick = window.setInterval(() => renderHopbar(session), 1000);
-  renderHopbar(session);
-  renderTabs();
-  if (session.key === activeSessionKey) updateConnectionState(session);
+  refreshSessionChrome(session);
 }
 
 function cancelRetry(session: SessionUi): void {
   clearRetryTimers(session);
   session.retryAttempt = 0;
-  session.terminal.writeln('\x1b[38;2;127;137;150m[ope-term] 自動再接続を停止しました\x1b[0m');
-  renderHopbar(session);
-  renderTabs();
-  if (session.key === activeSessionKey) updateConnectionState(session);
+  session.terminal.writeln(NOTICE_MUTED + ' 自動再接続を停止しました\x1b[0m');
+  refreshSessionChrome(session);
 }
 
 function queueInput(session: SessionUi, data: string): void {
@@ -1208,7 +1232,7 @@ function queueInput(session: SessionUi, data: string): void {
     session.inputBufferedBytes = 0;
     session.inputTimer = undefined;
     for (const chunk of chunkTerminalInput(input)) {
-      const chunkBytes = new TextEncoder().encode(chunk).byteLength;
+      const chunkBytes = utf8ByteLength(chunk);
       session.inputPendingBytes += chunkBytes;
       session.inputChain = session.inputChain.then(async () => {
         if (
@@ -1232,7 +1256,7 @@ function queueResize(session: SessionUi, cols: number, rows: number): void {
   session.resizeTimer = window.setTimeout(() => {
     session.resizeTimer = undefined;
     const connectionId = session.connectionId;
-    if (connectionId && (session.state === 'connecting' || session.state === 'connected')) {
+    if (connectionId && isLiveState(session.state)) {
       void invoke('session_resize', { sessionId: connectionId, cols, rows }).catch(() => undefined);
     }
   }, 80);
@@ -1263,13 +1287,11 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
       session.state = 'connected';
       session.closeReason = undefined;
       session.retryAttempt = 0;
-      renderHopbar(session);
-      renderTabs();
-      if (session.key === activeSessionKey) updateConnectionState(session);
+      refreshSessionChrome(session);
       session.terminal.focus();
       break;
     case 'error':
-      session.terminal.writeln(`\r\n\x1b[38;2;242;125;136m[ope-term] ${event.message}\x1b[0m`);
+      session.terminal.writeln(`\r\n${NOTICE_ERROR} ${event.message}\x1b[0m`);
       toast(event.message);
       break;
     case 'closed': {
@@ -1286,7 +1308,7 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
         ? 'local shell が終了しました'
         : closeMessage(event.reason, event.cause, event.hop);
       session.terminal.writeln(
-        `\r\n\x1b[38;2;127;137;150m[ope-term] ${message} · 再起動は Ctrl+Shift+Enter\x1b[0m`,
+        `\r\n${NOTICE_MUTED} ${message} · 再起動は Ctrl+Shift+Enter\x1b[0m`,
       );
       if (
         session.kind === 'ssh' &&
@@ -1295,9 +1317,7 @@ function handleSessionEvent(session: SessionUi, connectionId: string, event: Ses
         scheduleRetry(session);
       } else {
         clearRetryTimers(session);
-        renderHopbar(session);
-        renderTabs();
-        if (session.key === activeSessionKey) updateConnectionState(session);
+        refreshSessionChrome(session);
       }
       break;
     }
@@ -1490,7 +1510,7 @@ function discardAuthPrompts(sessionKey: string): void {
 
 function renderHopbar(session: SessionUi): void {
   session.hopbar.replaceChildren();
-  const live = session.state === 'connecting' || session.state === 'connected';
+  const live = isLiveState(session.state);
   // Before the backend reports a chain, show the planned hops so an idle or
   // restored tab still explains where it would connect.
   const hops: HopStatus[] = session.kind === 'local'
@@ -1662,8 +1682,6 @@ function buildPaneNode(node: PaneLayout, path: string): HTMLElement {
   return split;
 }
 
-const PANE_KEYBOARD_STEP = 0.05;
-
 /** Arrow keys on a focused divider move it, keeping focus on the same divider. */
 function resizeDividerFromKeyboard(event: KeyboardEvent, path: string): void {
   const split = splitAtPath(paneLayout, path);
@@ -1826,30 +1844,24 @@ function closeActivePane(): void {
 }
 
 function updateConnectionState(session: SessionUi): void {
-  const labels = {
-    idle: 'NOT CONNECTED',
-    connecting: 'CONNECTING',
-    connected: 'SSH CONNECTED',
-    closed: 'DISCONNECTED',
-  } as const;
   if (session.kind === 'local' && session.state === 'connected') {
     ui.connectionState.textContent = 'LOCAL PTY';
     ui.connectionState.style.color = 'var(--green)';
     return;
   }
-  const colors = {
-    idle: 'var(--muted)',
-    connecting: 'var(--amber)',
-    connected: 'var(--green)',
-    closed: 'var(--red)',
-  } as const;
   if (session.retryAt !== undefined) {
     ui.connectionState.textContent = 'RECONNECTING';
     ui.connectionState.style.color = 'var(--amber)';
     return;
   }
-  ui.connectionState.textContent = labels[session.state];
-  ui.connectionState.style.color = colors[session.state];
+  ui.connectionState.textContent = CONNECTION_LABELS[session.state];
+  ui.connectionState.style.color = CONNECTION_COLORS[session.state];
+}
+
+function refreshSessionChrome(session: SessionUi): void {
+  renderHopbar(session);
+  renderTabs();
+  if (session.key === activeSessionKey) updateConnectionState(session);
 }
 
 function renderTabs(): void {
@@ -1884,7 +1896,7 @@ function closeSession(key: string): void {
   const session = sessions.get(key);
   if (!session) return;
   const connectionId = session.connectionId;
-  const wasLive = session.state === 'connecting' || session.state === 'connected';
+  const wasLive = isLiveState(session.state);
   // Invalidate both Channel callbacks before asking the backend to close. A
   // queued event/data frame must never target a disposed xterm instance.
   session.connectionId = null;
@@ -1935,10 +1947,10 @@ function restoreTabs(): void {
     const session = createSession([...savedRoute]);
     sessions.set(session.key, session);
     keys.push(session.key);
-    const preview = routePreview(session.route, hosts).join(' → ');
-    session.terminal.writeln(`\x1b[38;2;127;137;150m[ope-term] 前回のタブを復元しました: ${preview}\x1b[0m`);
+    const preview = routeLabel(session.route);
+    session.terminal.writeln(`${NOTICE_MUTED} 前回のタブを復元しました: ${preview}\x1b[0m`);
     session.terminal.writeln(
-      '\x1b[38;2;127;137;150m[ope-term] 接続はまだ開始していません。接続するには CONNECT または Ctrl+Shift+Enter。\x1b[0m',
+      NOTICE_MUTED + ' 接続はまだ開始していません。接続するには CONNECT または Ctrl+Shift+Enter。\x1b[0m',
     );
   }
   paneLayout = restorePaneLayout(workspaces.paneLayout, keys);

@@ -1,4 +1,10 @@
-import { readBoundedStorage, writeBoundedStorage } from './storage';
+import {
+  readBoundedStorage,
+  utf8ByteLength,
+  writeBoundedStorage,
+  type ReadableStorage,
+  type WritableStorage,
+} from './storage';
 
 export interface SessionLogPolicy {
   enabled: boolean;
@@ -39,7 +45,7 @@ export function defaultLogPolicy(): SessionLogPolicy {
   };
 }
 
-export function loadLogPolicies(storage: Pick<Storage, 'getItem'> = localStorage): Record<string, SessionLogPolicy> {
+export function loadLogPolicies(storage: ReadableStorage = localStorage): Record<string, SessionLogPolicy> {
   try {
     const parsed: unknown = JSON.parse(readBoundedStorage(storage, STORAGE_KEY, MAX_STORAGE_BYTES) ?? '{}');
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
@@ -57,7 +63,7 @@ export function loadLogPolicies(storage: Pick<Storage, 'getItem'> = localStorage
 
 export function saveLogPolicies(
   policies: Record<string, SessionLogPolicy>,
-  storage: Pick<Storage, 'setItem'> = localStorage,
+  storage: WritableStorage = localStorage,
 ): boolean {
   return writeBoundedStorage(
     storage,
@@ -111,7 +117,7 @@ export function createLogPolicy(draft: SessionLogPolicyDraft): SessionLogPolicyR
 export function isValidFileNameTemplate(template: string): boolean {
   if (
     !template.endsWith('.log')
-    || new TextEncoder().encode(template).length > MAX_TEMPLATE_BYTES
+    || utf8ByteLength(template) > MAX_TEMPLATE_BYTES
     || UNSAFE_FILE_NAME_CHARACTERS.test(template)
   ) {
     return false;

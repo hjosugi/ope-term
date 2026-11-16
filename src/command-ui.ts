@@ -96,6 +96,14 @@ export class CommandUi {
     this.#bindEvents();
   }
 
+  get #paletteOpen(): boolean {
+    return !this.#elements.palette.classList.contains('hidden');
+  }
+
+  get #shortcutEditorOpen(): boolean {
+    return !this.#elements.shortcutEditor.classList.contains('hidden');
+  }
+
   openPalette(): void {
     this.clearPendingSequence();
     this.#elements.shortcutEditor.classList.add('hidden');
@@ -111,8 +119,8 @@ export class CommandUi {
   }
 
   togglePalette(): void {
-    if (this.#elements.palette.classList.contains('hidden')) this.openPalette();
-    else this.closePalette();
+    if (this.#paletteOpen) this.closePalette();
+    else this.openPalette();
   }
 
   openShortcutEditor(): void {
@@ -161,14 +169,14 @@ export class CommandUi {
       this.#renderShortcuts();
       return true;
     }
-    if (!this.#elements.shortcutEditor.classList.contains('hidden') && event.key === 'Escape') {
+    if (this.#shortcutEditorOpen && event.key === 'Escape') {
       event.preventDefault();
       this.closeShortcutEditor();
       return true;
     }
     const chord = eventToChord(event);
     if (!chord) return false;
-    const paletteOpen = !this.#elements.palette.classList.contains('hidden');
+    const paletteOpen = this.#paletteOpen;
     // The palette input owns plain typing and navigation keys; only modified
     // chords are evaluated there, with `paletteOpen` true in the context.
     if (paletteOpen && isBareChord(chord)) return false;
@@ -313,8 +321,8 @@ export class CommandUi {
   #context(): CommandContext {
     return {
       ...this.#baseContext(),
-      paletteOpen: !this.#elements.palette.classList.contains('hidden'),
-      shortcutEditorOpen: !this.#elements.shortcutEditor.classList.contains('hidden'),
+      paletteOpen: this.#paletteOpen,
+      shortcutEditorOpen: this.#shortcutEditorOpen,
     };
   }
 

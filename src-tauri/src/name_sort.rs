@@ -11,6 +11,28 @@ pub fn case_insensitive(left: &str, right: &str) -> Ordering {
         .then_with(|| left.cmp(right))
 }
 
+/// Directories first, then files, symlinks, and anything else.
+pub(crate) fn entry_rank(kind: &str) -> u8 {
+    match kind {
+        "directory" => 0,
+        "file" => 1,
+        "symlink" => 2,
+        _ => 3,
+    }
+}
+
+/// Orders directory listings by kind, then case-insensitively by name.
+pub(crate) fn entry_order(
+    left_kind: &str,
+    left_name: &str,
+    right_kind: &str,
+    right_name: &str,
+) -> Ordering {
+    entry_rank(left_kind)
+        .cmp(&entry_rank(right_kind))
+        .then_with(|| case_insensitive(left_name, right_name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

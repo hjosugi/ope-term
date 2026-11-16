@@ -9,6 +9,12 @@ export interface HostProfile {
 
 export type HopState = 'pending' | 'connecting' | 'connected' | 'error';
 
+/** A native directory picker selection scoped by an opaque Rust token. */
+export interface LocalDirectory {
+  token: string;
+  displayPath: string;
+}
+
 export interface HopStatus {
   index: number;
   alias: string;

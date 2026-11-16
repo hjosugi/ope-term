@@ -1,3 +1,5 @@
+import { utf8ByteLength } from './storage';
+
 export const MAX_TERMINAL_INPUT_BYTES = 256 * 1024;
 export const MAX_TERMINAL_INPUT_BACKLOG_BYTES = 4 * 1024 * 1024;
 
@@ -17,7 +19,7 @@ export function boundedTerminalInputBytes(
   // UTF-8 is never smaller than the number of UTF-16 code units for valid JS
   // strings. Avoid allocating another huge buffer for an obviously oversized paste.
   if (remaining < 0 || input.length > remaining) return null;
-  const bytes = new TextEncoder().encode(input).byteLength;
+  const bytes = utf8ByteLength(input);
   return bytes <= remaining ? bytes : null;
 }
 

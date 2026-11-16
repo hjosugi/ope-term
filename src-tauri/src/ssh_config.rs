@@ -516,26 +516,20 @@ pub fn resolve(alias: &str, blocks: &[Block]) -> Result<Endpoint> {
         remote_user: &remote_user,
         home: home.as_deref(),
     };
-    let identity_files: Vec<_> = values
-        .remove("identityfile")
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|value| !value.eq_ignore_ascii_case("none"))
-        .map(|value| expand_home(&expand_tokens(&value, &token_context), home.as_deref()))
-        .collect();
-    if identity_files.len() > MAX_AUTH_FILES {
-        bail!("IdentityFile が {MAX_AUTH_FILES} 件を超えています");
-    }
-    let certificate_files: Vec<_> = values
-        .remove("certificatefile")
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|value| !value.eq_ignore_ascii_case("none"))
-        .map(|value| expand_home(&expand_tokens(&value, &token_context), home.as_deref()))
-        .collect();
-    if certificate_files.len() > MAX_AUTH_FILES {
-        bail!("CertificateFile が {MAX_AUTH_FILES} 件を超えています");
-    }
+    let identity_files = resolve_auth_files(
+        &mut values,
+        "identityfile",
+        "IdentityFile",
+        &token_context,
+        home.as_deref(),
+    )?;
+    let certificate_files = resolve_auth_files(
+        &mut values,
+        "certificatefile",
+        "CertificateFile",
+        &token_context,
+        home.as_deref(),
+    )?;
     let proxy_jump = first(&values, "proxyjump")
         .filter(|value| !value.eq_ignore_ascii_case("none"))
         .map(|value| expand_tokens(&value, &token_context));
@@ -663,10 +657,30 @@ fn expand_tokens(value: &str, context: &TokenContext<'_>) -> String {
     output
 }
 
-fn default_username() -> String {
+pub(crate) fn default_username() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "root".to_owned())
+}
+
+fn resolve_auth_files(
+    values: &mut HashMap<String, Vec<String>>,
+    key: &str,
+    label: &str,
+    token_context: &TokenContext<'_>,
+    home: Option<&Path>,
+) -> Result<Vec<PathBuf>> {
+    let files: Vec<_> = values
+        .remove(key)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|value| !value.eq_ignore_ascii_case("none"))
+        .map(|value| expand_home(&expand_tokens(&value, token_context), home))
+        .collect();
+    if files.len() > MAX_AUTH_FILES {
+        bail!("{label} が {MAX_AUTH_FILES} 件を超えています");
+    }
+    Ok(files)
 }
 
 fn first(values: &HashMap<String, Vec<String>>, key: &str) -> Option<String> {

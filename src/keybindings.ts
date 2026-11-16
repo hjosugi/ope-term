@@ -1,4 +1,4 @@
-import { readBoundedStorage, writeBoundedStorage } from './storage';
+import { readBoundedStorage, utf8ByteLength, writeBoundedStorage } from './storage';
 
 export const COMMAND_IDS = [
   'workbench.action.showCommands',
@@ -424,7 +424,7 @@ export function exportKeybindings(
 }
 
 export function importKeybindings(json: string, platform: OperatingSystem): ImportedKeybindings {
-  if (new TextEncoder().encode(json).byteLength > MAX_IMPORT_BYTES) {
+  if (utf8ByteLength(json) > MAX_IMPORT_BYTES) {
     throw new Error('shortcut 設定は 64 KiB 以下にしてください');
   }
   try {
@@ -454,14 +454,18 @@ function normalizeChord(value: string): string | null {
   return [...ordered, key].join('+');
 }
 
-/** True when every context in which `when` holds also has `key` set. */
-function contextImplies(when: string | undefined, key: ContextKey): boolean {
-  const variants = 2 ** CONTEXT_KEYS.length;
-  let satisfiable = false;
-  for (let mask = 0; mask < variants; mask += 1) {
-    const context = Object.fromEntries(
+function* contextVariants(): Generator<CommandContext> {
+  for (let mask = 0; mask < 2 ** CONTEXT_KEYS.length; mask += 1) {
+    yield Object.fromEntries(
       CONTEXT_KEYS.map((name, index) => [name, Boolean(mask & (1 << index))]),
     ) as CommandContext;
+  }
+}
+
+/** True when every context in which `when` holds also has `key` set. */
+function contextImplies(when: string | undefined, key: ContextKey): boolean {
+  let satisfiable = false;
+  for (const context of contextVariants()) {
     if (!evaluateWhen(when, context)) continue;
     satisfiable = true;
     if (!context[key]) return false;
@@ -470,11 +474,7 @@ function contextImplies(when: string | undefined, key: ContextKey): boolean {
 }
 
 export function contextsOverlap(first: string | undefined, second: string | undefined): boolean {
-  const variants = 2 ** CONTEXT_KEYS.length;
-  for (let mask = 0; mask < variants; mask += 1) {
-    const context = Object.fromEntries(
-      CONTEXT_KEYS.map((key, index) => [key, Boolean(mask & (1 << index))]),
-    ) as CommandContext;
+  for (const context of contextVariants()) {
     if (evaluateWhen(first, context) && evaluateWhen(second, context)) return true;
   }
   return false;

@@ -1,6 +1,10 @@
 export type ReadableStorage = Pick<Storage, 'getItem'>;
 export type WritableStorage = Pick<Storage, 'setItem'>;
 
+export function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 /**
  * WebView storage can throw when it is disabled, unavailable, or over quota.
  * Preferences are optional state, so callers must be able to keep operating.
@@ -42,5 +46,5 @@ export function writeBoundedStorage(
 
 function isWithinUtf8Limit(value: string, maximumBytes: number): boolean {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || value.length > maximumBytes) return false;
-  return new TextEncoder().encode(value).byteLength <= maximumBytes;
+  return utf8ByteLength(value) <= maximumBytes;
 }
