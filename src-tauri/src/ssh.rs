@@ -1600,13 +1600,13 @@ sJWR7W+cGvJ/vLsw==
         async fn auth_publickey(
             &mut self,
             user: &str,
-            public_key: &ssh_key::PublicKey,
+            public_key: server::VerifiedPublicKey<'_>,
         ) -> Result<server::Auth, Self::Error> {
             let expected =
                 russh::keys::decode_secret_key(ENCRYPTED_ED25519_KEY, Some("test")).unwrap();
             if matches!(self.mode, ServerAuthMode::PublicKey)
                 && user == "operator"
-                && public_key == expected.public_key()
+                && public_key.public_key == expected.public_key()
             {
                 Ok(server::Auth::Accept)
             } else {
