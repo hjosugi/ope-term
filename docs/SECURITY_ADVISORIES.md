@@ -85,5 +85,22 @@ RUSTSEC-2025-0075, RUSTSEC-2025-0080, RUSTSEC-2025-0081,
 RUSTSEC-2025-0098, and RUSTSEC-2025-0100. They have no reported vulnerability;
 the same upgrade and release-review policy applies.
 
+RUSTSEC-2026-0543 reports `chrono` as unmaintained (informational; all
+versions are affected, no patched release exists, and the advisory recommends
+`jiff` or `time`). `chrono` 0.4.45 is pulled in by `russh-sftp` 2.4.0, a direct
+dependency of ope-term: `cargo tree -i chrono` shows no other path on desktop
+targets. `russh-util`, which `russh` uses, lists `chrono` only for `wasm32`.
+`Cargo.lock` also records `chrono` under `serde_with` (through `tauri-utils`),
+so `cargo audit` prints that path as well, but `cargo tree` does not resolve it
+into the build graph. ope-term does not use `chrono` itself.
+
+No `chrono` release can clear the warning. `russh-sftp` 4.0.0 (published
+2026-11-21) depends on `jiff` instead of `chrono`, so the exit is a major
+upgrade of `russh-sftp` from 2.4. That migration has not been tried here. The
+warning is accepted for now because no vulnerability is reported and the same
+upgrade and release-review policy applies. Revisit it when `russh-sftp` is
+upgraded, when RustSec reports a vulnerability in `chrono` (that would fail
+`cargo audit`), or before a stable release.
+
 This acceptance is scoped to alpha builds and must be revisited when Tauri
 changes its Linux bindings or before declaring a stable release.
